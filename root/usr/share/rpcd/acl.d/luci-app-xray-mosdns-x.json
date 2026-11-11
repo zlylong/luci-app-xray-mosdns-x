@@ -1,0 +1,18 @@
+{
+	"luci-app-xray-mosdns-x": {
+		"description": "Grant access to Xray + mosdns-x configuration and status",
+		"read": {
+			"uci": [ "xray-mosdns", "dhcp" ],
+			"file": {
+				"/usr/libexec/xray-mosdns/status.sh": [ "exec" ],
+				"/usr/libexec/xray-mosdns/log.sh": [ "exec" ],
+				"/var/etc/xray-mosdns/xray.json": [ "read" ],
+				"/var/etc/xray-mosdns/mosdns.yaml": [ "read" ],
+				"/var/etc/xray-mosdns/nft.rules": [ "read" ]
+			}
+		},
+		"write": {
+			"uci": [ "xray-mosdns" ]
+		}
+	}
+}

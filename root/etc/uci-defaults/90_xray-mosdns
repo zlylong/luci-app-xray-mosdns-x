@@ -1,0 +1,19 @@
+#!/bin/sh
+# Make sure a DNS section exists (older configs added by hand may lack it)
+[ -f /etc/config/xray-mosdns ] || exit 0
+uci -q get xray-mosdns.@dns[0] >/dev/null 2>&1 || {
+	uci batch <<-EOC
+	set xray-mosdns.dns=dns
+	set xray-mosdns.dns.enabled='1'
+	set xray-mosdns.dns.mosdns_bin='/usr/bin/mosdns'
+	set xray-mosdns.dns.listen_port='5353'
+	set xray-mosdns.dns.xray_dns_port='15353'
+	set xray-mosdns.dns.cache_size='8192'
+	set xray-mosdns.dns.cache_everything='1'
+	set xray-mosdns.dns.adblock='1'
+	set xray-mosdns.dns.filter_proxy_ipv6='1'
+	set xray-mosdns.dns.bootstrap='223.5.5.5'
+	EOC
+	uci commit xray-mosdns
+}
+exit 0

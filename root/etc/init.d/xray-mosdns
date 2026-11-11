@@ -1,0 +1,70 @@
+#!/bin/sh /etc/rc.common
+# luci-app-xray-mosdns-x - service control
+START=96
+USE_PROCD=1
+
+PLUGIN_DIR=/usr/share/xray-mosdns
+OUT=/var/etc/xray-mosdns
+
+get_opt() { uci -q get "xray-mosdns.$1" 2>/dev/null; }
+
+service_started() { uci -q get xray-mosdns.@global[0].enabled 2>/dev/null; }
+
+passwall_running() {
+	ps w 2>/dev/null | grep -v grep | grep -q '/tmp/etc/passwall' && return 0
+	return 1
+}
+
+start_service() {
+	[ "$(service_started)" = "1" ] || {
+		echo "xray-mosdns is disabled (xray-mosdns.global.enabled=0)"
+		return 0
+	}
+	if passwall_running && [ "$(get_opt 'global.allow_coexist')" != "1" ]; then
+		logger -t xray-mosdns "PassWall is running - refusing to start (set global.allow_coexist=1 to override)"
+		echo "ERROR: PassWall is running, stop it first" >&2
+		return 1
+	fi
+
+	XRAY_BIN=$(get_opt 'global.xray_bin'); [ -n "$XRAY_BIN" ] || XRAY_BIN=/usr/bin/xray
+	MOSDNS_BIN=$(get_opt 'dns.mosdns_bin'); [ -n "$MOSDNS_BIN" ] || MOSDNS_BIN=/usr/bin/mosdns
+
+	mkdir -p "$OUT"
+	"$PLUGIN_DIR/gen-config.sh" "$OUT" || {
+		logger -t xray-mosdns "config generation failed"
+		return 1
+	}
+	"$PLUGIN_DIR/fw.sh" apply || return 1
+
+	if [ "$(get_opt 'dns.enabled')" = "1" ]; then
+		"$PLUGIN_DIR/dnsmasq.sh" apply || true
+
+		procd_open_instance mosdns
+		procd_set_param command "$MOSDNS_BIN" start -c "$OUT/mosdns.yaml" -d "$OUT"
+		procd_set_param respawn 3600 5 5
+		procd_set_param stdout 1
+		procd_set_param stderr 1
+		procd_close_instance
+	fi
+
+	procd_open_instance xray
+	procd_set_param command "$XRAY_BIN" run -c "$OUT/xray.json"
+	procd_set_param respawn 3600 5 5
+	procd_set_param stdout 1
+	procd_set_param stderr 1
+	procd_close_instance
+}
+
+stop_service() {
+	"$PLUGIN_DIR/fw.sh" clear >/dev/null 2>&1 || true
+	"$PLUGIN_DIR/dnsmasq.sh" revert || true
+}
+
+reload_service() {
+	stop
+	start
+}
+
+service_triggers() {
+	procd_add_reload_trigger "xray-mosdns"
+}

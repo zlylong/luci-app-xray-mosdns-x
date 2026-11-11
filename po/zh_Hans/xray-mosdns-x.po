@@ -1,0 +1,70 @@
+msgid ""
+msgstr "Project-Id-Version: luci-app-xray-mosdns-x 0.1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+msgid "Xray + mosdns-x"
+msgstr "Xray + mosdns-x"
+
+msgid "Transparent proxy (TProxy) powered by Xray, with mosdns-x based DNS split, cache and ad blocking."
+msgstr "基于 Xray 的 TProxy 透明代理，配合 mosdns-x 做 DNS 分流、缓存与去广告。"
+
+msgid "General"
+msgstr "常规"
+
+msgid "Enable"
+msgstr "启用"
+
+msgid "Settings"
+msgstr "设置"
+
+msgid "Nodes"
+msgstr "节点"
+
+msgid "DNS"
+msgstr "DNS"
+
+msgid "Log"
+msgstr "日志"
+
+msgid "Overview"
+msgstr "概览"
+
+msgid "TProxy port"
+msgstr "TProxy 端口"
+
+msgid "Default outbound"
+msgstr "默认出口"
+
+msgid "Proxy (node)"
+msgstr "代理（节点）"
+
+msgid "Direct"
+msgstr "直连"
+
+msgid "Enable mosdns-x"
+msgstr "启用 mosdns-x"
+
+msgid "Block ad domains"
+msgstr "拦截广告域名"
+
+msgid "Domestic upstreams"
+msgstr "国内上游"
+
+msgid "Static hosts"
+msgstr "静态 hosts"
+
+msgid "Remarks"
+msgstr "备注"
+
+msgid "Address"
+msgstr "地址"
+
+msgid "Port"
+msgstr "端口"
+
+msgid "Transport"
+msgstr "传输方式"
+
+msgid "Type"
+msgstr "类型"

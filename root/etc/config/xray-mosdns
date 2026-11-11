@@ -1,0 +1,75 @@
+# Xray + mosdns-x transparent proxy configuration
+# Values below are conservative defaults; the plugin is DISABLED until
+# `option enabled '1'` is set and /etc/init.d/xray-mosdns is started.
+
+config global 'global'
+	# master switch (0 = installed but inactive)
+	option enabled '0'
+	# transparent proxy mode: tproxy (nft tproxy + policy routing)
+	option proxy_mode 'tproxy'
+	# port that Xray tproxy inbound listens on
+	option tproxy_port '12345'
+	# fwmark used by the tproxy policy routing (keep unique on this router)
+	option fwmark '0x1'
+	# policy routing table for local delivery of tproxy'ed packets
+	option route_table '100'
+	# log verbosity of Xray: debug|info|warning|error|none
+	option log_level 'warning'
+	# sniffing (destOverride http/tls/quic) needed by domain based routing
+	option sniffing '1'
+	# where unmatched traffic goes: proxy | direct
+	option default_outbound 'proxy'
+	# route mainland China destinations (geosite:cn / geoip:cn) directly
+	option bypass_chn '1'
+	# optional: '/usr/bin/xray' or an alternative build
+	option xray_bin '/usr/bin/xray'
+	# selected node (section name below), empty = none configured
+	option node ''
+	# extra destination CIDRs/IPs that must never be tproxy'ed
+	list bypass_ips ''
+	# always proxied domains (xray domain syntax: geosite:google, domain:openai.com)
+	# always direct domains
+	# blocked domains
+	list block_domains ''
+
+config dns 'dns'
+	option enabled '1'
+	# mosdns-x / mosdns binary (manual build allowed)
+	option mosdns_bin '/usr/bin/mosdns'
+	# port mosdns listens on (dnsmasq is pointed here)
+	option listen_port '5353'
+	# Xray DNS-in inbound port; foreign queries are answered through the proxy
+	option xray_dns_port '15353'
+	# cache entries
+	option cache_size '8192'
+	# cache queries carrying EDNS (needed by most modern clients)
+	option cache_everything '1'
+	# block ad domains via geosite:category-ads-all
+	option adblock '1'
+	# drop AAAA answers for proxied domains (prevents IPv6 bypass)
+	option filter_proxy_ipv6 '1'
+	# bootstrap resolver used to reach DoH/DoT upstreams (direct, mainland)
+	option bootstrap '223.5.5.5'
+	# domestic upstreams (DoH/DoT/plain) - one per line
+	list domestic_dns 'https://dns.alidns.com/dns-query'
+	list domestic_dns 'https://doh.pub/dns-query'
+	# static hosts entries: "<domain> <ip>"
+	list hosts ''
+
+config node 'node_example'
+	option enabled '0'
+	option remarks 'example-vless-tcp'
+	option type 'vless'
+	option address ''
+	option port '443'
+	option uuid ''
+	option flow ''
+	option tls '1'
+	option tls_server_name ''
+	option fingerprint 'chrome'
+	option allow_insecure '0'
+	# transport: tcp | ws | grpc | http | xhttp
+	option transport 'tcp'
+	option path '/'
+	option host ''
+	option service_name ''
