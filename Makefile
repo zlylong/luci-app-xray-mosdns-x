@@ -14,7 +14,6 @@ LUCI_TITLE:=LuCI support for Xray + mosdns-x transparent proxy
 LUCI_DESCRIPTION:=Manage an Xray TProxy transparent proxy with mosdns-x DNS split, cache and ad blocking.
 LUCI_DEPENDS:=+luci-base +nftables +kmod-nft-tproxy +ip-full +resolveip +ucode
 LUCI_PKGARCH:=all
-LUCI_EXTRA_DEPENDS:=xray-core mosdns
 
 include $(TOPDIR)/feeds/luci/luci.mk
 

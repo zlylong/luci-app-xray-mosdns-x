@@ -44,9 +44,10 @@ LuCI 管理界面：用 **Xray**（TProxy 透明代理）+ **mosdns-x**（DNS �
 
 运行时（软件包未硬依赖，便于使用手工编译的 xray / mosdns-x）：
 
-- `xray`（Xray-core ≥ 1.8，TProxy tunnel inbound）
+- `xray`（Xray-core ≥ 1.8，TProxy tunnel inbound）——**不作为包依赖**，可使用手工编译版本
+  （手工 xray 与 feed 的 `xray-core` 包会争用 `/usr/bin/xray`，因此默认不声明依赖）
 - `mosdns` 或 `mosdns-x`（≥ v5 配置格式；推荐 pmkol/mosdns-x，带 `_new_empty_response` 等预设）
-- `nftables` + `kmod-nft-tproxy` + `ip-full`
+- `nftables` + `kmod-nft-tproxy` + `ip-full`（已声明为包依赖）
 - `/usr/share/v2ray/geosite.dat`、`geoip.dat`（Loyalsoldier / v2ray 数据）
 
 ## 编译
