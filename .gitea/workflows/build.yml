@@ -16,8 +16,8 @@ jobs:
 
       - name: Install build dependencies
         run: |
-          sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y \
             build-essential git unzip wget curl rsync ca-certificates \
             python3 gawk gettext libncurses-dev zlib1g-dev file bc cpio \
             time zstd libssl-dev patch diffstat texinfo chrpath socat \
