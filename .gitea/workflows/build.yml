@@ -37,7 +37,9 @@ jobs:
           cd "$SDK"
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-          make package/luci-app-xray-mosdns-x/compile V=s
+          # SDK ships without .config, which makes package/.../compile spawn menuconfig
+          TERM=dumb make defconfig
+          TERM=dumb make package/luci-app-xray-mosdns-x/compile V=s
 
       - name: Collect artifacts
         run: |
