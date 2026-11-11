@@ -23,7 +23,9 @@ cp -r "$REPO_DIR" package/luci-app-xray-mosdns-x
 
 ./scripts/feeds update -a >/dev/null
 ./scripts/feeds install -a >/dev/null
-make package/luci-app-xray-mosdns-x/compile V=s
+# SDK starts without .config, which makes `make package/.../compile` spawn menuconfig
+TERM=dumb make defconfig >/dev/null
+TERM=dumb make package/luci-app-xray-mosdns-x/compile V=s -j"$(nproc)"
 
 mkdir -p "$REPO_DIR/out"
 find bin -name 'luci-app-xray-mosdns-x*' -exec cp -v {} "$REPO_DIR/out/" \;
