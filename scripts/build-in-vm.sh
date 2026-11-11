@@ -19,7 +19,8 @@ SDK=$(ls -d immortalwrt-sdk-* | head -1)
 cd "$SDK"
 
 rm -rf package/luci-app-xray-mosdns-x
-cp -r "$REPO_DIR" package/luci-app-xray-mosdns-x
+mkdir -p package/luci-app-xray-mosdns-x
+tar -C "$REPO_DIR" --exclude=.git --exclude=out -cf - . | tar -C package/luci-app-xray-mosdns-x -xf -
 
 ./scripts/feeds update -a >/dev/null
 ./scripts/feeds install -a >/dev/null

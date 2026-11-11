@@ -50,6 +50,11 @@ LuCI 管理界面：用 **Xray**（TProxy 透明代理）+ **mosdns-x**（DNS �
 - `nftables` + `kmod-nft-tproxy` + `ip-full`（已声明为包依赖）
 - `/usr/share/v2ray/geosite.dat`、`geoip.dat`（Loyalsoldier / v2ray 数据）
 
+## 代码仓库与 CI
+
+- 仓库：<https://github.com/zlylong/luci-app-xray-mosdns-x>
+- CI：Gitea Actions（`.gitea/workflows/build.yml`），push 到 master 自动编译并上传 apk
+
 ## 编译
 
 ### 方式一：OpenWrt/ImmortalWrt SDK（推荐，CI 使用）
