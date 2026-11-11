@@ -22,10 +22,12 @@ rm -rf package/luci-app-xray-mosdns-x
 mkdir -p package/luci-app-xray-mosdns-x
 tar -C "$REPO_DIR" --exclude=.git --exclude=out -cf - . | tar -C package/luci-app-xray-mosdns-x -xf -
 
-./scripts/feeds update -a >/dev/null
-./scripts/feeds install -a >/dev/null
-# SDK starts without .config, which makes `make package/.../compile` spawn menuconfig
-TERM=dumb make defconfig >/dev/null
+# First run: prepare feeds + .config. Later runs reuse the warm SDK (fast).
+if [ ! -f .config ] || [ "${CI_FORCE_FEEDS:-0}" = "1" ]; then
+	./scripts/feeds update -a >/dev/null
+	./scripts/feeds install -a >/dev/null
+	TERM=dumb make defconfig >/dev/null
+fi
 TERM=dumb make package/luci-app-xray-mosdns-x/compile V=s -j"$(nproc)"
 
 mkdir -p "$REPO_DIR/out"

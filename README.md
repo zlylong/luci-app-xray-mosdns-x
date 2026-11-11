@@ -54,7 +54,8 @@ LuCI 管理界面：用 **Xray**（TProxy 透明代理）+ **mosdns-x**（DNS �
 ## 代码仓库与 CI
 
 - 仓库：<https://github.com/zlylong/luci-app-xray-mosdns-x>
-- CI：push 到 master 后由 Gitea Webhook 触发 构建 VM 编译，
+- CI：构建 VM 每 2 分钟轮询 Gitea master 分支，有新提交则编译，
+  并通过 Gitea Commit Status 回写结果（`build (build vm)` = pending/success/failure），
 - Gitea Actions 版流水线保留在 `ci/gitea-actions-build.yml`（暂未启用：容器内
   OpenWrt SDK 的 fakeroot 会卡死，需换支持 fakeroot 的 runner 或宿主模式）
 
