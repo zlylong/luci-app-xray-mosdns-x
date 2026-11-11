@@ -39,7 +39,7 @@ jobs:
           cp -r "$GITHUB_WORKSPACE" "$SDK/package/luci-app-xray-mosdns-x"
           cd "$SDK"
           ./scripts/feeds update -a
-          ./scripts/feeds install -a
+          ./scripts/feeds install luci
           # SDK ships without .config, which makes package/.../compile spawn menuconfig
           TERM=dumb make defconfig
           TERM=dumb make package/luci-app-xray-mosdns-x/compile V=s

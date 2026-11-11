@@ -12,7 +12,7 @@ PKG_MAINTAINER:=zly
 
 LUCI_TITLE:=LuCI support for Xray + mosdns-x transparent proxy
 LUCI_DESCRIPTION:=Manage an Xray TProxy transparent proxy with mosdns-x DNS split, cache and ad blocking.
-LUCI_DEPENDS:=+luci-base +nftables +kmod-nft-tproxy +ip-full +resolveip +ucode
+LUCI_DEPENDS:=+luci-base +nftables +ip-full +resolveip +ucode
 LUCI_PKGARCH:=all
 
 include $(TOPDIR)/feeds/luci/luci.mk
