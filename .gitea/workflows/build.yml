@@ -25,15 +25,18 @@ jobs:
 
       - name: Download ImmortalWrt 25.12.2 x86/64 SDK
         run: |
+          mkdir -p "$RUNNER_TEMP/sdk"
+          cd "$RUNNER_TEMP/sdk"
           URL=https://downloads.immortalwrt.org/releases/25.12.2/targets/x86/64/immortalwrt-sdk-25.12.2-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst
           curl -fsSL --retry 3 -o sdk.tar.zst "$URL"
           tar --zstd -xf sdk.tar.zst
           rm -f sdk.tar.zst
+          ls -d immortalwrt-sdk-*
 
       - name: Build luci-app-xray-mosdns-x
         run: |
-          SDK=$(ls -d immortalwrt-sdk-* | head -1)
-          cp -r . "$SDK/package/luci-app-xray-mosdns-x"
+          SDK=$(ls -d "$RUNNER_TEMP"/sdk/immortalwrt-sdk-* | head -1)
+          cp -r "$GITHUB_WORKSPACE" "$SDK/package/luci-app-xray-mosdns-x"
           cd "$SDK"
           ./scripts/feeds update -a
           ./scripts/feeds install -a
@@ -43,9 +46,10 @@ jobs:
 
       - name: Collect artifacts
         run: |
-          SDK=$(ls -d immortalwrt-sdk-* | head -1)
+          SDK=$(ls -d "$RUNNER_TEMP"/sdk/immortalwrt-sdk-* | head -1)
           mkdir -p out
           find "$SDK/bin" -name 'luci-app-xray-mosdns-x*' -exec cp -v {} out/ \;
+          find "$SDK/bin" -name 'luci-i18n-xray-mosdns-x*' -exec cp -v {} out/ \;
           ls -la out/
 
       - name: Upload artifact
