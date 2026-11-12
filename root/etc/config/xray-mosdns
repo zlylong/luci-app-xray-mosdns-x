@@ -21,7 +21,9 @@ config global 'global'
 	option sniffing '1'
 	# where unmatched traffic goes: proxy | direct
 	option default_outbound 'proxy'
-	# route mainland China destinations (geosite:cn / geoip:cn) directly
+	# split mode: chnroute (CN direct) | gfw (only GFW list proxied) | global | custom
+	option rule_mode 'chnroute'
+	# route mainland China destinations (geosite:cn / geoip:cn) directly (custom mode only)
 	option bypass_chn '1'
 	# optional: '/usr/bin/xray' or an alternative build
 	option xray_bin '/usr/bin/xray'

@@ -35,8 +35,14 @@ TPROXY_PORT=$(gdef global.tproxy_port 12345)
 FWMARK=$(gdef global.fwmark 0x1)
 LOGLEVEL=$(gdef global.log_level warning)
 SNIFF_EN=$(gb global.sniffing)
-DEFAULT_OUT=$(gdef global.default_outbound proxy)
-BYPASS_CHN=$(gb global.bypass_chn)
+RULE_MODE=$(gdef global.rule_mode chnroute)
+case "$RULE_MODE" in
+	chnroute) BYPASS_CHN=1; DEFAULT_OUT=proxy ;;
+	gfw)      BYPASS_CHN=0; DEFAULT_OUT=direct ;;
+	global)   BYPASS_CHN=0; DEFAULT_OUT=proxy ;;
+	custom)   BYPASS_CHN=$(gb global.bypass_chn); DEFAULT_OUT=$(gdef global.default_outbound proxy) ;;
+	*)        RULE_MODE=chnroute; BYPASS_CHN=1; DEFAULT_OUT=proxy ;;
+esac
 SOCKS_PORT=$(gdef global.socks_port 1070)
 NODE=$(g global.node)
 NODE_MODE=$(gdef global.node_mode single)
@@ -117,11 +123,20 @@ node_outbound_json() {
 		*)   echo "$NODE_IP" >> "$OUT/.resolved" ;;
 	esac
 
+	if [ "$N_TYPE" = "hysteria2" ]; then
+		# Xray >= 26: protocol "hysteria" + hysteria transport (Hysteria2 compatible)
+		[ -n "$N_PASS" ] || die "hysteria2 node $_n needs password"
+		SNI="$N_SNI"; [ -n "$SNI" ] || SNI="$N_ADDR"
+		printf '{"tag":%s,"protocol":"hysteria","settings":{"version":2,"address":%s,"port":%s},"streamSettings":{"network":"hysteria","security":"tls","tlsSettings":{"serverName":%s,"alpn":["h3"]},"hysteriaSettings":{"version":2,"auth":%s}}}' \
+			"$(jstr "$_ntag")" "$(jstr "$NODE_IP")" "$N_PORT" "$(jstr "$SNI")" "$(jstr "$N_PASS")"
+		return 0
+	fi
 	SEC="none"; TLSJ=""; NJ=""
 	if [ "$N_TLS" = "1" ]; then
 		SEC="tls"
 		SNI="$N_SNI"; [ -n "$SNI" ] || SNI="$N_ADDR"
-		TLSJ="\"tlsSettings\":{\"serverName\":$(jstr "$SNI"),\"fingerprint\":$(jstr "$N_FP"),\"allowInsecure\":$([ "$N_INSEC" = 1 ] && echo true || echo false)}"
+		# allowInsecure was removed from Xray 26.x; do not emit it
+		TLSJ="\"tlsSettings\":{\"serverName\":$(jstr "$SNI"),\"fingerprint\":$(jstr "$N_FP")}"
 	fi
 	HOSTV="$N_HOST"; [ -n "$HOSTV" ] || HOSTV="$N_SNI"
 	[ -n "$HOSTV" ] || HOSTV="$N_ADDR"
@@ -199,6 +214,10 @@ add_rule '{"type":"field","ip":["geoip:private"],"outboundTag":"direct"}'
 if [ "$BYPASS_CHN" = "1" ]; then
 	add_rule '{"type":"field","domain":["geosite:cn"],"outboundTag":"direct"}'
 	add_rule '{"type":"field","ip":["geoip:cn"],"outboundTag":"direct"}'
+fi
+if [ "$RULE_MODE" = "gfw" ]; then
+	# PassWall "GFW list" mode: only the GFW domain list is proxied, everything else direct
+	add_rule "{\"type\":\"field\",\"domain\":[\"geosite:gfw\"]$(proxy_target)}"
 fi
 
 # user defined rules (config rule sections, file order)

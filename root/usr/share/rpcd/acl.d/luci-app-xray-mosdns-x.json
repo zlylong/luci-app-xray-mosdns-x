@@ -2,21 +2,45 @@
 	"luci-app-xray-mosdns-x": {
 		"description": "Grant access to Xray + mosdns-x configuration, status, traffic and import",
 		"read": {
-			"uci": [ "xray-mosdns", "dhcp" ],
+			"uci": [
+				"xray-mosdns",
+				"dhcp"
+			],
 			"file": {
-				"/usr/libexec/xray-mosdns/status.sh": [ "exec" ],
-				"/usr/libexec/xray-mosdns/log.sh": [ "exec" ],
-				"/usr/libexec/xray-mosdns/traffic.sh": [ "exec" ],
-				"/usr/libexec/xray-mosdns/import-links.sh": [ "exec" ],
-				"/var/etc/xray-mosdns/xray.json": [ "read" ],
-				"/var/etc/xray-mosdns/mosdns.yaml": [ "read" ],
-				"/var/etc/xray-mosdns/nft.rules": [ "read" ]
+				"/usr/libexec/xray-mosdns/status.sh": [
+					"exec"
+				],
+				"/usr/libexec/xray-mosdns/log.sh": [
+					"exec"
+				],
+				"/usr/libexec/xray-mosdns/traffic.sh": [
+					"exec"
+				],
+				"/usr/libexec/xray-mosdns/import-links.sh": [
+					"exec"
+				],
+				"/var/etc/xray-mosdns/xray.json": [
+					"read"
+				],
+				"/var/etc/xray-mosdns/mosdns.yaml": [
+					"read"
+				],
+				"/var/etc/xray-mosdns/nft.rules": [
+					"read"
+				],
+				"/usr/libexec/xray-mosdns/latency.sh": [
+					"exec"
+				]
 			}
 		},
 		"write": {
-			"uci": [ "xray-mosdns" ],
+			"uci": [
+				"xray-mosdns"
+			],
 			"file": {
-				"/tmp/xray-mosdns-import.txt": [ "write" ]
+				"/tmp/xray-mosdns-import.txt": [
+					"write"
+				]
 			}
 		}
 	}

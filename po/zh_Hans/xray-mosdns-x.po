@@ -143,3 +143,69 @@ msgstr "导入"
 
 msgid "Refresh"
 msgstr "刷新"
+
+msgid "Add node"
+msgstr "添加节点"
+
+msgid "Import nodes"
+msgstr "导入节点"
+
+msgid "Test all"
+msgstr "全部测速"
+
+msgid "Test"
+msgstr "测速"
+
+msgid "Detail"
+msgstr "详情"
+
+msgid "Delete"
+msgstr "删除"
+
+msgid "Enabled"
+msgstr "启用"
+
+msgid "Address"
+msgstr "地址"
+
+msgid "Latency"
+msgstr "延迟"
+
+msgid "Actions"
+msgstr "操作"
+
+msgid "Node detail"
+msgstr "节点详情"
+
+msgid "Split mode"
+msgstr "分流模式"
+
+msgid "chnroute (CN direct, rest proxied)"
+msgstr "大陆白名单（国内直连）"
+
+msgid "gfw (only GFW list proxied)"
+msgstr "GFW 列表（只有 GFW 域名走代理）"
+
+msgid "global (proxy everything)"
+msgstr "全局代理"
+
+msgid "custom"
+msgstr "自定义"
+
+msgid "Basic settings"
+msgstr "基本设置"
+
+msgid "Nodes and load balancing"
+msgstr "节点与负载均衡"
+
+msgid "Balancer strategy"
+msgstr "均衡策略"
+
+msgid "TProxy and advanced options"
+msgstr "TProxy 与高级选项"
+
+msgid "Hysteria2"
+msgstr "Hysteria2"
+
+msgid "Import share links"
+msgstr "导入分享链接"

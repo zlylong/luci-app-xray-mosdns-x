@@ -148,6 +148,30 @@ parse_trojan() {
 	echo "$sec"
 }
 
+parse_hysteria2() {
+	idx=$2
+	url=${1#hysteria2://}
+	url=${url#hy2://}
+	ref=""
+	case "$url" in *'#'*) ref=$(urldec "${url##*#}"); url=${url%#*} ;; esac
+	q=""
+	case "$url" in *'?'*) q=${url#*\?}; url=${url%%\?*} ;; esac
+	pass=${url%%@*}; hp=${url#*@}
+	case "$hp" in *:*) ;; *) return 1 ;; esac
+	host=${hp%:*}; port=${hp##*:}
+	host=${host#[}; host=${host%]}
+	[ -n "$pass" ] && [ -n "$host" ] && [ -n "$port" ] || return 1
+	pass=$(urldec "$pass")
+	parse_query "$q"
+	sec=$(new_section "${ref:-hysteria2-$host}" hysteria2 "$idx") || return 1
+	uci_set "$sec.address" "$host"
+	uci_set "$sec.port" "$port"
+	uci_set "$sec.password" "$pass"
+	uci_set "$sec.tls" '1'
+	[ -n "$Q_SNI" ] && uci_set "$sec.tls_server_name" "$Q_SNI"
+	echo "$sec"
+}
+
 parse_ss() {
 	idx=$2
 	rest=${1#ss://}
@@ -187,6 +211,7 @@ while IFS= read -r line || [ -n "$line" ]; do
 		vless://*) sec=$(parse_vless "$line" "$idx") || sec="" ;;
 		vmess://*) sec=$(parse_vmess "$line" "$idx") || sec="" ;;
 		trojan://*) sec=$(parse_trojan "$line" "$idx") || sec="" ;;
+		hysteria2://*|hy2://*) sec=$(parse_hysteria2 "$line" "$idx") || sec="" ;;
 		ss://*) sec=$(parse_ss "$line" "$idx") || sec="" ;;
 		*) sec="" ;;
 	esac

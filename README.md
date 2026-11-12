@@ -26,7 +26,9 @@ LuCI 管理界面：用 **Xray**（TProxy 透明代理）+ **mosdns-x**（DNS �
 - **规则管理**：`config rule` 段或 LuCI Rules 页按 域名/IP/端口/协议 分流到 proxy/direct/block
 - **IPv6**：`ipv6_enabled=1` 时同时下发 IPv6 nft tproxy 规则与 `ip -6 rule/route`
 - **流量统计**：Traffic 页直接复用 nlbwmon 的按主机统计
-- **订阅导入**：Import 页粘贴 vless/vmess/trojan/ss 链接，批量生成（默认禁用）节点
+- **节点列表**：表格只显示 启用/备注/地址/延迟，点“详情”弹窗编辑全部参数，支持单节点测速、全部测速
+- **订阅导入**：节点页“导入节点”弹窗粘贴 vless/vmess/trojan/ss/hysteria2 链接，批量生成（默认禁用）节点
+- **分流模式**（PassWall 风格）：大陆白名单 / GFW 列表 / 全局代理 / 自定义
 
 ## 目录结构
 
@@ -125,16 +127,19 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
 | dns | filter_proxy_ipv6 | 代理域名丢弃 AAAA |
 | dns | domestic_dns | 国内 DoH/DoT/明文上游列表 |
 | dns | hosts | 静态域名映射（节点域名/VPS 域名解析用） |
+| global | rule_mode | chnroute（大陆白名单）/ gfw（仅 GFW 列表走代理）/ global / custom |
 | global | node_mode | single / balance（负载均衡） |
 | global | balancer_strategy | leastLoad / roundRobin / random |
 | global | fallback_node | balancer 无健康节点时的兜底节点 |
 | global | ipv6_enabled | 启用 IPv6 TProxy（实验性） |
-| node | type/address/port/uuid/... | vless / vmess / trojan / shadowsocks 节点 |
+| node | type/address/port/uuid/... | vless / vmess / trojan / shadowsocks / hysteria2 节点 |
 | rule | rule_type/value/outbound | 自定义分流规则：domain/ip/port/network → proxy/direct/block |
 
 ## 已知限制（v0.2）
 
 - IPv6 TProxy 为实验性功能，需要节点本身可达 IPv6；IPv6 分流规则与 IPv4 共用 geosite/geoip 规则
+- Xray 26.x 已移除 `allowInsecure`（跳过证书校验），插件不再生成该字段；需要绕过证书校验的场景请改用可信证书/域名
+- Hysteria2 节点依赖 Xray 的 `hysteria` 协议 + hysteria 传输（Xray 26.x 起），测速对 UDP 节点会先试 TCP，失败后回退 ICMP
 - 订阅导入支持 vless/vmess/trojan/shadowsocks（SIP002），不支持 Hysteria2/TUIC/SSR
 - 规则管理为简单表单（每条规则一个域名/IP/端口集合），复杂表达式请直接编辑
 
@@ -145,7 +150,10 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
 - [x] IPv6 TProxy（实验性）
 - [x] 流量统计（复用 nlbwmon）
 - [x] 订阅导入（vless/vmess/trojan/ss 链接）
-- [ ] Gitea Actions 构建产物发布（本轮不包含）
+- [x] Hysteria2 节点（协议 + 导入 + 生成配置）
+- [x] 节点表格化：地址/延迟列、测速、详情弹窗、导入合并进节点页
+- [x] PassWall 式分流模式（大陆白名单 / GFW 列表 / 全局 / 自定义）
+- [ ] Gitea Actions 构建产物发布（未包含）
 
 ## 许可
 
