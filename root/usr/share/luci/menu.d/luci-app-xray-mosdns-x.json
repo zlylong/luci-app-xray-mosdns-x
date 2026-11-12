@@ -7,62 +7,89 @@
 			"path": "admin/services/xray-mosdns/overview"
 		},
 		"depends": {
-			"acl": [ "luci-app-xray-mosdns-x" ]
+			"acl": [
+				"luci-app-xray-mosdns-x"
+			]
 		}
 	},
 	"admin/services/xray-mosdns/overview": {
 		"title": "基本设置",
 		"order": 10,
-		"action": { "type": "view", "path": "xray-mosdns/overview" }
+		"action": {
+			"type": "view",
+			"path": "xray-mosdns/overview"
+		}
 	},
 	"admin/services/xray-mosdns/nodes": {
 		"title": "节点列表",
 		"order": 20,
-		"action": { "type": "view", "path": "xray-mosdns/nodes" }
+		"action": {
+			"type": "view",
+			"path": "xray-mosdns/nodes"
+		}
 	},
 	"admin/services/xray-mosdns/nodesub": {
 		"title": "节点订阅",
 		"order": 30,
-		"action": { "type": "view", "path": "xray-mosdns/nodesub" }
+		"action": {
+			"type": "view",
+			"path": "xray-mosdns/nodesub"
+		}
 	},
 	"admin/services/xray-mosdns/settings": {
 		"title": "高级设置",
 		"order": 40,
-		"action": { "type": "view", "path": "xray-mosdns/settings" }
+		"action": {
+			"type": "view",
+			"path": "xray-mosdns/settings"
+		}
 	},
 	"admin/services/xray-mosdns/balance": {
 		"title": "负载均衡",
 		"order": 50,
-		"action": { "type": "view", "path": "xray-mosdns/balance" }
-	},
-	"admin/services/xray-mosdns/ruleset": {
-		"title": "规则管理",
-		"order": 60,
-		"action": { "type": "view", "path": "xray-mosdns/ruleset" }
+		"action": {
+			"type": "view",
+			"path": "xray-mosdns/balance"
+		}
 	},
 	"admin/services/xray-mosdns/rules": {
-		"title": "规则列表",
-		"order": 70,
-		"action": { "type": "view", "path": "xray-mosdns/rules" }
+		"title": "规则管理",
+		"order": 60,
+		"action": {
+			"type": "view",
+			"path": "xray-mosdns/rules"
+		}
 	},
 	"admin/services/xray-mosdns/dns": {
 		"title": "DNS",
 		"order": 80,
-		"action": { "type": "view", "path": "xray-mosdns/dns" }
+		"action": {
+			"type": "view",
+			"path": "xray-mosdns/dns"
+		}
 	},
 	"admin/services/xray-mosdns/updates": {
 		"title": "组件更新",
 		"order": 90,
-		"action": { "type": "view", "path": "xray-mosdns/updates" }
+		"action": {
+			"type": "view",
+			"path": "xray-mosdns/updates"
+		}
 	},
 	"admin/services/xray-mosdns/traffic": {
 		"title": "流量统计",
 		"order": 100,
-		"action": { "type": "view", "path": "xray-mosdns/traffic" }
+		"action": {
+			"type": "view",
+			"path": "xray-mosdns/traffic"
+		}
 	},
 	"admin/services/xray-mosdns/log": {
 		"title": "运行日志",
 		"order": 110,
-		"action": { "type": "view", "path": "xray-mosdns/log" }
+		"action": {
+			"type": "view",
+			"path": "xray-mosdns/log"
+		}
 	}
 }

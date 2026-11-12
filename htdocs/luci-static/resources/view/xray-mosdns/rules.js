@@ -358,6 +358,56 @@ function editModal(sid) {
 	]);
 }
 
+function mainPanel() {
+	var global = uci.get(CONF, 'global') || {};
+	var balanceOn = global.balance_enabled === '1';
+	var failoverOn = global.failover_enabled === '1';
+	var main = global.main_target || 'direct';
+
+	var mainSel = E('select', { 'class': 'cbi-input-select' });
+	mainSel.appendChild(E('option', { 'value': 'direct' }, _('直连')));
+	mainSel.appendChild(E('option', { 'value': 'balance' }, _('负载均衡') + (balanceOn ? '' : _('（未启用）'))));
+	mainSel.appendChild(E('option', { 'value': 'failover' }, _('主备') + (failoverOn ? '' : _('（未启用）'))));
+	nodeList().forEach(function(n) {
+		mainSel.appendChild(E('option', { 'value': n['.name'] },
+			_('节点：') + (n.remarks || n.address || n['.name'])));
+	});
+	mainSel.value = main;
+
+	var modeSel = E('select', { 'class': 'cbi-input-select' }, [
+		E('option', { 'value': 'chnroute' }, _('大陆白名单（国内直连）')),
+		E('option', { 'value': 'gfw' }, _('GFW 列表（仅 GFW 走代理）')),
+		E('option', { 'value': 'global' }, _('全局代理')),
+		E('option', { 'value': 'custom' }, _('自定义（仅用规则）'))
+	]);
+	modeSel.value = global.rule_mode || 'chnroute';
+
+	var save = E('button', { 'class': 'cbi-button cbi-button-apply' }, _('保存'));
+	save.addEventListener('click', function() {
+		uci.set(CONF, 'global', 'main_target', mainSel.value);
+		uci.set(CONF, 'global', 'rule_mode', modeSel.value);
+		uci.save().then(function() { return uci.apply(); }).then(function() {
+			ui.addNotification(null, E('p', {}, _('分流设置已保存')), 'info');
+		});
+	});
+
+	function field(title, node, hint) {
+		return E('div', { 'class': 'cbi-value' }, [
+			E('label', { 'class': 'cbi-value-title' }, title),
+			E('div', { 'class': 'cbi-value-field' }, [ node, hint ? E('div', { 'class': 'cbi-value-description' }, hint) : '' ])
+		]);
+	}
+
+	return E('fieldset', { 'class': 'cbi-section' }, [
+		E('legend', {}, _('分流设置')),
+		E('p', { 'class': 'cbi-value-description' },
+			_('匹配顺序：先按下面的规则列表匹配（按序号从上到下），其次是“分流模式”内置规则，最后走“分流总节点”。')),
+		field(_('分流总节点'), mainSel, _('未命中任何规则时的默认出口，可选直连 / 某个节点 / 负载均衡 / 主备。')),
+		field(_('分流模式'), modeSel, _('内置规则集，优先级低于下方规则列表。')),
+		E('p', {}, save)
+	]);
+}
+
 return view.extend({
 	load: function() {
 		return Promise.all([
@@ -394,9 +444,8 @@ return view.extend({
 		refreshTable();
 
 		return E('div', {}, [
+			mainPanel(),
 			E('p', {}, _('规则按序号从上到下匹配，命中后使用对应策略；未命中时按“分流模式”内置规则，最后走“分流总节点”。可用 ↑/↓ 调整顺序。')),
-			E('p', { 'class': 'cbi-value-description' },
-				_('分流总节点与分流模式在“规则管理”页面设置。')),
 			E('p', { 'class': 'cbi-value-description' },
 				_('Geo 标签来源于 /usr/share/v2ray/geosite.dat 与 geoip.dat，支持搜索、多选；也可手动输入 domain:/full:/regexp:/CIDR。')),
 			toolbar,
