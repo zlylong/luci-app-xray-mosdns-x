@@ -37,6 +37,7 @@ return view.extend({
 		}
 
 		row(_('Plugin'), st.enabled == 1 ? E('span', { 'style': 'color:#2e7d32;font-weight:bold' }, '● enabled') : E('span', { 'style': 'color:#c62828;font-weight:bold' }, '○ disabled'));
+		row(_('分流总节点'), st.node_remarks || st.main_target || '-');
 		row(_('Xray process'), yesno(st.xray_running));
 		row(_('mosdns process'), yesno(st.mosdns_running));
 		row(_('Node'), (st.node_remarks || st.node_address) ? (st.node_remarks || '') + ' (' + (st.node_type || '') + ' ' + (st.node_address || '') + ')' : E('em', {}, _('not configured')));

@@ -33,6 +33,9 @@
 				],
 				"/usr/libexec/xray-mosdns/geo-tags.sh": [
 					"exec"
+				],
+				"/usr/libexec/xray-mosdns/update.sh": [
+					"exec"
 				]
 			}
 		},

@@ -4,10 +4,13 @@ g() { uci -q get "xray-mosdns.$1" 2>/dev/null; }
 esc() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
 
 enabled=$(g 'global.enabled'); [ -n "$enabled" ] || enabled=0
-node=$(g 'global.node')
-node_type=$(g "$node.type"); [ -n "$node_type" ] || node_type=""
-node_addr=$(g "$node.address")
-node_remarks=$(g "$node.remarks")
+main=$(g 'global.main_target'); [ -n "$main" ] || main=$(g 'global.node'); [ -n "$main" ] || main=direct
+case "$main" in
+	direct)  node="";        node_type="direct";   node_addr=""; node_remarks="直连" ;;
+	balance) node="balance"; node_type="balancer"; node_addr=""; node_remarks="负载均衡" ;;
+	*)       node="$main";   node_type=$(g "$main.type"); [ -n "$node_type" ] || node_type=""
+	         node_addr=$(g "$main.address"); node_remarks=$(g "$main.remarks") ;;
+esac
 tproxy_port=$(g 'global.tproxy_port'); [ -n "$tproxy_port" ] || tproxy_port=12345
 dns_enabled=$(g 'dns.enabled'); [ -n "$dns_enabled" ] || dns_enabled=0
 xray_bin=$(g 'global.xray_bin'); [ -n "$xray_bin" ] || xray_bin=/usr/bin/xray
@@ -23,6 +26,7 @@ printf '"xray_running":%s,' "$xray_running"
 printf '"mosdns_running":%s,' "$mosdns_running"
 printf '"dns_enabled":%s,' "$dns_enabled"
 printf '"tproxy_port":%s,' "$tproxy_port"
+printf '"main_target":"%s",' "$(esc "$main")"
 printf '"node":"%s",' "$(esc "$node")"
 printf '"node_type":"%s",' "$(esc "$node_type")"
 printf '"node_address":"%s",' "$(esc "$node_addr")"

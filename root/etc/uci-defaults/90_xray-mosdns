@@ -1,6 +1,11 @@
 #!/bin/sh
-# Ensure new options exist after upgrades (idempotent)
+# Ensure new options exist after upgrades (idempotent), and migrate the
+# old node_mode/node selection to the new "main_target" option.
 [ -f /etc/config/xray-mosdns ] || exit 0
+
+g() { uci -q get "xray-mosdns.$1" 2>/dev/null || true; }
+s() { uci -q set "xray-mosdns.$1=$2" 2>/dev/null || true; }
+
 uci -q get xray-mosdns.@dns[0] >/dev/null 2>&1 || {
 	uci batch <<-EOC
 	set xray-mosdns.dns=dns
@@ -14,18 +19,41 @@ uci -q get xray-mosdns.@dns[0] >/dev/null 2>&1 || {
 	set xray-mosdns.dns.filter_proxy_ipv6='1'
 	set xray-mosdns.dns.bootstrap='223.5.5.5'
 	EOC
-	uci commit xray-mosdns
 }
-for opt in node_mode balancer_strategy ipv6_enabled socks_port rule_mode; do
+
+for opt in allow_coexist socks_port api_port ipv6_enabled balancer_strategy; do
 	uci -q get "xray-mosdns.@global[0].$opt" >/dev/null 2>&1 || {
 		case "$opt" in
-			node_mode) uci set xray-mosdns.@global[0].node_mode='single' ;;
-			balancer_strategy) uci set xray-mosdns.@global[0].balancer_strategy='leastLoad' ;;
-			ipv6_enabled) uci set xray-mosdns.@global[0].ipv6_enabled='0' ;;
-			socks_port) uci set xray-mosdns.@global[0].socks_port='1070' ;;
-			rule_mode) uci set xray-mosdns.@global[0].rule_mode='chnroute' ;;
+			allow_coexist) s @global[0].allow_coexist '0' ;;
+			socks_port) s @global[0].socks_port '1070' ;;
+			api_port) s @global[0].api_port '10085' ;;
+			ipv6_enabled) s @global[0].ipv6_enabled '0' ;;
+			balancer_strategy) s @global[0].balancer_strategy 'leastLoad' ;;
 		esac
 	}
 done
+
+# migrate node selection -> main_target / balance_enabled
+if [ -z "$(g @global[0].main_target)" ]; then
+	case "$(g @global[0].node_mode)" in
+		balance)
+			s @global[0].main_target 'balance'
+			s @global[0].balance_enabled '1'
+			;;
+		*)
+			_node=$(g @global[0].node)
+			[ -n "$_node" ] && s @global[0].main_target "$_node"
+			;;
+	esac
+	[ -n "$(g @global[0].main_target)" ] || s @global[0].main_target 'direct'
+fi
+uci -q get xray-mosdns.@global[0].rule_mode >/dev/null 2>&1 || s @global[0].rule_mode 'chnroute'
+uci -q get xray-mosdns.@global[0].balance_enabled >/dev/null 2>&1 || s @global[0].balance_enabled '0'
+
+# drop removed legacy options/lists
+for opt in node_mode node bypass_chn default_outbound proxy_domains direct_domains block_domains; do
+	uci -q get "xray-mosdns.@global[0].$opt" >/dev/null 2>&1 && uci -q delete "xray-mosdns.@global[0].$opt"
+done
+
 uci commit xray-mosdns
 exit 0

@@ -25,10 +25,10 @@ LuCI 管理界面：用 **Xray**（TProxy 透明代理）+ **mosdns-x**（DNS �
   （leastLoad/roundRobin/random，leastLoad 带 burstObservatory 健康检查，支持 fallback 节点）
 - **规则管理**：`config rule` 段或 LuCI Rules 页按 域名/IP/端口/协议 分流到 proxy/direct/block
 - **IPv6**：`ipv6_enabled=1` 时同时下发 IPv6 nft tproxy 规则与 `ip -6 rule/route`
-- **流量统计**：Traffic 页直接复用 nlbwmon 的按主机统计
+- **节点流量**：Xray StatsService 按节点统计上下行（仅代理节点）
 - **节点列表**：表格只显示 启用/备注/地址/延迟，点“详情”弹窗编辑全部参数，支持单节点测速、全部测速
 - **订阅导入**：节点页“导入节点”弹窗粘贴 vless/vmess/trojan/ss/hysteria2 链接，批量生成（默认禁用）节点
-- **分流模式**（PassWall 风格）：大陆白名单 / GFW 列表 / 全局代理 / 自定义
+- **分流逻辑（PassWall 风格）**：分流总节点（直连/指定节点/负载均衡）→ 分流模式内置规则（大陆白名单/GFW/全局/自定义）→ 自定义规则（规则优先级最高，可指向总节点、指定节点、负载均衡、直连、阻断）
 - **规则页**：从 geosite.dat/geoip.dat 自动提取标签（本机 1562 个 geosite + 260 个 geoip），支持搜索、多选、chips 展示
 - **负载均衡说明**：平衡模式会把所有“启用”节点纳入 Xray balancer；leastLoad 每分钟健康检查一次，
   自动选择当前延迟最低的可用节点（选路/故障切换，不是按连接数分摊），无可用节点时使用备用节点
@@ -136,6 +136,7 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
 | global | fallback_node | balancer 无健康节点时的兜底节点 |
 | global | ipv6_enabled | 启用 IPv6 TProxy（实验性） |
 | node | type/address/port/uuid/... | vless / vmess / trojan / shadowsocks / hysteria2 节点 |
+| global | api_port | Xray 本地统计 API 端口（默认 10085，用于节点流量） |
 | rule | rule_type/value/outbound | 自定义分流规则：domain/ip/port/network → proxy/direct/block |
 
 ## 已知限制（v0.2）
@@ -158,6 +159,11 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
 - [x] PassWall 式分流模式（大陆白名单 / GFW 列表 / 全局 / 自定义）
 - [x] 规则页 geo 标签搜索/多选（含 geosite/geoip 自动提取）
 - [x] 备用节点可选全部节点（修复只能选“直连”的问题）
+- [x] 分流总节点 / 负载均衡 / 规则 三级结构（PassWall 风格）
+- [x] 节点页合并负载均衡设置，设置页移除旧版域名列表
+- [x] 在线更新（Xray / mosdns-x / geo 数据，带备份）
+- [x] 节点流量统计（Xray StatsService）
+- [x] DNS 页面中文化、日志等级可选
 - [ ] Gitea Actions 构建产物发布（未包含）
 
 ## 许可

@@ -319,6 +319,59 @@ function addActions(row, n) {
 	return latCell;
 }
 
+function balancePanel() {
+	var global = uci.get(CONF, 'global') || {};
+	var strategy = global.balancer_strategy || 'leastLoad';
+	var fallback = global.fallback_node || '';
+
+	var enabled = E('input', { 'type': 'checkbox', 'class': 'cbi-input-checkbox' });
+	if (global.balance_enabled === '1') enabled.checked = true;
+
+	var strat = E('select', { 'class': 'cbi-input-select' }, [
+		E('option', { 'value': 'leastLoad' }, _('leastLoad（自动选最快节点）')),
+		E('option', { 'value': 'roundRobin' }, _('roundRobin（轮询）')),
+		E('option', { 'value': 'random' }, _('random（随机）'))
+	]);
+	strat.value = strategy;
+
+	var fb = E('select', { 'class': 'cbi-input-select' });
+	fb.appendChild(E('option', { 'value': '' }, _('直连')));
+	nodes().forEach(function(n) {
+		var label = (n.remarks || n.address || n['.name']) + (n.address ? ' (' + n.address + ':' + (n.port || 443) + ')' : '');
+		var o = E('option', { 'value': n['.name'] }, label);
+		if (n['.name'] === fallback) o.selected = true;
+		fb.appendChild(o);
+	});
+
+	var save = E('button', { 'class': 'cbi-button cbi-button-apply' }, _('保存'));
+	save.addEventListener('click', function() {
+		uci.set(CONF, 'global', 'balance_enabled', enabled.checked ? '1' : '0');
+		uci.set(CONF, 'global', 'balancer_strategy', strat.value);
+		uci.set(CONF, 'global', 'fallback_node', fb.value);
+		uci.save().then(function() { return uci.apply(); }).then(function() {
+			ui.addNotification(null, E('p', {}, _('负载均衡设置已保存')), 'info');
+		});
+	});
+
+	function field(title, el) {
+		return E('div', { 'class': 'cbi-value' }, [
+			E('label', { 'class': 'cbi-value-title' }, title),
+			E('div', { 'class': 'cbi-value-field' }, el)
+		]);
+	}
+
+	return E('fieldset', { 'class': 'cbi-section' }, [
+		E('legend', {}, _('负载均衡')),
+		E('p', { 'class': 'cbi-value-description' },
+			_('启用后，“分流总节点”可选“负载均衡”，规则也可选择“负载均衡”。成员是所有已启用的节点；' +
+			  'leastLoad 每分钟探活并选择延迟最低的可用节点（自动选路/故障切换，不是按连接数分摊）。')),
+		field(_('启用负载均衡'), enabled),
+		field(_('均衡策略'), strat),
+		field(_('备用节点'), fb),
+		E('p', {}, save)
+	]);
+}
+
 function refreshTable() {
 	if (!tbody) return;
 	tbody.replaceChildren();
@@ -371,6 +424,7 @@ return view.extend({
 		});
 
 		var toolbar = E('div', { 'class': 'cbi-section-node' }, [ addBtn, ' ', impBtn, ' ', testAllBtn ]);
+		tableWrap.appendChild(balancePanel());
 		tableWrap.appendChild(toolbar);
 		tableWrap.appendChild(E('table', { 'class': 'table cbi-section-table' }, [
 			E('thead', {}, [ E('tr', { 'class': 'tr table-titles' }, [

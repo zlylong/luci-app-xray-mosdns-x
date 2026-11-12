@@ -37,18 +37,28 @@ LOGLEVEL=$(gdef global.log_level warning)
 SNIFF_EN=$(gb global.sniffing)
 RULE_MODE=$(gdef global.rule_mode chnroute)
 case "$RULE_MODE" in
-	chnroute) BYPASS_CHN=1; DEFAULT_OUT=proxy ;;
-	gfw)      BYPASS_CHN=0; DEFAULT_OUT=direct ;;
-	global)   BYPASS_CHN=0; DEFAULT_OUT=proxy ;;
-	custom)   BYPASS_CHN=$(gb global.bypass_chn); DEFAULT_OUT=$(gdef global.default_outbound proxy) ;;
-	*)        RULE_MODE=chnroute; BYPASS_CHN=1; DEFAULT_OUT=proxy ;;
+	chnroute) BYPASS_CHN=1 ;;
+	gfw|global|custom) BYPASS_CHN=0 ;;
+	*) RULE_MODE=chnroute; BYPASS_CHN=1 ;;
 esac
 SOCKS_PORT=$(gdef global.socks_port 1070)
-NODE=$(g global.node)
-NODE_MODE=$(gdef global.node_mode single)
+API_PORT=$(gdef global.api_port 10085)
 BAL_STRATEGY=$(gdef global.balancer_strategy leastLoad)
 FALLBACK_NODE=$(g global.fallback_node)
 IPV6_EN=$(gb global.ipv6_enabled)
+# "分流总节点": direct | balance | <node section>. Falls back to the legacy
+# node_mode/node options when the new option is absent (config migration).
+MAIN_TARGET=$(g global.main_target)
+BALANCE_EN=$(gb global.balance_enabled)
+if [ -z "$MAIN_TARGET" ]; then
+	_legacy_mode=$(g global.node_mode)
+	if [ "$_legacy_mode" = "balance" ] || [ "$BALANCE_EN" = "1" ]; then
+		MAIN_TARGET=balance
+	else
+		MAIN_TARGET=$(g global.node)
+		[ -n "$MAIN_TARGET" ] || MAIN_TARGET=direct
+	fi
+fi
 
 # ---------------------------------------------------------------- dns
 DNS_LISTEN=$(gdef dns.listen_port 5353)
@@ -175,67 +185,101 @@ node_outbound_json() {
 	esac
 }
 
-# collect nodes: single mode -> selected node, balance mode -> all enabled nodes
-NODE_LIST=""
-if [ "$NODE_MODE" = "balance" ]; then
+# ---------------------------------------------------------------- node selection
+node_enabled() { [ "$(gb "$1.enabled")" = "1" ] && echo 1 || echo 0; }
+node_exists() { for _x in $(node_names); do [ "$_x" = "$1" ] && return 0; done; return 1; }
+rule_names() { uci -q show "$CFG" 2>/dev/null | sed -n "s/^${CFG}\.\([^.=]*\)=rule$/\1/p"; }
+
+BAL_NEEDED=0
+NEEDED_NODES=""
+add_needed() {
+	case " $NEEDED_NODES " in
+		*" $1 "*) ;;
+		*) NEEDED_NODES="${NEEDED_NODES:+$NEEDED_NODES }$1" ;;
+	esac
+}
+
+[ "$MAIN_TARGET" = "balance" ] && BAL_NEEDED=1
+case "$MAIN_TARGET" in
+	direct|balance) ;;
+	*)
+		node_exists "$MAIN_TARGET" || die "main node '$MAIN_TARGET' not found"
+		add_needed "$MAIN_TARGET"
+		;;
+esac
+
+# pre-scan rules: balancer need + referenced nodes
+for r in $(rule_names); do
+	[ "$(gb "$r.enabled")" = "1" ] || continue
+	[ -n "$(g "$r.value")" ] || continue
+	ro=$(g "$r.outbound"); [ -n "$ro" ] || ro=main
+	case "$ro" in
+		main|proxy|direct|block) ;;
+		balance) BAL_NEEDED=1 ;;
+		*) if node_exists "$ro"; then add_needed "$ro"; else die "rule $r: unknown outbound '$ro'"; fi ;;
+	esac
+done
+
+if [ "$BAL_NEEDED" = "1" ]; then
+	if [ -n "$FALLBACK_NODE" ] && node_exists "$FALLBACK_NODE"; then
+		add_needed "$FALLBACK_NODE"
+	fi
 	for n in $(node_names); do
-		[ "$(gb "$n.enabled")" = "1" ] && NODE_LIST="$NODE_LIST $n"
+		[ "$(node_enabled "$n")" = "1" ] && add_needed "$n"
 	done
-	[ -n "$NODE_LIST" ] || die "balance mode: no enabled node"
-else
-	[ -n "$NODE" ] || die "no node selected (xray-mosdns.global.node)"
-	NODE_LIST="$NODE"
+	_cnt=0
+	for n in $NEEDED_NODES; do _cnt=$((_cnt + 1)); done
+	[ "$_cnt" -gt 0 ] || die "load balancing enabled but no enabled node"
 fi
 
-i=0
-for n in $NODE_LIST; do
-	i=$((i + 1))
-	if [ "$NODE_MODE" = "balance" ]; then
-		node_outbound_json "$n" "proxy-$n" > "$NODEDIR/$i.json"
+node_tag() {
+	if [ "$BAL_NEEDED" = "1" ] && [ "$(node_enabled "$1")" = "1" ]; then
+		echo "proxy-$1"
 	else
-		node_outbound_json "$n" "proxy" > "$NODEDIR/$i.json"
+		echo "out-$1"
 	fi
+}
+
+i=0
+for n in $NEEDED_NODES; do
+	i=$((i + 1))
+	node_outbound_json "$n" "$(node_tag "$n")" > "$NODEDIR/$i.json"
 done
 
 # node IP set for the nftables bypass rule (all resolved addresses)
 NODE_IPS=$(sort -u "$OUT/.resolved" 2>/dev/null | tr '\n' ' ')
 NODE_IPS_JSON=$(printf '%s' "$NODE_IPS" | awk '{for(i=1;i<=NF;i++){printf "%s\"%s\"",(i>1?",":""),$i}}')
-
 # ---------------------------------------------------------------- routing rules
 RULES=""
 add_rule() { RULES="${RULES:+$RULES,
     }$1"; }
-proxy_target() {
-	if [ "$NODE_MODE" = "balance" ]; then printf ',"balancerTag":"balancer"'; else printf ',"outboundTag":"proxy"'; fi
+target_json() {
+	case "$1" in
+		main|proxy)
+			case "$MAIN_TARGET" in
+				direct) printf ',"outboundTag":"direct"' ;;
+				balance) printf ',"balancerTag":"balancer"' ;;
+				*) printf ',"outboundTag":"%s"' "$(node_tag "$MAIN_TARGET")" ;;
+			esac ;;
+		balance) printf ',"balancerTag":"balancer"' ;;
+		direct) printf ',"outboundTag":"direct"' ;;
+		block) printf ',"outboundTag":"block"' ;;
+		*) printf ',"outboundTag":"%s"' "$(node_tag "$1")" ;;
+	esac
 }
 
+add_rule '{"type":"field","inboundTag":["api"],"outboundTag":"api"}'
 add_rule '{"type":"field","ip":["geoip:private"],"outboundTag":"direct"}'
 [ -n "$NODE_IPS_JSON" ] && add_rule "{\"type\":\"field\",\"ip\":[$(printf '%s' "$NODE_IPS_JSON")],\"outboundTag\":\"direct\"}"
-if [ "$BYPASS_CHN" = "1" ]; then
-	add_rule '{"type":"field","domain":["geosite:cn"],"outboundTag":"direct"}'
-	add_rule '{"type":"field","ip":["geoip:cn"],"outboundTag":"direct"}'
-fi
-if [ "$RULE_MODE" = "gfw" ]; then
-	# PassWall "GFW list" mode: only the GFW domain list is proxied, everything else direct
-	add_rule "{\"type\":\"field\",\"domain\":[\"geosite:gfw\"]$(proxy_target)}"
-fi
 
-# user defined rules (config rule sections, file order)
-rule_names() {
-	uci -q show "$CFG" 2>/dev/null | sed -n "s/^${CFG}\.\([^.=]*\)=rule$/\1/p"
-}
+# user rules have priority over the built-in split mode
 for r in $(rule_names); do
 	[ "$(gb "$r.enabled")" = "1" ] || continue
 	rtype=$(g "$r.rule_type"); [ -n "$rtype" ] || rtype=domain
 	rvalue=$(g "$r.value")
-	rout=$(g "$r.outbound"); [ -n "$rout" ] || rout=proxy
+	rout=$(g "$r.outbound"); [ -n "$rout" ] || rout=main
 	[ -n "$rvalue" ] || continue
-	case "$rout" in
-		proxy) tgt=$(proxy_target) ;;
-		direct) tgt=',"outboundTag":"direct"' ;;
-		block)  tgt=',"outboundTag":"block"' ;;
-		*) tgt=$(proxy_target) ;;
-	esac
+	tgt=$(target_json "$rout")
 	case "$rtype" in
 		domain) add_rule "{\"type\":\"field\",\"domain\":$(list_json "$(echo "$rvalue" | tr ',' ' ')")${tgt}}" ;;
 		ip)     add_rule "{\"type\":\"field\",\"ip\":$(list_json "$(echo "$rvalue" | tr ',' ' ')")${tgt}}" ;;
@@ -245,21 +289,17 @@ for r in $(rule_names); do
 	esac
 done
 
-# legacy domain lists
-for _d in $(uci -q get "$CFG.global.direct_domains" 2>/dev/null || true); do
-	add_rule "{\"type\":\"field\",\"domain\":[$(jstr "$_d")],\"outboundTag\":\"direct\"}"
-done
-for _d in $(uci -q get "$CFG.global.proxy_domains" 2>/dev/null || true); do
-	add_rule "{\"type\":\"field\",\"domain\":[$(jstr "$_d")]$(proxy_target)}"
-done
-for _d in $(uci -q get "$CFG.global.block_domains" 2>/dev/null || true); do
-	add_rule "{\"type\":\"field\",\"domain\":[$(jstr "$_d")],\"outboundTag\":\"block\"}"
-done
-if [ "$DEFAULT_OUT" = "direct" ]; then
-	add_rule '{"type":"field","network":"tcp,udp","outboundTag":"direct"}'
-else
-	add_rule "{\"type\":\"field\",\"network\":\"tcp,udp\"$(proxy_target)}"
+# built-in split mode rules
+if [ "$BYPASS_CHN" = "1" ]; then
+	add_rule '{"type":"field","domain":["geosite:cn"],"outboundTag":"direct"}'
+	add_rule '{"type":"field","ip":["geoip:cn"],"outboundTag":"direct"}'
 fi
+if [ "$RULE_MODE" = "gfw" ]; then
+	add_rule "{\"type\":\"field\",\"domain\":[\"geosite:gfw\"]$(target_json main)}"
+fi
+
+# default: 分流总节点
+add_rule "{\"type\":\"field\",\"network\":\"tcp,udp\"$(target_json main)}"
 
 SNIFFJSON=''
 if [ "$SNIFF_EN" = "1" ]; then
@@ -278,26 +318,31 @@ TPROXY_LISTEN="0.0.0.0"
 	printf '     "settings": {"allowedNetwork": "tcp,udp"},\n'
 	printf '     "streamSettings": {"sockopt": {"tproxy": "tproxy"}}%s},\n' "${SNIFFJSON:+,$SNIFFJSON}"
 	printf '    {"tag": "socks-in", "port": %s, "protocol": "socks", "listen": "127.0.0.1",\n' "$SOCKS_PORT"
-	printf '     "settings": {"udp": true, "auth": "noauth"}%s}\n' "${SNIFFJSON:+,$SNIFFJSON}"
+	printf '     "settings": {"udp": true, "auth": "noauth"}%s},\n' "${SNIFFJSON:+,$SNIFFJSON}"
+	printf '    {"tag": "api", "listen": "127.0.0.1", "port": %s, "protocol": "dokodemo-door", "settings": {"address": "127.0.0.1"}}\n' "$API_PORT"
 	printf '  ],\n'
 	printf '  "outbounds": [\n'
 	for f in "$NODEDIR"/*.json; do
+		[ -f "$f" ] || continue
 		printf '    %s,\n' "$(cat "$f")"
 	done
 	printf '    {"tag": "direct", "protocol": "freedom"},\n'
 	printf '    {"tag": "block", "protocol": "blackhole"}\n'
 	printf '  ],\n'
+	printf '  "stats": {},\n'
+	printf '  "api": {"tag": "api", "services": ["StatsService"]},\n'
+	printf '  "policy": {"system": {"statsInboundUplink": true, "statsInboundDownlink": true, "statsOutboundUplink": true, "statsOutboundDownlink": true}},\n'
 	FB_TAG="direct"
-	if [ "$NODE_MODE" = "balance" ] && [ -n "$FALLBACK_NODE" ] && [ "$(gb "$FALLBACK_NODE.enabled")" = "1" ]; then
-		FB_TAG="proxy-$FALLBACK_NODE"
+	if [ "$BAL_NEEDED" = "1" ] && [ -n "$FALLBACK_NODE" ] && node_exists "$FALLBACK_NODE"; then
+		FB_TAG=$(node_tag "$FALLBACK_NODE")
 	fi
-	if [ "$NODE_MODE" = "balance" ]; then
+	if [ "$BAL_NEEDED" = "1" ]; then
 		# the observatory also registers the balancer members as used outbounds,
 		# otherwise fallbackTag/selector members may be pruned as unresolved deps
 		printf '  "burstObservatory": {"subjectSelector": ["proxy-"], "pingConfig": {"destination": "https://www.gstatic.com/generate_204", "interval": "1m", "timeout": "5s", "sampling": 3}},\n'
 	fi
 	printf '  "routing": {"domainStrategy": "IPIfNonMatch",\n'
-	if [ "$NODE_MODE" = "balance" ]; then
+	if [ "$BAL_NEEDED" = "1" ]; then
 		printf '    "balancers": [{"tag": "balancer", "selector": ["proxy-"], "strategy": {"type": %s}, "fallbackTag": %s}],\n' \
 			"$(jstr "$BAL_STRATEGY")" "$(jstr "$FB_TAG")"
 	fi
@@ -312,7 +357,7 @@ BYPASS_EXTRA=""
 for _ip in $(uci -q get "$CFG.global.bypass_ips" 2>/dev/null || true); do
 	[ -n "$_ip" ] && BYPASS_EXTRA="$BYPASS_EXTRA, $_ip"
 done
-V6_IPS=$(for n in $NODE_LIST; do a=$(g "$n.address"); [ -n "$a" ] && resolve_v6 "$a"; done 2>/dev/null | grep -E '^[0-9a-fA-F:]+$' | grep ':' | sort -u | tr '\n' ' ')
+V6_IPS=$(for n in $NEEDED_NODES; do a=$(g "$n.address"); [ -n "$a" ] && resolve_v6 "$a"; done 2>/dev/null | grep -E '^[0-9a-fA-F:]+$' | grep ':' | sort -u | tr '\n' ' ')
 [ -f "$OUT/.resolved6" ] && V6_IPS=$(printf '%s\n%s\n' "$V6_IPS" "$(cat "$OUT/.resolved6")" | grep -E '^[0-9a-fA-F:]+$' | grep ':' | sort -u | tr '\n' ' ')
 {
 	printf 'table inet xray-mosdns {\n'
@@ -391,5 +436,5 @@ printf '%s\n' "$NODE_IPS" > "$OUT/node_ips.txt"
 	printf '      - protocol: tcp\n        addr: "[::1]:%s"\n' "$DNS_LISTEN"
 } > "$OUT/mosdns.yaml"
 
-log "config generated in $OUT (mode=$NODE_MODE nodes=$(printf '%s' "$NODE_LIST" | wc -w) tproxy=$TPROXY_PORT ipv6=$IPV6_EN dns=$DNS_LISTEN)"
+log "config generated in $OUT (main=$MAIN_TARGET balance=$BAL_NEEDED nodes=$(printf '%s' "$NEEDED_NODES" | wc -w) tproxy=$TPROXY_PORT ipv6=$IPV6_EN dns=$DNS_LISTEN)"
 exit 0

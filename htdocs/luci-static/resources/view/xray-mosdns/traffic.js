@@ -1,8 +1,10 @@
 'use strict';
 'require view';
+'require uci';
 'require fs';
 'require poll';
-'require ui';
+
+var CONF = 'xray-mosdns';
 
 function fmtBytes(n) {
 	n = Number(n) || 0;
@@ -12,70 +14,86 @@ function fmtBytes(n) {
 	return (n / 1073741824).toFixed(2) + ' GiB';
 }
 
-function fmtNum(n) {
-	return String(Number(n) || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+function nodeLabel(tag) {
+	var name = tag.replace(/^(proxy-|out-)/, '');
+	var found = null;
+	(uci.sections(CONF, 'node') || []).forEach(function(n) { if (n['.name'] === name) found = n; });
+	if (!found) return name;
+	return (found.remarks || found.address || name) + (found.address ? ' (' + found.address + ':' + (found.port || 443) + ')' : '');
+}
+
+function errorText(err) {
+	if (err === 'xray_not_running') return _('Xray 未运行（启用插件后才有节点流量）');
+	if (err === 'api_unavailable') return _('统计接口不可用（检查“设置 → 本地统计 API 端口”）');
+	return err || _('未知错误');
 }
 
 return view.extend({
 	load: function() {
-		return fs.exec('/usr/libexec/xray-mosdns/traffic.sh', []);
+		return Promise.all([
+			uci.load(CONF),
+			fs.exec('/usr/libexec/xray-mosdns/traffic.sh', []).then(function(res) {
+				try { return JSON.parse((res && res.stdout) || '{}'); } catch (e) { return {}; }
+			}).catch(function() { return {}; })
+		]);
 	},
 
 	render: function(res) {
-		var self = this;
 		var tbody = E('tbody');
+		var errEl = E('p', { 'class': 'cbi-value-description' });
+		var totalEl = E('span', {}, '-');
 
-		function render(res) {
-			var data = {};
-			try { data = JSON.parse((res && res.stdout) || '{}'); } catch (e) { data = {}; }
-			var rows = data.data || [];
-			var max = 1;
-			rows.forEach(function(r) { max = Math.max(max, Number(r[2] || 0) + Number(r[4] || 0)); });
-
-			while (tbody.firstChild)
-				tbody.removeChild(tbody.firstChild);
-
-			if (!rows.length) {
-				tbody.appendChild(E('tr', {}, [E('td', { 'colspan': 5, 'class': 'td' }, _('No traffic data (is nlbwmon installed and running?)'))]));
-				return;
+		function renderData(data) {
+			while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+			if (data.error) {
+				errEl.textContent = errorText(data.error);
+				totalEl.textContent = '-';
 			}
-			rows.forEach(function(r) {
-				var total = Number(r[2] || 0) + Number(r[4] || 0);
-				var pct = Math.max(1, Math.round(total / max * 100));
+			else {
+				errEl.textContent = '';
+			}
+			var nodes = data.nodes || [];
+			var up = 0, down = 0;
+			nodes.forEach(function(n) {
+				up += Number(n.uplink) || 0;
+				down += Number(n.downlink) || 0;
 				tbody.appendChild(E('tr', { 'class': 'tr' }, [
-					E('td', { 'class': 'td' }, r[0] || ''),
-					E('td', { 'class': 'td' }, fmtNum(r[1])),
-					E('td', { 'class': 'td' }, fmtBytes(r[2])),
-					E('td', { 'class': 'td' }, fmtBytes(r[4])),
-					E('td', { 'class': 'td' }, E('div', { 'style': 'background:#e8f5e9;border-radius:3px;height:14px;width:%s%%;min-width:2px'.format(pct) }))
+					E('td', { 'class': 'td' }, nodeLabel(n.tag)),
+					E('td', { 'class': 'td' }, fmtBytes(n.uplink)),
+					E('td', { 'class': 'td' }, fmtBytes(n.downlink)),
+					E('td', { 'class': 'td' }, fmtBytes(n.total))
 				]));
 			});
+			if (!nodes.length) {
+				tbody.appendChild(E('tr', { 'class': 'tr' }, [
+					E('td', { 'class': 'td', 'colspan': 4 }, _('暂无节点流量数据'))
+				]));
+			}
+			totalEl.textContent = fmtBytes(up) + ' / ' + fmtBytes(down);
 		}
 
-		render(res);
+		renderData(res && res[1] ? res[1] : {});
+
 		poll.add(function() {
-			return fs.exec('/usr/libexec/xray-mosdns/traffic.sh', []).then(render);
-		}, 15);
+			return fs.exec('/usr/libexec/xray-mosdns/traffic.sh', []).then(function(r) {
+				try { renderData(JSON.parse((r && r.stdout) || '{}')); } catch (e) { /* ignore */ }
+			});
+		}, 10);
 
 		return E('div', {}, [
-			E('h2', {}, _('Traffic')),
-			E('p', {}, _('Per-host traffic counters from nlbwmon (updated every 15 seconds).')), 
+			E('h2', {}, _('节点流量')),
+			E('p', {}, _('仅统计代理节点流量（来自 Xray StatsService），每 10 秒刷新。')),
+			errEl,
 			E('table', { 'class': 'table' }, [
-				E('tr', { 'class': 'tr table-titles' }, [
-					E('th', { 'class': 'th' }, _('Host (MAC)')),
-					E('th', { 'class': 'th' }, _('Connections')),
-					E('th', { 'class': 'th' }, _('Download')),
-					E('th', { 'class': 'th' }, _('Upload')),
-					E('th', { 'class': 'th' }, _('Total'))
-				]),
+				E('thead', {}, [ E('tr', { 'class': 'tr table-titles' }, [
+					E('th', { 'class': 'th' }, _('节点')),
+					E('th', { 'class': 'th' }, _('上传')),
+					E('th', { 'class': 'th' }, _('下载')),
+					E('th', { 'class': 'th' }, _('合计'))
+				]) ]),
 				tbody
 			]),
-			E('p', {}, E('button', {
-				'class': 'cbi-button',
-				'click': ui.createHandlerFn(self, function() {
-					return fs.exec('/usr/libexec/xray-mosdns/traffic.sh', []).then(render);
-				})
-			}, _('Refresh')))
+			E('p', {}, [ _('节点流量合计（上传 / 下载）：'), totalEl ])
 		]);
 	},
 

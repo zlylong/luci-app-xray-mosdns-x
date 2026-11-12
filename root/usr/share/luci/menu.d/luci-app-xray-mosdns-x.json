@@ -67,5 +67,13 @@
 			"type": "view",
 			"path": "xray-mosdns/log"
 		}
+	},
+	"admin/services/xray-mosdns/update": {
+		"title": "Update",
+		"order": 65,
+		"action": {
+			"type": "view",
+			"path": "xray-mosdns/update"
+		}
 	}
 }

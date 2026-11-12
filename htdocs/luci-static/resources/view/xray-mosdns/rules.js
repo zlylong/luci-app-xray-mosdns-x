@@ -13,11 +13,37 @@ var TYPES = {
 	network: _('协议 (tcp/udp)')
 };
 
-var POLICIES = {
-	proxy: _('代理'),
+var STATIC_POLICIES = {
+	main: _('跟随总节点'),
+	balance: _('负载均衡'),
 	direct: _('直连'),
 	block: _('阻断')
 };
+
+function nodeList() {
+	return uci.sections(CONF, 'node') || [];
+}
+
+function policyOptions() {
+	var opts = [ 'main', 'balance', 'direct', 'block' ];
+	var labels = {};
+	opts.forEach(function(k) { labels[k] = STATIC_POLICIES[k]; });
+	nodeList().forEach(function(n) {
+		var label = (n.remarks || n.address || n['.name']);
+		opts.push(n['.name']);
+		labels[n['.name']] = _('节点：') + label;
+	});
+	return { order: opts, labels: labels };
+}
+
+function policyLabel(v) {
+	if (!v || v === 'main' || v === 'proxy') return STATIC_POLICIES.main;
+	if (STATIC_POLICIES[v]) return STATIC_POLICIES[v];
+	var found = null;
+	nodeList().forEach(function(n) { if (n['.name'] === v) found = n; });
+	if (found) return _('节点：') + (found.remarks || found.address || v);
+	return v;
+}
 
 var geoData = { geosite: [], geoip: [] };
 var ruleTbody = null;
@@ -121,7 +147,7 @@ function refreshTable() {
 		tr.appendChild(E('td', { 'class': 'td' }, [ E('strong', {}, r.remarks || '-') ]));
 		tr.appendChild(E('td', { 'class': 'td' }, TYPES[r.rule_type] || r.rule_type || ''));
 		tr.appendChild(E('td', { 'class': 'td' }, [ E('span', { 'title': r.value || '' }, displayValue(r)) ]));
-		tr.appendChild(E('td', { 'class': 'td' }, POLICIES[r.outbound] || r.outbound || ''));
+		tr.appendChild(E('td', { 'class': 'td' }, policyLabel(r.outbound)));
 		var ops = E('td', { 'class': 'td cbi-section-actions' });
 		var edit = E('button', { 'class': 'cbi-button cbi-button-action' }, _('详情'));
 		var del = E('button', { 'class': 'cbi-button cbi-button-remove' }, _('删除'));
@@ -174,7 +200,8 @@ function editModal(sid) {
 	var container = E('div', {}, []);
 
 	var typeSel = selectBox('ru-type', TYPES, type);
-	var polSel = selectBox('ru-policy', POLICIES, r.outbound || 'proxy');
+	var polOpts = policyOptions();
+	var polSel = selectBox('ru-policy', polOpts.labels, r.outbound || 'main');
 
 	var chips = E('div', { 'style': 'margin:4px 0;min-height:24px;' });
 	var search = E('input', { 'id': 'ru-search', 'type': 'text', 'class': 'cbi-input-text', 'placeholder': _('搜索 geo 标签…') });
@@ -298,6 +325,58 @@ function editModal(sid) {
 	]);
 }
 
+function mainPanel() {
+	var global = uci.get(CONF, 'global') || {};
+	var balanceOn = global.balance_enabled === '1';
+	var main = global.main_target || 'direct';
+	var mode = global.rule_mode || 'chnroute';
+
+	var mainSel = E('select', { 'class': 'cbi-input-select' });
+	var optDirect = E('option', { 'value': 'direct' }, _('直连'));
+	var optBalance = E('option', { 'value': 'balance' }, _('负载均衡') + (balanceOn ? '' : _('（未启用）')));
+	mainSel.appendChild(optDirect);
+	mainSel.appendChild(optBalance);
+	nodeList().forEach(function(n) {
+		mainSel.appendChild(E('option', { 'value': n['.name'] },
+			_('节点：') + (n.remarks || n.address || n['.name'])));
+	});
+	mainSel.value = (main === '' ? 'direct' : main);
+
+	var modeSel = E('select', { 'class': 'cbi-input-select' }, [
+		E('option', { 'value': 'chnroute' }, _('大陆白名单（国内直连）')),
+		E('option', { 'value': 'gfw' }, _('GFW 列表（仅 GFW 走代理）')),
+		E('option', { 'value': 'global' }, _('全局代理')),
+		E('option', { 'value': 'custom' }, _('自定义（仅用规则）'))
+	]);
+	modeSel.value = mode;
+
+	var save = E('button', { 'class': 'cbi-button cbi-button-apply' }, _('保存'));
+	save.addEventListener('click', function() {
+		uci.set(CONF, 'global', 'main_target', mainSel.value);
+		uci.set(CONF, 'global', 'rule_mode', modeSel.value);
+		uci.save().then(function() { return uci.apply(); }).then(function() {
+			ui.addNotification(null, E('p', {}, _('分流设置已保存')), 'info');
+		});
+	});
+
+	function field(title, el, hint) {
+		return E('div', { 'class': 'cbi-value' }, [
+			E('label', { 'class': 'cbi-value-title' }, title),
+			E('div', { 'class': 'cbi-value-field' }, [ el, hint ? E('div', { 'class': 'cbi-value-description' }, hint) : '' ])
+		]);
+	}
+
+	return E('fieldset', { 'class': 'cbi-section' }, [
+		E('legend', {}, _('分流设置')),
+		E('p', { 'class': 'cbi-value-description' },
+			_('匹配顺序：先按下面的规则匹配，其次是“分流模式”内置规则，最后走“分流总节点”。' +
+			  '分流总节点可以是直连、某个节点或负载均衡。')),
+		field(_('分流总节点'), mainSel, _('未命中任何规则时的默认出口。')),
+		field(_('分流模式'), modeSel, _('内置规则集，优先级低于上方规则列表。')),
+		E('p', {}, save)
+	]);
+}
+
 return view.extend({
 	load: function() {
 		return Promise.all([
@@ -333,7 +412,8 @@ return view.extend({
 		refreshTable();
 
 		return E('div', {}, [
-			E('p', {}, _('规则按顺序匹配，命中后使用对应策略；未命中时按“设置 → 分流模式”处理。')),
+			mainPanel(),
+			E('p', {}, _('规则按顺序匹配，命中后使用对应策略；未命中时按“分流模式”内置规则，最后走“分流总节点”。')),
 			E('p', { 'class': 'cbi-value-description' },
 				_('Geo 标签来源于 /usr/share/v2ray/geosite.dat 与 geoip.dat，支持搜索、多选；也可手动输入 domain:/full:/regexp:/CIDR。')),
 			toolbar,
