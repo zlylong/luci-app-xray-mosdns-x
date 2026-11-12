@@ -12,7 +12,7 @@ return view.extend({
 		var m, s, o;
 
 		m = new form.Map('xray-mosdns', _('Nodes'),
-			_('Proxy nodes. The node selected on the Settings page is used as the default outbound.'));
+			_('Proxy nodes. Single mode uses the node selected on the Settings page; balance mode puts every enabled node into the balancer.'));
 
 		s = m.section(form.GridSection, 'node', _('Node'));
 		s.addremove = true;

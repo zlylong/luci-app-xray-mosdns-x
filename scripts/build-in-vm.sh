@@ -32,4 +32,5 @@ TERM=dumb make package/luci-app-xray-mosdns-x/compile V=s -j"$(nproc)"
 
 mkdir -p "$REPO_DIR/out"
 find bin -name 'luci-app-xray-mosdns-x*' -exec cp -v {} "$REPO_DIR/out/" \;
+find bin -name 'luci-i18n-xray-mosdns-x*' -exec cp -v {} "$REPO_DIR/out/" \;
 ls -la "$REPO_DIR/out"
