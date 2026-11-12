@@ -102,9 +102,6 @@ msgstr "域名"
 msgid "IP / CIDR"
 msgstr "IP / CIDR"
 
-msgid "Port"
-msgstr "端口"
-
 msgid "Network (tcp/udp)"
 msgstr "协议 (tcp/udp)"
 
@@ -165,9 +162,6 @@ msgstr "删除"
 msgid "Enabled"
 msgstr "启用"
 
-msgid "Address"
-msgstr "地址"
-
 msgid "Latency"
 msgstr "延迟"
 
@@ -198,17 +192,11 @@ msgstr "基本设置"
 msgid "Nodes and load balancing"
 msgstr "节点与负载均衡"
 
-msgid "Balancer strategy"
-msgstr "均衡策略"
-
 msgid "TProxy and advanced options"
 msgstr "TProxy 与高级选项"
 
 msgid "Hysteria2"
 msgstr "Hysteria2"
-
-msgid "Import share links"
-msgstr "导入分享链接"
 
 msgid "Add rule"
 msgstr "添加规则"
@@ -249,9 +237,6 @@ msgstr "匹配值不能为空"
 msgid "mosdns-x handles client DNS: mainland domains are resolved through the domestic upstreams, everything else is sent through the proxy via the internal SOCKS inbound."
 msgstr "mosdns-x 接管客户端 DNS：国内域名走国内上游解析，其余域名通过内部 SOCKS 入站经代理解析。"
 
-msgid "Enable mosdns-x"
-msgstr "启用 mosdns-x"
-
 msgid "When enabled, dnsmasq is pointed at the local mosdns listener and restored on stop."
 msgstr "启用后 dnsmasq 会指向本地 mosdns 监听端口，停止时自动还原。"
 
@@ -272,9 +257,6 @@ msgstr "缓存带 EDNS 的查询"
 
 msgid "Required by most modern clients, whose queries carry an EDNS0 OPT record."
 msgstr "现代客户端查询大多带 EDNS0 OPT 记录，开启后才能命中缓存。"
-
-msgid "Block ad domains"
-msgstr "拦截广告域名"
 
 msgid "Uses geosite:category-ads-all from /usr/share/v2ray/geosite.dat."
 msgstr "使用 /usr/share/v2ray/geosite.dat 中的 geosite:category-ads-all。"
@@ -297,14 +279,8 @@ msgstr "国外 DNS 服务器"
 msgid "Queried through the proxy for non-mainland domains."
 msgstr "非国内域名通过代理向该服务器查询。"
 
-msgid "Domestic upstreams"
-msgstr "国内上游 DNS"
-
 msgid "DoH/DoT/plain, one per line, e.g. https://dns.alidns.com/dns-query"
 msgstr "支持 DoH/DoT/普通 DNS，每行一个，例如 https://dns.alidns.com/dns-query"
-
-msgid "Static hosts"
-msgstr "静态 hosts"
 
 msgid "\"domain ip\" pairs, e.g. v1.example.com 203.0.113.10"
 msgstr "“域名 IP” 对，例如 v1.example.com 203.0.113.10"
@@ -326,9 +302,6 @@ msgstr "分流设置"
 
 msgid "Main target"
 msgstr "分流总节点"
-
-msgid "Split mode"
-msgstr "分流模式"
 
 msgid "Follow main target"
 msgstr "跟随总节点"
@@ -363,9 +336,6 @@ msgstr "节点流量"
 msgid "Only proxy node traffic is counted (Xray StatsService), refreshed every 10 seconds."
 msgstr "仅统计代理节点流量（来自 Xray StatsService），每 10 秒刷新。"
 
-msgid "Upload"
-msgstr "上传"
-
 msgid "Xray is not running (enable the plugin first)"
 msgstr "Xray 未运行（启用插件后才有节点流量）"
 
@@ -380,15 +350,6 @@ msgstr "保存日志等级"
 
 msgid "Log level saved, restart the service to take effect"
 msgstr "日志等级已保存，重启服务后生效"
-
-msgid "Refresh"
-msgstr "刷新"
-
-msgid "Basic settings"
-msgstr "基本设置"
-
-msgid "TProxy and advanced options"
-msgstr "TProxy 与高级选项"
 
 msgid "Internal SOCKS port"
 msgstr "内部 SOCKS 端口"

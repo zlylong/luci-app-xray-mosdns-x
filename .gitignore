@@ -2,3 +2,6 @@ out/
 *.apk
 *.ipk
 dist/
+
+__pycache__/
+*.pyc
