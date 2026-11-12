@@ -27,10 +27,18 @@ if [ ! -f .config ] || [ "${CI_FORCE_FEEDS:-0}" = "1" ]; then
 	./scripts/feeds update -a >/dev/null
 	./scripts/feeds install -a >/dev/null
 	TERM=dumb make defconfig >/dev/null
+	# the SDK ships CONFIG_ALL=y which makes every package/kmod rebuild on each run
+	sed -i -e 's/^CONFIG_ALL=y/# CONFIG_ALL is not set/' \
+		-e 's/^CONFIG_ALL_KMODS=y/# CONFIG_ALL_KMODS is not set/' \
+		-e 's/^CONFIG_ALL_NONSHARED=y/# CONFIG_ALL_NONSHARED is not set/' .config
+	TERM=dumb make oldconfig >/dev/null
 fi
 TERM=dumb make package/luci-app-xray-mosdns-x/compile V=s -j"$(nproc)"
 
 mkdir -p "$REPO_DIR/out"
-find bin -name 'luci-app-xray-mosdns-x*' -exec cp -v {} "$REPO_DIR/out/" \;
-find bin -name 'luci-i18n-xray-mosdns-x*' -exec cp -v {} "$REPO_DIR/out/" \;
+rm -f "$REPO_DIR"/out/*.apk
+for pat in 'luci-app-xray-mosdns-x-*.apk' 'luci-i18n-xray-mosdns-x-zh-cn-*.apk'; do
+	f=$(ls -t $(find bin -type f -name "$pat" 2>/dev/null) 2>/dev/null | head -1)
+	[ -n "$f" ] && [ -f "$f" ] && cp -v "$f" "$REPO_DIR/out/"
+done
 ls -la "$REPO_DIR/out"
