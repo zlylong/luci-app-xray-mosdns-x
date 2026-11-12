@@ -33,6 +33,21 @@ latest_url() { # $1 = repo, $2 = asset name
 		| grep -F "/$2" | head -1
 }
 
+remote_tag() { # $1 = repo -> latest release tag
+	curl -fsSL --max-time 20 "https://api.github.com/repos/$1/releases/latest" 2>/dev/null \
+		| grep -o '"tag_name": "[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"/\1/'
+}
+
+geo_marker() { echo "$ROOT/etc/xray-mosdns/geo-version"; }
+geo_marker_read() { f=$(geo_marker); [ -f "$f" ] && head -1 "$f" || true; }
+geo_marker_write() { f=$(geo_marker); mkdir -p "$(dirname "$f")"; printf '%s\n%s\n' "$1" "$(date +%Y-%m-%dT%H:%M:%S)" > "$f"; }
+
+cron_file() { echo "$ROOT/etc/crontabs/root"; }
+cron_line() {
+	hour=$1
+	printf '%s %s * * * /usr/libexec/xray-mosdns/update.sh geo-auto >>/tmp/xray-mosdns-geo-update.log 2>&1 # xray-mosdns-geo-auto' "0" "$hour"
+}
+
 backup_file() { # $1 = path
 	[ -f "$1" ] || return 0
 	d="$BACKUP_DIR/$(basename "$1").$(date +%Y%m%d-%H%M%S)"
@@ -48,9 +63,28 @@ cmd_versions() {
 	mv=$("$mb" version 2>/dev/null | head -1)
 	[ -n "$mv" ] || mv="not installed"
 	gd=$(v2ray_dir)
-	printf '{"ok":true,"xray":%s,"mosdns":%s,"geosite":%s,"geoip":%s}\n' \
+	printf '{"ok":true,"xray":%s,"mosdns":%s,"geosite":%s,"geoip":%s,"geo_version":%s}\n' \
 		"$(jstr "$xv")" "$(jstr "$mv")" \
-		"$(jstr "$(geo_size "$gd/geosite.dat")")" "$(jstr "$(geo_size "$gd/geoip.dat")")"
+		"$(jstr "$(geo_size "$gd/geosite.dat")")" "$(jstr "$(geo_size "$gd/geoip.dat")")" \
+		"$(jstr "$(geo_marker_read)")"
+}
+
+cmd_check() {
+	xb=$(xray_bin); mb=$(mosdns_bin)
+	xv=$("$xb" version 2>/dev/null | head -1)
+	[ -n "$xv" ] || xv="not installed"
+	mv=$("$mb" version 2>/dev/null | head -1)
+	[ -n "$mv" ] || mv="not installed"
+	gd=$(v2ray_dir)
+	xr=$(remote_tag XTLS/Xray-core)
+	mr=$(remote_tag pmkol/mosdns-x)
+	gr=$(remote_tag Loyalsoldier/v2ray-rules-dat)
+	printf '{"ok":true,"local":{"xray":%s,"mosdns":%s,"geosite":%s,"geoip":%s,"geo_version":%s},"remote":{"xray":%s,"mosdns":%s,"geo":%s,"geo_auto":%s,"geo_hour":%s}}\n' \
+		"$(jstr "$xv")" "$(jstr "$mv")" \
+		"$(jstr "$(geo_size "$gd/geosite.dat")")" "$(jstr "$(geo_size "$gd/geoip.dat")")" \
+		"$(jstr "$(geo_marker_read)")" \
+		"$(jstr "$xr")" "$(jstr "$mr")" "$(jstr "$gr")" \
+		"$(jstr "$(ug '@global[0].geo_auto_update')")" "$(jstr "$(ug '@global[0].geo_update_hour')")"
 }
 
 cmd_geo() {
@@ -65,7 +99,56 @@ cmd_geo() {
 	backup_file "$gd/geosite.dat" >/dev/null
 	backup_file "$gd/geoip.dat" >/dev/null
 	mv -f "$TMP/geosite.dat" "$gd/geosite.dat" && mv -f "$TMP/geoip.dat" "$gd/geoip.dat" || { err "install failed"; return; }
-	ok "geo data updated (geosite ${gs} bytes, geoip ${gp} bytes). Restart xray/passwall to reload."
+	_ver="${1:-$(remote_tag Loyalsoldier/v2ray-rules-dat)}"
+	[ -n "$_ver" ] || _ver="manual-$(date +%Y%m%d-%H%M%S)"
+	geo_marker_write "$_ver"
+	ok "geo data updated ($_ver; geosite ${gs} bytes, geoip ${gp} bytes). Restart xray/passwall to reload."
+}
+
+cmd_geo_auto() {
+	remote=$(remote_tag Loyalsoldier/v2ray-rules-dat)
+	[ -n "$remote" ] || { err "cannot query remote geo version"; return; }
+	local_ver=$(geo_marker_read)
+	if [ -n "$local_ver" ] && [ "${local_ver%%|*}" = "$remote" ]; then
+		ok "geo already up to date ($remote)"
+		return
+	fi
+	cmd_geo "$remote"
+}
+
+cmd_cron_install() {
+	hour=$(ug '@global[0].geo_update_hour')
+	case "$hour" in ''|*[!0-9]*) hour=4 ;; esac
+	[ "$hour" -ge 0 ] 2>/dev/null && [ "$hour" -le 23 ] || hour=4
+	cf=$(cron_file)
+	mkdir -p "$(dirname "$cf")"
+	[ -f "$cf" ] && cp -a "$cf" "$BACKUP_DIR/crontab.$(date +%Y%m%d-%H%M%S)"
+	if [ -f "$cf" ]; then
+		sed -i '/# xray-mosdns-geo-auto/d' "$cf"
+	else
+		: > "$cf"
+	fi
+	printf '\n%s\n' "$(cron_line "$hour")" >> "$cf"
+	[ -n "$ROOT" ] || /etc/init.d/cron restart >/dev/null 2>&1 || true
+	ok "geo 定时更新已启用（每天 ${hour}:00）"
+}
+
+cmd_cron_remove() {
+	cf=$(cron_file)
+	if [ -f "$cf" ]; then
+		cp -a "$cf" "$BACKUP_DIR/crontab.$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
+		sed -i '/# xray-mosdns-geo-auto/d' "$cf"
+	fi
+	[ -n "$ROOT" ] || /etc/init.d/cron restart >/dev/null 2>&1 || true
+	ok "geo 定时更新已关闭"
+}
+
+cmd_cron_status() {
+	cf=$(cron_file)
+	on=0
+	[ -f "$cf" ] && grep -q '# xray-mosdns-geo-auto' "$cf" && on=1
+	printf '{"ok":true,"enabled":%s,"hour":%s,"marker":%s}\n' "$on" \
+		"$(jstr "$(ug '@global[0].geo_update_hour')")" "$(jstr "$(geo_marker_read)")"
 }
 
 cmd_xray() {
@@ -114,8 +197,13 @@ cmd_mosdns() {
 
 case "${1:-versions}" in
 	versions) cmd_versions ;;
-	geo) cmd_geo ;;
+	check) cmd_check ;;
+	geo) cmd_geo "${2:-}" ;;
+	geo-auto) cmd_geo_auto ;;
 	xray) cmd_xray ;;
 	mosdns) cmd_mosdns ;;
+	cron-install) cmd_cron_install ;;
+	cron-remove) cmd_cron_remove ;;
+	cron-status) cmd_cron_status ;;
 	*) err "unknown action" ;;
 esac

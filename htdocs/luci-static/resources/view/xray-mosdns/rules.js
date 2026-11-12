@@ -131,13 +131,26 @@ function displayValue(r) {
 	return shown;
 }
 
+function moveRule(sid, dir) {
+	var list = rules();
+	var idx = -1;
+	list.forEach(function(r, i) { if (r['.name'] === sid) idx = i; });
+	var target = idx + dir;
+	if (idx < 0 || target < 0 || target >= list.length) return;
+	var other = list[target]['.name'];
+	uci.move(CONF, sid, other, dir > 0);
+	uci.save().then(function() { return uci.apply(); }).then(function() {
+		refreshTable();
+	});
+}
+
 function refreshTable() {
 	var tbody = ruleTbody;
 	if (!tbody) return;
 	tbody.replaceChildren();
 	var list = rules();
 	if (!list.length) {
-		tbody.appendChild(E('tr', { 'class': 'tr' }, [ E('td', { 'class': 'td', 'colspan': 6 }, _('还没有规则')) ]));
+		tbody.appendChild(E('tr', { 'class': 'tr' }, [ E('td', { 'class': 'td', 'colspan': 7 }, _('还没有规则')) ]));
 		return;
 	}
 	list.forEach(function(r) {
@@ -148,14 +161,20 @@ function refreshTable() {
 			uci.set(CONF, r['.name'], 'enabled', enabled.checked ? '1' : '0');
 			uci.save().then(function() { return uci.apply(); });
 		});
+		var order = rules().map(function(x) { return x['.name']; }).indexOf(r['.name']) + 1;
+		tr.appendChild(E('td', { 'class': 'td' }, String(order)));
 		tr.appendChild(E('td', { 'class': 'td' }, [ enabled ]));
 		tr.appendChild(E('td', { 'class': 'td' }, [ E('strong', {}, r.remarks || '-') ]));
 		tr.appendChild(E('td', { 'class': 'td' }, TYPES[r.rule_type] || r.rule_type || ''));
 		tr.appendChild(E('td', { 'class': 'td' }, [ E('span', { 'title': r.value || '' }, displayValue(r)) ]));
 		tr.appendChild(E('td', { 'class': 'td' }, policyLabel(r.outbound)));
 		var ops = E('td', { 'class': 'td cbi-section-actions' });
+		var up = E('button', { 'class': 'cbi-button cbi-button-neutral', 'title': _('上移') }, '↑');
+		var down = E('button', { 'class': 'cbi-button cbi-button-neutral', 'title': _('下移') }, '↓');
 		var edit = E('button', { 'class': 'cbi-button cbi-button-action' }, _('详情'));
 		var del = E('button', { 'class': 'cbi-button cbi-button-remove' }, _('删除'));
+		up.addEventListener('click', function() { moveRule(r['.name'], -1); });
+		down.addEventListener('click', function() { moveRule(r['.name'], 1); });
 		edit.addEventListener('click', function() { editModal(r['.name']); });
 		del.addEventListener('click', function() {
 			ui.showModal(_('删除规则'), [
@@ -176,6 +195,10 @@ function refreshTable() {
 				])
 			]);
 		});
+		ops.appendChild(up);
+		ops.appendChild(document.createTextNode(' '));
+		ops.appendChild(down);
+		ops.appendChild(document.createTextNode(' '));
 		ops.appendChild(edit);
 		ops.appendChild(document.createTextNode(' '));
 		ops.appendChild(del);
@@ -404,6 +427,7 @@ return view.extend({
 		var toolbar = E('div', { 'class': 'cbi-section-node' }, [ addBtn ]);
 		var table = E('table', { 'class': 'table cbi-section-table' }, [
 			E('thead', {}, [ E('tr', { 'class': 'tr table-titles' }, [
+				E('th', { 'class': 'th', 'style': 'width:48px' }, _('序号')),
 				E('th', { 'class': 'th' }, _('启用')),
 				E('th', { 'class': 'th' }, _('备注')),
 				E('th', { 'class': 'th' }, _('分流方式')),
@@ -418,7 +442,7 @@ return view.extend({
 
 		return E('div', {}, [
 			mainPanel(),
-			E('p', {}, _('规则按顺序匹配，命中后使用对应策略；未命中时按“分流模式”内置规则，最后走“分流总节点”。')),
+			E('p', {}, _('规则按序号从上到下匹配，命中后使用对应策略；未命中时按“分流模式”内置规则，最后走“分流总节点”。可用 ↑/↓ 调整顺序。')),
 			E('p', { 'class': 'cbi-value-description' },
 				_('Geo 标签来源于 /usr/share/v2ray/geosite.dat 与 geoip.dat，支持搜索、多选；也可手动输入 domain:/full:/regexp:/CIDR。')),
 			toolbar,

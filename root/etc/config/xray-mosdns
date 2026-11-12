@@ -37,6 +37,9 @@ config global 'global'
 	option ipv6_enabled '0'
 	# built-in split preset: chnroute | gfw | global | custom
 	option rule_mode 'chnroute'
+	# scheduled geo data update (cron): 0/1 and hour of day
+	option geo_auto_update '0'
+	option geo_update_hour '4'
 	# extra destination CIDRs/IPs that must never be tproxy'ed
 	list bypass_ips ''
 

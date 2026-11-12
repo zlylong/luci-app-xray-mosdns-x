@@ -161,7 +161,9 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
 - [x] 备用节点可选全部节点（修复只能选“直连”的问题）
 - [x] 分流总节点 / 负载均衡 / 规则 三级结构（PassWall 风格）
 - [x] 节点页合并负载均衡设置，设置页移除旧版域名列表
-- [x] 在线更新（Xray / mosdns-x / geo 数据，带备份）
+- [x] 在线更新（Xray / mosdns-x / geo 数据，带备份）+ 远端版本对比
+- [x] geo 数据定时更新（每日 cron，对比 release 版本，一致则跳过）
+- [x] 分流规则可排序（↑/↓，序号即为匹配顺序）
 - [x] 节点流量统计（Xray StatsService）
 - [x] DNS 页面中文化、日志等级可选
 - [ ] Gitea Actions 构建产物发布（未包含）
