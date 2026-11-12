@@ -401,9 +401,9 @@ function mainPanel() {
 	return E('fieldset', { 'class': 'cbi-section' }, [
 		E('legend', {}, _('分流设置')),
 		E('p', { 'class': 'cbi-value-description' },
-			_('匹配顺序：先按下面的规则列表匹配（按序号从上到下），其次是“分流模式”内置规则，最后走“分流总节点”。')),
+			_('匹配顺序：先按上面的规则列表匹配（按序号从上到下），其次是“分流模式”内置规则，最后走“分流总节点”。')),
 		field(_('分流总节点'), mainSel, _('未命中任何规则时的默认出口，可选直连 / 某个节点 / 负载均衡 / 主备。')),
-		field(_('分流模式'), modeSel, _('内置规则集，优先级低于下方规则列表。')),
+		field(_('分流模式'), modeSel, _('内置规则集，优先级低于上方规则列表。')),
 		E('p', {}, save)
 	]);
 }
@@ -444,12 +444,12 @@ return view.extend({
 		refreshTable();
 
 		return E('div', {}, [
-			mainPanel(),
 			E('p', {}, _('规则按序号从上到下匹配，命中后使用对应策略；未命中时按“分流模式”内置规则，最后走“分流总节点”。可用 ↑/↓ 调整顺序。')),
 			E('p', { 'class': 'cbi-value-description' },
 				_('Geo 标签来源于 /usr/share/v2ray/geosite.dat 与 geoip.dat，支持搜索、多选；也可手动输入 domain:/full:/regexp:/CIDR。')),
 			toolbar,
-			table
+			table,
+			mainPanel()
 		]);
 	},
 
