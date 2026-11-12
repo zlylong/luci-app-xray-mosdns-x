@@ -5,6 +5,8 @@
 config global 'global'
 	# master switch (0 = installed but inactive)
 	option enabled '0'
+	# set to 1 only if you know both stacks can coexist (not recommended)
+	option allow_coexist '0'
 	# transparent proxy mode: tproxy (nft tproxy + policy routing)
 	option proxy_mode 'tproxy'
 	# port that Xray tproxy inbound listens on
@@ -23,12 +25,24 @@ config global 'global'
 	option bypass_chn '1'
 	# optional: '/usr/bin/xray' or an alternative build
 	option xray_bin '/usr/bin/xray'
-	# selected node (section name below), empty = none configured
+	# internal SOCKS inbound port, used by mosdns for foreign DNS
+	option socks_port '1070'
+	# node selection mode: single (use option node) | balance (all enabled nodes)
+	option node_mode 'single'
+	# selected node (section name) when node_mode=single
 	option node ''
+	# balancer strategy when node_mode=balance: leastLoad | roundRobin | random
+	option balancer_strategy 'leastLoad'
+	# node used when the balancer has no healthy member (must be enabled)
+	option fallback_node ''
+	# also proxy/tproxy IPv6 traffic (experimental)
+	option ipv6_enabled '0'
 	# extra destination CIDRs/IPs that must never be tproxy'ed
 	list bypass_ips ''
 	# always proxied domains (xray domain syntax: geosite:google, domain:openai.com)
+	list proxy_domains ''
 	# always direct domains
+	list direct_domains ''
 	# blocked domains
 	list block_domains ''
 
@@ -50,6 +64,8 @@ config dns 'dns'
 	option filter_proxy_ipv6 '1'
 	# bootstrap resolver used to reach DoH/DoT upstreams (direct, mainland)
 	option bootstrap '223.5.5.5'
+	# foreign DNS server queried through the proxy
+	option remote_dns '1.1.1.1'
 	# domestic upstreams (DoH/DoT/plain) - one per line
 	list domestic_dns 'https://dns.alidns.com/dns-query'
 	list domestic_dns 'https://doh.pub/dns-query'
@@ -58,7 +74,7 @@ config dns 'dns'
 
 config node 'node_example'
 	option enabled '0'
-	option remarks 'example-vless-tcp'
+	option remarks 'example'
 	option type 'vless'
 	option address ''
 	option port '443'
@@ -73,3 +89,13 @@ config node 'node_example'
 	option path '/'
 	option host ''
 	option service_name ''
+
+# Custom routing rules (priority over the legacy domain lists above).
+# rule_type: domain | ip | port | network
+# outbound:  proxy | direct | block
+config rule 'rule_example'
+	option enabled '0'
+	option remarks 'example-domain-rule'
+	option rule_type 'domain'
+	option value 'domain:example.org,geosite:google'
+	option outbound 'proxy'

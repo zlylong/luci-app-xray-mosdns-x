@@ -3,6 +3,15 @@
 'require form';
 'require uci';
 
+function nodeOptions(o) {
+	var nodes = uci.sections('xray-mosdns', 'node') || [];
+	nodes.forEach(function(sec) {
+		if (sec.enabled !== '1')
+			return;
+		o.value(sec['.name'], sec.remarks || sec.address || sec['.name']);
+	});
+}
+
 return view.extend({
 	load: function() {
 		return uci.load('xray-mosdns');
@@ -37,8 +46,36 @@ return view.extend({
 		o.datatype = 'range(1,252)';
 		o.default = '100';
 
+		o = s.option(form.Flag, 'ipv6_enabled', _('Enable IPv6 (TProxy + policy routing)'),
+			_('Experimental: requires the node to be reachable over IPv6 or to have AAAA records.'));
+		o.default = '0';
+
+		o = s.option(form.ListValue, 'node_mode', _('Node mode'));
+		o.value('single', _('Single node'));
+		o.value('balance', _('Load balance / failover'));
+		o.default = 'single';
+
+		o = s.option(form.ListValue, 'node', _('Node'));
+		nodeOptions(o);
+		o.depends('node_mode', 'single');
+		o.rmempty = false;
+
+		o = s.option(form.ListValue, 'balancer_strategy', _('Balancer strategy'));
+		o.value('leastLoad', _('leastLoad (lowest latency, needs health checks)'));
+		o.value('roundRobin', _('roundRobin'));
+		o.value('random', _('random'));
+		o.default = 'leastLoad';
+		o.depends('node_mode', 'balance');
+
+		o = s.option(form.ListValue, 'fallback_node', _('Fallback node'),
+			_('Used when the balancer has no healthy member.'));
+		nodeOptions(o);
+		o.value('', _('Direct'));
+		o.default = '';
+		o.depends('node_mode', 'balance');
+
 		o = s.option(form.ListValue, 'default_outbound', _('Default outbound'));
-		o.value('proxy', _('Proxy (node)'));
+		o.value('proxy', _('Proxy (node/balancer)'));
 		o.value('direct', _('Direct'));
 
 		o = s.option(form.Flag, 'bypass_chn', _('Route mainland China destinations directly'),
@@ -70,7 +107,7 @@ return view.extend({
 		o = s.option(form.DynamicList, 'block_domains', _('Blocked domains'));
 
 		o = s.option(form.DynamicList, 'bypass_ips', _('Destination IPs/CIDRs to bypass'),
-			_('Garage/office subnets that should never be redirected.'));
+			_('Subnets that should never be redirected.'));
 
 		return m.render();
 	}

@@ -13,41 +13,41 @@
 	"admin/services/xray-mosdns/overview": {
 		"title": "Overview",
 		"order": 10,
-		"action": {
-			"type": "view",
-			"path": "xray-mosdns/overview"
-		}
+		"action": { "type": "view", "path": "xray-mosdns/overview" }
 	},
 	"admin/services/xray-mosdns/settings": {
 		"title": "Settings",
 		"order": 20,
-		"action": {
-			"type": "view",
-			"path": "xray-mosdns/settings"
-		}
+		"action": { "type": "view", "path": "xray-mosdns/settings" }
 	},
 	"admin/services/xray-mosdns/nodes": {
 		"title": "Nodes",
 		"order": 30,
-		"action": {
-			"type": "view",
-			"path": "xray-mosdns/nodes"
-		}
+		"action": { "type": "view", "path": "xray-mosdns/nodes" }
+	},
+	"admin/services/xray-mosdns/rules": {
+		"title": "Rules",
+		"order": 35,
+		"action": { "type": "view", "path": "xray-mosdns/rules" }
 	},
 	"admin/services/xray-mosdns/dns": {
 		"title": "DNS",
 		"order": 40,
-		"action": {
-			"type": "view",
-			"path": "xray-mosdns/dns"
-		}
+		"action": { "type": "view", "path": "xray-mosdns/dns" }
+	},
+	"admin/services/xray-mosdns/traffic": {
+		"title": "Traffic",
+		"order": 45,
+		"action": { "type": "view", "path": "xray-mosdns/traffic" }
+	},
+	"admin/services/xray-mosdns/import": {
+		"title": "Import links",
+		"order": 50,
+		"action": { "type": "view", "path": "xray-mosdns/import" }
 	},
 	"admin/services/xray-mosdns/log": {
 		"title": "Log",
-		"order": 50,
-		"action": {
-			"type": "view",
-			"path": "xray-mosdns/log"
-		}
+		"order": 60,
+		"action": { "type": "view", "path": "xray-mosdns/log" }
 	}
 }

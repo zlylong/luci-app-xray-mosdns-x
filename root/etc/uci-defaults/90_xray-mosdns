@@ -1,5 +1,5 @@
 #!/bin/sh
-# Make sure a DNS section exists (older configs added by hand may lack it)
+# Ensure new options exist after upgrades (idempotent)
 [ -f /etc/config/xray-mosdns ] || exit 0
 uci -q get xray-mosdns.@dns[0] >/dev/null 2>&1 || {
 	uci batch <<-EOC
@@ -16,4 +16,15 @@ uci -q get xray-mosdns.@dns[0] >/dev/null 2>&1 || {
 	EOC
 	uci commit xray-mosdns
 }
+for opt in node_mode balancer_strategy ipv6_enabled socks_port; do
+	uci -q get "xray-mosdns.@global[0].$opt" >/dev/null 2>&1 || {
+		case "$opt" in
+			node_mode) uci set xray-mosdns.@global[0].node_mode='single' ;;
+			balancer_strategy) uci set xray-mosdns.@global[0].balancer_strategy='leastLoad' ;;
+			ipv6_enabled) uci set xray-mosdns.@global[0].ipv6_enabled='0' ;;
+			socks_port) uci set xray-mosdns.@global[0].socks_port='1070' ;;
+		esac
+	}
+done
+uci commit xray-mosdns
 exit 0

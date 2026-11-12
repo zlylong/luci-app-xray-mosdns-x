@@ -1,7 +1,7 @@
 # luci-app-xray-mosdns-x
 
 LuCI 管理界面：用 **Xray**（TProxy 透明代理）+ **mosdns-x**（DNS 分流/缓存/去广告）
-替代 PassWall 的插件。项目目前为 **v0.1.0 开发版**，默认 **不启用**：
+替代 PassWall 的插件。项目目前为 **v0.2.0 开发版**，默认 **不启用**：
 安装后 `xray-mosdns.global.enabled` 仍为 `0`，不会改动现有代理/DNS 链路。
 
 ## 架构
@@ -21,6 +21,12 @@ LuCI 管理界面：用 **Xray**（TProxy 透明代理）+ **mosdns-x**（DNS �
 - TCP/UDP 都走 nft `tproxy` + 策略路由（fwmark → table），不走 REDIRECT
 - 国外 DNS 通过 Xray 的内部 SOCKS inbound 经代理解析，避免 DNS 泄漏
 - `filter_proxy_ipv6` 会丢弃代理域名的 AAAA 应答，防止 IPv6 绕过代理
+- **多节点**：`node_mode=balance` 时所有 enabled 节点进入 Xray balancer
+  （leastLoad/roundRobin/random，leastLoad 带 burstObservatory 健康检查，支持 fallback 节点）
+- **规则管理**：`config rule` 段或 LuCI Rules 页按 域名/IP/端口/协议 分流到 proxy/direct/block
+- **IPv6**：`ipv6_enabled=1` 时同时下发 IPv6 nft tproxy 规则与 `ip -6 rule/route`
+- **流量统计**：Traffic 页直接复用 nlbwmon 的按主机统计
+- **订阅导入**：Import 页粘贴 vless/vmess/trojan/ss 链接，批量生成（默认禁用）节点
 
 ## 目录结构
 
@@ -114,29 +120,32 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
 | global | node | 选中的节点 section 名 |
 | global | socks_port | 内部 SOCKS 端口（给 mosdns 转发国外 DNS），默认 1070 |
 | dns | listen_port | mosdns 监听端口，默认 5353（dnsmasq 指向它） |
-| dns | xray_dns_port | 兼容字段，v0.1 使用 SOCKS 方式转发，暂未使用 |
+| dns | xray_dns_port | 兼容字段，v0.2 使用 SOCKS 方式转发，暂未使用 |
 | dns | adblock | geosite:category-ads-all 拦截 |
 | dns | filter_proxy_ipv6 | 代理域名丢弃 AAAA |
 | dns | domestic_dns | 国内 DoH/DoT/明文上游列表 |
 | dns | hosts | 静态域名映射（节点域名/VPS 域名解析用） |
+| global | node_mode | single / balance（负载均衡） |
+| global | balancer_strategy | leastLoad / roundRobin / random |
+| global | fallback_node | balancer 无健康节点时的兜底节点 |
+| global | ipv6_enabled | 启用 IPv6 TProxy（实验性） |
 | node | type/address/port/uuid/... | vless / vmess / trojan / shadowsocks 节点 |
+| rule | rule_type/value/outbound | 自定义分流规则：domain/ip/port/network → proxy/direct/block |
 
-## 已知限制（v0.1）
+## 已知限制（v0.2）
 
-- 只支持 IPv4 透明代理（IPv6 客户端流量不劫持）
-- 只有单个选中节点，未实现负载均衡/多节点自动切换（路线图）
-- dnsmasq 集成会替换 `dhcp.@dnsmasq[0].server` 列表（备份可还原）
-- 与 PassWall 同时运行会被拒绝启动（`global.allow_coexist=1` 可强制）
-- WebSocket 传输在 Xray 26 中已弃用，建议使用 XHTTP
+- IPv6 TProxy 为实验性功能，需要节点本身可达 IPv6；IPv6 分流规则与 IPv4 共用 geosite/geoip 规则
+- 订阅导入支持 vless/vmess/trojan/shadowsocks（SIP002），不支持 Hysteria2/TUIC/SSR
+- 规则管理为简单表单（每条规则一个域名/IP/端口集合），复杂表达式请直接编辑
 
 ## 路线图
 
-- [ ] 多节点 + 负载均衡 / 故障切换（Xray balancer）
-- [ ] 规则管理 UI（域名/IP/端口分流可视化）
-- [ ] IPv6 TProxy
-- [ ] 流量统计（复用 nlbwmon）
-- [ ] 订阅导入（clash/v2ray 链接解析）
-- [ ] Gitea Actions 构建产物发布
+- [x] 多节点 + 负载均衡 / 故障切换（Xray balancer + burstObservatory）
+- [x] 规则管理 UI（域名/IP/端口分流可视化）
+- [x] IPv6 TProxy（实验性）
+- [x] 流量统计（复用 nlbwmon）
+- [x] 订阅导入（vless/vmess/trojan/ss 链接）
+- [ ] Gitea Actions 构建产物发布（本轮不包含）
 
 ## 许可
 

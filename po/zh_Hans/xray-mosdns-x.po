@@ -68,3 +68,78 @@ msgstr "传输方式"
 
 msgid "Type"
 msgstr "类型"
+
+msgid "Node mode"
+msgstr "节点模式"
+
+msgid "Single node"
+msgstr "单节点"
+
+msgid "Load balance / failover"
+msgstr "负载均衡 / 故障切换"
+
+msgid "Balancer strategy"
+msgstr "均衡策略"
+
+msgid "Fallback node"
+msgstr "备用节点"
+
+msgid "Enable IPv6 (TProxy + policy routing)"
+msgstr "启用 IPv6（TProxy + 策略路由）"
+
+msgid "Routing rules"
+msgstr "分流规则"
+
+msgid "Rules"
+msgstr "规则"
+
+msgid "Rule"
+msgstr "规则"
+
+msgid "Domain"
+msgstr "域名"
+
+msgid "IP / CIDR"
+msgstr "IP / CIDR"
+
+msgid "Port"
+msgstr "端口"
+
+msgid "Network (tcp/udp)"
+msgstr "协议 (tcp/udp)"
+
+msgid "Value"
+msgstr "值"
+
+msgid "Outbound"
+msgstr "出口"
+
+msgid "Proxy"
+msgstr "代理"
+
+msgid "Block"
+msgstr "阻断"
+
+msgid "Traffic"
+msgstr "流量统计"
+
+msgid "Connections"
+msgstr "连接数"
+
+msgid "Download"
+msgstr "下载"
+
+msgid "Upload"
+msgstr "上传"
+
+msgid "Host (MAC)"
+msgstr "主机 (MAC)"
+
+msgid "Import share links"
+msgstr "导入订阅链接"
+
+msgid "Import"
+msgstr "导入"
+
+msgid "Refresh"
+msgstr "刷新"
