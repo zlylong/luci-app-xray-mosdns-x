@@ -20,6 +20,7 @@ var POLICIES = {
 };
 
 var geoData = { geosite: [], geoip: [] };
+var ruleTbody = null;
 
 function rules() {
 	return uci.sections(CONF, 'rule') || [];
@@ -100,7 +101,7 @@ function displayValue(r) {
 }
 
 function refreshTable() {
-	var tbody = document.getElementById('rule-tbody');
+	var tbody = ruleTbody;
 	if (!tbody) return;
 	tbody.replaceChildren();
 	var list = rules();
@@ -326,10 +327,10 @@ return view.extend({
 				E('th', { 'class': 'th' }, _('策略')),
 				E('th', { 'class': 'th' }, _('操作'))
 			]) ]),
-			E('tbody', { 'id': 'rule-tbody' })
+			(ruleTbody = E('tbody'))
 		]);
 
-		setTimeout(refreshTable, 0);
+		refreshTable();
 
 		return E('div', {}, [
 			E('p', {}, _('规则按顺序匹配，命中后使用对应策略；未命中时按“设置 → 分流模式”处理。')),
