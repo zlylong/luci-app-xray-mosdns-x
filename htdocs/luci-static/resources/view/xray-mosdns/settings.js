@@ -8,7 +8,9 @@ function nodeOptions(o, onlyEnabled) {
 	nodes.forEach(function(sec) {
 		if (onlyEnabled && sec.enabled !== '1')
 			return;
-		o.value(sec['.name'], sec.remarks || (sec.address + (sec.port ? ':' + sec.port : '')) || sec['.name']);
+		var addr = sec.address ? sec.address + (sec.port ? ':' + sec.port : '') : '';
+		var label = sec.remarks ? sec.remarks + (addr ? ' (' + addr + ')' : '') : (addr || sec['.name']);
+		o.value(sec['.name'], label);
 	});
 }
 
@@ -34,26 +36,27 @@ return view.extend({
 		s = m.section(form.NamedSection, 'global', 'global', _('节点与负载均衡'));
 		s.addremove = false;
 
-		o = s.option(form.ListValue, 'node_mode', _('节点模式'));
+		o = s.option(form.ListValue, 'node_mode', _('节点模式'),
+			_('负载均衡会在所有“启用”的节点之间选择：leastLoad 通过健康检查（每分钟探测一次延迟）选用当前最快的可用节点，属于自动选路/故障切换，不会按连接数分摊。'));
 		o.value('single', _('单节点'));
 		o.value('balance', _('负载均衡 / 故障切换'));
 		o.default = 'single';
 
-		o = s.option(form.ListValue, 'node', _('节点'));
+		o = s.option(form.ListValue, 'node', _('节点'), _('单节点模式下使用的节点（所有节点都会出现在列表里）。'));
 		nodeOptions(o, false);
 		o.depends('node_mode', 'single');
 		o.rmempty = false;
 
 		o = s.option(form.ListValue, 'balancer_strategy', _('均衡策略'));
-		o.value('leastLoad', _('leastLoad：按延迟自动选择最快节点'));
+		o.value('leastLoad', _('leastLoad：自动选择延迟最低的可用节点（推荐）'));
 		o.value('roundRobin', _('roundRobin：轮询'));
 		o.value('random', _('random：随机'));
 		o.default = 'leastLoad';
 		o.depends('node_mode', 'balance');
 
 		o = s.option(form.ListValue, 'fallback_node', _('备用节点'),
-			_('均衡器没有可用节点时使用。'));
-		nodeOptions(o, true);
+			_('均衡器探测不到任何可用节点时使用（会从全部节点中选择，不要求该节点处于“启用”状态）。'));
+		nodeOptions(o, false);
 		o.value('', _('直连'));
 		o.default = '';
 		o.depends('node_mode', 'balance');

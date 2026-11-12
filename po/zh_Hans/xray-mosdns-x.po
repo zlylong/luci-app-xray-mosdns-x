@@ -209,3 +209,39 @@ msgstr "Hysteria2"
 
 msgid "Import share links"
 msgstr "导入分享链接"
+
+msgid "Add rule"
+msgstr "添加规则"
+
+msgid "Rule detail"
+msgstr "规则详情"
+
+msgid "Delete rule"
+msgstr "删除规则"
+
+msgid "Match type"
+msgstr "分流方式"
+
+msgid "Match value"
+msgstr "匹配值"
+
+msgid "Strategy"
+msgstr "策略"
+
+msgid "Geo tags (searchable, multi-select)"
+msgstr "Geo 标签（可搜索多选）"
+
+msgid "Manual match values"
+msgstr "手动匹配值"
+
+msgid "Search geo tags…"
+msgstr "搜索 geo 标签…"
+
+msgid "No rule yet"
+msgstr "还没有规则"
+
+msgid "Rule saved"
+msgstr "规则已保存"
+
+msgid "Match value cannot be empty"
+msgstr "匹配值不能为空"

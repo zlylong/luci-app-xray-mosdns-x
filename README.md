@@ -29,6 +29,9 @@ LuCI 管理界面：用 **Xray**（TProxy 透明代理）+ **mosdns-x**（DNS �
 - **节点列表**：表格只显示 启用/备注/地址/延迟，点“详情”弹窗编辑全部参数，支持单节点测速、全部测速
 - **订阅导入**：节点页“导入节点”弹窗粘贴 vless/vmess/trojan/ss/hysteria2 链接，批量生成（默认禁用）节点
 - **分流模式**（PassWall 风格）：大陆白名单 / GFW 列表 / 全局代理 / 自定义
+- **规则页**：从 geosite.dat/geoip.dat 自动提取标签（本机 1562 个 geosite + 260 个 geoip），支持搜索、多选、chips 展示
+- **负载均衡说明**：平衡模式会把所有“启用”节点纳入 Xray balancer；leastLoad 每分钟健康检查一次，
+  自动选择当前延迟最低的可用节点（选路/故障切换，不是按连接数分摊），无可用节点时使用备用节点
 
 ## 目录结构
 
@@ -153,6 +156,8 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
 - [x] Hysteria2 节点（协议 + 导入 + 生成配置）
 - [x] 节点表格化：地址/延迟列、测速、详情弹窗、导入合并进节点页
 - [x] PassWall 式分流模式（大陆白名单 / GFW 列表 / 全局 / 自定义）
+- [x] 规则页 geo 标签搜索/多选（含 geosite/geoip 自动提取）
+- [x] 备用节点可选全部节点（修复只能选“直连”的问题）
 - [ ] Gitea Actions 构建产物发布（未包含）
 
 ## 许可

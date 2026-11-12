@@ -1,49 +1,346 @@
 'use strict';
 'require view';
-'require form';
 'require uci';
+'require fs';
+'require ui';
+
+var CONF = 'xray-mosdns';
+
+var TYPES = {
+	domain: _('域名'),
+	ip: _('IP / CIDR'),
+	port: _('端口'),
+	network: _('协议 (tcp/udp)')
+};
+
+var POLICIES = {
+	proxy: _('代理'),
+	direct: _('直连'),
+	block: _('阻断')
+};
+
+var geoData = { geosite: [], geoip: [] };
+
+function rules() {
+	return uci.sections(CONF, 'rule') || [];
+}
+
+function ruleById(sid) {
+	var found = null;
+	rules().forEach(function(r) { if (r['.name'] === sid) found = r; });
+	return found;
+}
+
+function opt(title, input, hint) {
+	return E('div', { 'class': 'cbi-value' }, [
+		E('label', { 'class': 'cbi-value-title' }, title),
+		E('div', { 'class': 'cbi-value-field' }, [
+			input,
+			hint ? E('div', { 'class': 'cbi-value-description' }, hint) : ''
+		])
+	]);
+}
+
+function input(id, value, placeholder) {
+	return E('input', { 'id': id, 'type': 'text', 'class': 'cbi-input-text', 'value': value || '', 'placeholder': placeholder || '' });
+}
+
+function check(id, value) {
+	var el = E('input', { 'id': id, 'type': 'checkbox', 'class': 'cbi-input-checkbox' });
+	if (value === '1') el.checked = true;
+	return el;
+}
+
+function selectBox(id, values, value) {
+	var el = E('select', { 'id': id, 'class': 'cbi-input-select' });
+	Object.keys(values).forEach(function(k) {
+		var o = E('option', { 'value': k }, values[k]);
+		if (k === value) o.selected = true;
+		el.appendChild(o);
+	});
+	return el;
+}
+
+function val(id) {
+	var el = document.getElementById(id);
+	if (!el) return '';
+	if (el.type === 'checkbox') return el.checked ? '1' : '0';
+	return (el.value || '').trim();
+}
+
+function splitValue(value) {
+	var selected = [];
+	var manual = [];
+	(value || '').split(',').forEach(function(v) {
+		v = v.trim();
+		if (!v) return;
+		if (v.indexOf('geosite:') === 0) selected.push(v.slice(8));
+		else if (v.indexOf('geoip:') === 0) selected.push(v.slice(6));
+		else manual.push(v);
+	});
+	return { selected: selected, manual: manual };
+}
+
+function joinValue(type, selected, manual) {
+	var out = [];
+	selected.forEach(function(t) {
+		out.push((type === 'ip' ? 'geoip:' : 'geosite:') + t);
+	});
+	manual.forEach(function(m) { if (m.trim()) out.push(m.trim()); });
+	return out.join(',');
+}
+
+function displayValue(r) {
+	var v = (r.value || '').replace(/geosite:|geoip:/g, '');
+	var list = v.split(',').filter(function(x) { return x.trim(); });
+	if (!list.length) return '-';
+	var shown = list.slice(0, 3).join(', ');
+	if (list.length > 3) shown += ' … +' + (list.length - 3);
+	return shown;
+}
+
+function refreshTable() {
+	var tbody = document.getElementById('rule-tbody');
+	if (!tbody) return;
+	tbody.replaceChildren();
+	var list = rules();
+	if (!list.length) {
+		tbody.appendChild(E('tr', { 'class': 'tr' }, [ E('td', { 'class': 'td', 'colspan': 6 }, _('还没有规则')) ]));
+		return;
+	}
+	list.forEach(function(r) {
+		var tr = E('tr', { 'class': 'tr', 'data-rule': r['.name'] });
+		var enabled = E('input', { 'type': 'checkbox', 'class': 'cbi-input-checkbox' });
+		if (r.enabled === '1') enabled.checked = true;
+		enabled.addEventListener('change', function() {
+			uci.set(CONF, r['.name'], 'enabled', enabled.checked ? '1' : '0');
+			uci.save().then(function() { return uci.apply(); });
+		});
+		tr.appendChild(E('td', { 'class': 'td' }, [ enabled ]));
+		tr.appendChild(E('td', { 'class': 'td' }, [ E('strong', {}, r.remarks || '-') ]));
+		tr.appendChild(E('td', { 'class': 'td' }, TYPES[r.rule_type] || r.rule_type || ''));
+		tr.appendChild(E('td', { 'class': 'td' }, [ E('span', { 'title': r.value || '' }, displayValue(r)) ]));
+		tr.appendChild(E('td', { 'class': 'td' }, POLICIES[r.outbound] || r.outbound || ''));
+		var ops = E('td', { 'class': 'td cbi-section-actions' });
+		var edit = E('button', { 'class': 'cbi-button cbi-button-action' }, _('详情'));
+		var del = E('button', { 'class': 'cbi-button cbi-button-remove' }, _('删除'));
+		edit.addEventListener('click', function() { editModal(r['.name']); });
+		del.addEventListener('click', function() {
+			ui.showModal(_('删除规则'), [
+				E('p', {}, _('确定删除规则 "%s"？').format(r.remarks || r['.name'])),
+				E('div', { 'class': 'right' }, [
+					E('button', { 'class': 'btn', 'click': function() { ui.hideModal(); } }, _('取消')),
+					' ',
+					E('button', {
+						'class': 'cbi-button cbi-button-remove',
+						'click': function() {
+							uci.remove(CONF, r['.name']);
+							uci.save().then(function() { return uci.apply(); }).then(function() {
+								ui.hideModal();
+								refreshTable();
+							});
+						}
+					}, _('删除'))
+				])
+			]);
+		});
+		ops.appendChild(edit);
+		ops.appendChild(document.createTextNode(' '));
+		ops.appendChild(del);
+		tr.appendChild(ops);
+		tbody.appendChild(tr);
+	});
+}
+
+function saveRule(sid, values) {
+	if (sid === null) sid = uci.add(CONF, 'rule');
+	Object.keys(values).forEach(function(k) {
+		if (values[k] === null || values[k] === undefined) uci.unset(CONF, sid, k);
+		else uci.set(CONF, sid, k, values[k]);
+	});
+	return uci.save().then(function() { return uci.apply(); });
+}
+
+function editModal(sid) {
+	var r = sid ? (ruleById(sid) || {}) : {};
+	var isNew = !sid;
+	var type = r.rule_type || 'domain';
+
+	var parsed = splitValue(r.value || '');
+	var selected = parsed.selected.slice();
+	var manual = parsed.manual.slice();
+
+	var container = E('div', {}, []);
+
+	var typeSel = selectBox('ru-type', TYPES, type);
+	var polSel = selectBox('ru-policy', POLICIES, r.outbound || 'proxy');
+
+	var chips = E('div', { 'style': 'margin:4px 0;min-height:24px;' });
+	var search = E('input', { 'id': 'ru-search', 'type': 'text', 'class': 'cbi-input-text', 'placeholder': _('搜索 geo 标签…') });
+	var listBox = E('div', { 'style': 'max-height:220px;overflow:auto;border:1px solid #ddd;padding:4px;border-radius:3px;' });
+	var count = E('span', { 'class': 'cbi-value-description' });
+
+	function tagsForType() {
+		return type === 'ip' ? (geoData.geoip || []) : (geoData.geosite || []);
+	}
+
+	function renderChips() {
+		chips.replaceChildren();
+		if (!selected.length) {
+			chips.appendChild(E('span', { 'class': 'cbi-value-description' }, _('未选择标签，可在下方列表勾选或手动输入')));
+			return;
+		}
+		selected.forEach(function(t) {
+			var chip = E('span', {
+				'class': 'label label-primary',
+				'style': 'display:inline-block;margin:2px 4px 2px 0;padding:2px 6px;cursor:pointer',
+				'title': _('点击移除')
+			}, t + ' ×');
+			chip.addEventListener('click', function(ev) {
+				ev.preventDefault();
+				var idx = selected.indexOf(t);
+				if (idx >= 0) selected.splice(idx, 1);
+				renderChips();
+				renderList();
+			});
+			chips.appendChild(chip);
+		});
+	}
+
+	function renderList() {
+		var q = (val('ru-search') || '').toLowerCase();
+		var tags = tagsForType();
+		var shown = tags.filter(function(t) { return !q || t.toLowerCase().indexOf(q) >= 0; });
+		count.textContent = _('共 %d 个标签，显示 %d 个').format(tags.length, Math.min(shown.length, 300));
+		listBox.replaceChildren();
+		if (!tags.length) {
+			listBox.appendChild(E('div', { 'class': 'cbi-value-description' }, _('未找到 geo 数据（geosite.dat/geoip.dat）')));
+			return;
+		}
+		shown.slice(0, 300).forEach(function(t) {
+			var cb = E('input', { 'type': 'checkbox', 'class': 'cbi-input-checkbox' });
+			if (selected.indexOf(t) >= 0) cb.checked = true;
+			cb.addEventListener('change', function() {
+				if (cb.checked) {
+					if (selected.indexOf(t) < 0) selected.push(t);
+				}
+				else {
+					var i = selected.indexOf(t);
+					if (i >= 0) selected.splice(i, 1);
+				}
+				renderChips();
+			});
+			listBox.appendChild(E('label', { 'style': 'display:block;padding:1px 2px;cursor:pointer' }, [ cb, ' ', t ]));
+		});
+	}
+
+	search.addEventListener('input', renderList);
+	typeSel.addEventListener('change', function() {
+		type = typeSel.value;
+		selected = [];
+		renderChips();
+		renderList();
+	});
+
+	renderChips();
+	renderList();
+
+	var manualArea = E('textarea', {
+		'id': 'ru-manual',
+		'style': 'width:100%;height:70px;font-family:monospace;font-size:12px;',
+		'placeholder': type === 'ip' ? '10.0.0.0/8, 192.168.0.0/16' : 'domain:openai.com\nfull:example.org\nregexp:^ad\\.'
+	}, [ manual.join('\n') ]);
+
+	var fields = [
+		opt(_('备注'), input('ru-remarks', r.remarks, 'block-ads')),
+		opt(_('启用'), check('ru-enabled', r.enabled || '0')),
+		opt(_('分流方式'), typeSel, _('域名用 geosite 标签，IP 用 geoip 标签。')),
+		opt(_('策略'), polSel),
+		opt(_('Geo 标签（可搜索多选）'), E('div', {}, [ chips, search, count, listBox ]),
+			_('勾选后自动生成 geosite:/geoip: 前缀。')),
+		opt(_('手动匹配值'), manualArea, _('每行一个：domain:、full:、regexp: 或 CIDR。也可直接输入 geosite:xxx。'))
+	];
+
+	container.appendChild(E('div', {}, fields));
+
+	var save = E('button', { 'class': 'cbi-button cbi-button-apply' }, _('保存'));
+	save.addEventListener('click', function() {
+		var t = val('ru-type');
+		var manualLines = (document.getElementById('ru-manual').value || '').split('\n').map(function(s) { return s.trim(); }).filter(Boolean);
+		var value = joinValue(t, selected, manualLines);
+		if (!value) {
+			ui.addNotification(null, E('p', {}, _('匹配值不能为空')), 'error');
+			return;
+		}
+		saveRule(isNew ? null : sid, {
+			enabled: val('ru-enabled'),
+			remarks: val('ru-remarks'),
+			rule_type: t,
+			outbound: val('ru-policy'),
+			value: value
+		}).then(function() {
+			ui.hideModal();
+			refreshTable();
+			ui.addNotification(null, E('p', {}, _('规则已保存')), 'info');
+		}).catch(function(err) {
+			ui.addNotification(null, E('p', {}, String(err.message || err)), 'error');
+		});
+	});
+
+	ui.showModal(isNew ? _('添加分流规则') : _('规则详情'), [
+		container,
+		E('div', { 'class': 'right' }, [
+			E('button', { 'class': 'btn', 'click': function() { ui.hideModal(); } }, _('取消')),
+			' ',
+			save
+		])
+	]);
+}
 
 return view.extend({
 	load: function() {
-		return uci.load('xray-mosdns');
+		return Promise.all([
+			uci.load(CONF),
+			fs.exec('/usr/libexec/xray-mosdns/geo-tags.sh', []).then(function(res) {
+				try {
+					geoData = JSON.parse((res && res.stdout) || '{}');
+				} catch (e) {
+					geoData = { geosite: [], geoip: [] };
+				}
+				return geoData;
+			}).catch(function() { return null; })
+		]);
 	},
 
 	render: function() {
-		var m, s, o;
+		var addBtn = E('button', { 'class': 'cbi-button cbi-button-add' }, _('添加规则'));
+		addBtn.addEventListener('click', function() { editModal(null); });
 
-		m = new form.Map('xray-mosdns', _('分流规则'),
-			_('规则按顺序匹配，命中后使用对应策略；未命中时按“设置 → 分流模式”处理。' +
-			  '如需按端口/协议分流，可直接在 UCI 中添加 rule_type=\'port\' 或 \'network\' 的规则段。' +
-			  '域名使用 Xray 语法：geosite:google、domain:openai.com、full:example.org、regexp:^ad\\.；' +
-			  'IP 使用 CIDR：10.0.0.0/8。'));
+		var toolbar = E('div', { 'class': 'cbi-section-node' }, [ addBtn ]);
+		var table = E('table', { 'class': 'table cbi-section-table' }, [
+			E('thead', {}, [ E('tr', { 'class': 'tr table-titles' }, [
+				E('th', { 'class': 'th' }, _('启用')),
+				E('th', { 'class': 'th' }, _('备注')),
+				E('th', { 'class': 'th' }, _('分流方式')),
+				E('th', { 'class': 'th' }, _('匹配值')),
+				E('th', { 'class': 'th' }, _('策略')),
+				E('th', { 'class': 'th' }, _('操作'))
+			]) ]),
+			E('tbody', { 'id': 'rule-tbody' })
+		]);
 
-		s = m.section(form.GridSection, 'rule', _('规则列表'));
-		s.addremove = true;
-		s.anonymous = false;
-		s.sortable = true;
+		setTimeout(refreshTable, 0);
 
-		o = s.option(form.Flag, 'enabled', _('启用'));
-		o.default = '0';
+		return E('div', {}, [
+			E('p', {}, _('规则按顺序匹配，命中后使用对应策略；未命中时按“设置 → 分流模式”处理。')),
+			E('p', { 'class': 'cbi-value-description' },
+				_('Geo 标签来源于 /usr/share/v2ray/geosite.dat 与 geoip.dat，支持搜索、多选；也可手动输入 domain:/full:/regexp:/CIDR。')),
+			toolbar,
+			table
+		]);
+	},
 
-		o = s.option(form.Value, 'remarks', _('备注'));
-		o.placeholder = 'block-ads';
-
-		o = s.option(form.ListValue, 'rule_type', _('分流方式'));
-		o.value('domain', _('域名'));
-		o.value('ip', _('IP / CIDR'));
-		o.default = 'domain';
-
-		o = s.option(form.Value, 'value', _('匹配值'),
-			_('多个值用逗号分隔。'));
-		o.placeholder = 'geosite:google,domain:openai.com';
-		o.rmempty = false;
-
-		o = s.option(form.ListValue, 'outbound', _('策略'));
-		o.value('proxy', _('代理'));
-		o.value('direct', _('直连'));
-		o.value('block', _('阻断'));
-		o.default = 'proxy';
-
-		return m.render();
-	}
+	handleSave: null,
+	handleSaveApply: null,
+	handleReset: null
 });

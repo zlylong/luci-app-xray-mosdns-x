@@ -30,6 +30,9 @@
 				],
 				"/usr/libexec/xray-mosdns/latency.sh": [
 					"exec"
+				],
+				"/usr/libexec/xray-mosdns/geo-tags.sh": [
+					"exec"
 				]
 			}
 		},
