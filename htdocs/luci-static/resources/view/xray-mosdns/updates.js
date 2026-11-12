@@ -5,6 +5,7 @@
 'require ui';
 
 var SCRIPT = '/usr/libexec/xray-mosdns/update.sh';
+var FRONTEND_VERSION = '0.6.1';
 
 function fmtBytes(n) {
 	n = Number(n) || 0;
@@ -160,6 +161,7 @@ return view.extend({
 
 		return E('div', {}, [
 			E('h2', {}, _('更新')),
+			E('p', {}, _('前端版本：') + FRONTEND_VERSION),
 			E('p', {}, _('在线更新 Xray、mosdns-x 与 geo 规则数据（来源：GitHub 最新 release）。'
 				+ '更新 Xray 会影响 PassWall（共用 /usr/bin/xray），更新后请重启相关服务。')),
 			info,

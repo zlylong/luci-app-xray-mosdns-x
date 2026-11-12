@@ -73,7 +73,7 @@
 		"order": 65,
 		"action": {
 			"type": "view",
-			"path": "xray-mosdns/update"
+			"path": "xray-mosdns/updates"
 		}
 	}
 }
