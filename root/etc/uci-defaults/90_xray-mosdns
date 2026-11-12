@@ -21,7 +21,7 @@ uci -q get xray-mosdns.@dns[0] >/dev/null 2>&1 || {
 	EOC
 }
 
-for opt in allow_coexist socks_port api_port ipv6_enabled balancer_strategy geo_auto_update geo_update_hour; do
+for opt in allow_coexist socks_port api_port ipv6_enabled balancer_strategy geo_auto_update geo_update_hour failover_enabled; do
 	uci -q get "xray-mosdns.@global[0].$opt" >/dev/null 2>&1 || {
 		case "$opt" in
 			allow_coexist) s @global[0].allow_coexist '0' ;;
@@ -31,6 +31,7 @@ for opt in allow_coexist socks_port api_port ipv6_enabled balancer_strategy geo_
 			balancer_strategy) s @global[0].balancer_strategy 'leastLoad' ;;
 			geo_auto_update) s @global[0].geo_auto_update '0' ;;
 			geo_update_hour) s @global[0].geo_update_hour '4' ;;
+			failover_enabled) s @global[0].failover_enabled '0' ;;
 		esac
 	}
 done

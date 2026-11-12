@@ -45,6 +45,9 @@ SOCKS_PORT=$(gdef global.socks_port 1070)
 API_PORT=$(gdef global.api_port 10085)
 BAL_STRATEGY=$(gdef global.balancer_strategy leastLoad)
 FALLBACK_NODE=$(g global.fallback_node)
+FAILOVER_EN=$(gb global.failover_enabled)
+FO_PRIMARY=$(g global.failover_primary)
+FO_STANDBY=$(g global.failover_standby)
 IPV6_EN=$(gb global.ipv6_enabled)
 # "分流总节点": direct | balance | <node section>. Falls back to the legacy
 # node_mode/node options when the new option is absent (config migration).
@@ -200,8 +203,12 @@ add_needed() {
 }
 
 [ "$MAIN_TARGET" = "balance" ] && BAL_NEEDED=1
+[ "$BALANCE_EN" = "1" ] && BAL_NEEDED=1
+[ "$MAIN_TARGET" = "failover" ] && FO_NEEDED=1
+[ "$FAILOVER_EN" = "1" ] && FO_NEEDED=1
+[ -z "${FO_NEEDED:-}" ] && FO_NEEDED=0
 case "$MAIN_TARGET" in
-	direct|balance) ;;
+	direct|balance|failover) ;;
 	*)
 		node_exists "$MAIN_TARGET" || die "main node '$MAIN_TARGET' not found"
 		add_needed "$MAIN_TARGET"
@@ -216,6 +223,7 @@ for r in $(rule_names); do
 	case "$ro" in
 		main|proxy|direct|block) ;;
 		balance) BAL_NEEDED=1 ;;
+		failover) FO_NEEDED=1 ;;
 		*) if node_exists "$ro"; then add_needed "$ro"; else die "rule $r: unknown outbound '$ro'"; fi ;;
 	esac
 done
@@ -232,6 +240,12 @@ if [ "$BAL_NEEDED" = "1" ]; then
 	[ "$_cnt" -gt 0 ] || die "load balancing enabled but no enabled node"
 fi
 
+if [ "$FO_NEEDED" = "1" ]; then
+	[ -n "$FO_PRIMARY" ] && node_exists "$FO_PRIMARY" || die "failover: primary node not set"
+	add_needed "$FO_PRIMARY"
+	[ -n "$FO_STANDBY" ] && node_exists "$FO_STANDBY" && add_needed "$FO_STANDBY"
+fi
+
 node_tag() {
 	if [ "$BAL_NEEDED" = "1" ] && [ "$(node_enabled "$1")" = "1" ]; then
 		echo "proxy-$1"
@@ -246,6 +260,11 @@ for n in $NEEDED_NODES; do
 	node_outbound_json "$n" "$(node_tag "$n")" > "$NODEDIR/$i.json"
 done
 
+if [ "$FO_NEEDED" = "1" ]; then
+	i=$((i + 1))
+	node_outbound_json "$FO_PRIMARY" "fo-$FO_PRIMARY" > "$NODEDIR/failover-primary.json"
+fi
+
 # node IP set for the nftables bypass rule (all resolved addresses)
 NODE_IPS=$(sort -u "$OUT/.resolved" 2>/dev/null | tr '\n' ' ')
 NODE_IPS_JSON=$(printf '%s' "$NODE_IPS" | awk '{for(i=1;i<=NF;i++){printf "%s\"%s\"",(i>1?",":""),$i}}')
@@ -259,9 +278,11 @@ target_json() {
 			case "$MAIN_TARGET" in
 				direct) printf ',"outboundTag":"direct"' ;;
 				balance) printf ',"balancerTag":"balancer"' ;;
+		failover) printf ',"balancerTag":"failover"' ;;
 				*) printf ',"outboundTag":"%s"' "$(node_tag "$MAIN_TARGET")" ;;
 			esac ;;
 		balance) printf ',"balancerTag":"balancer"' ;;
+		failover) printf ',"balancerTag":"failover"' ;;
 		direct) printf ',"outboundTag":"direct"' ;;
 		block) printf ',"outboundTag":"block"' ;;
 		*) printf ',"outboundTag":"%s"' "$(node_tag "$1")" ;;
@@ -336,15 +357,32 @@ TPROXY_LISTEN="0.0.0.0"
 	if [ "$BAL_NEEDED" = "1" ] && [ -n "$FALLBACK_NODE" ] && node_exists "$FALLBACK_NODE"; then
 		FB_TAG=$(node_tag "$FALLBACK_NODE")
 	fi
-	if [ "$BAL_NEEDED" = "1" ]; then
+	if [ "$BAL_NEEDED" = "1" ] || [ "$FO_NEEDED" = "1" ]; then
 		# the observatory also registers the balancer members as used outbounds,
 		# otherwise fallbackTag/selector members may be pruned as unresolved deps
-		printf '  "burstObservatory": {"subjectSelector": ["proxy-"], "pingConfig": {"destination": "https://www.gstatic.com/generate_204", "interval": "1m", "timeout": "5s", "sampling": 3}},\n'
+		_SEL=""
+		[ "$BAL_NEEDED" = "1" ] && _SEL="\"proxy-\""
+		if [ "$FO_NEEDED" = "1" ]; then
+			_SEL="${_SEL:+$_SEL, }\"fo-\", \"out-\""
+		fi
+		printf '  "burstObservatory": {"subjectSelector": [%s], "pingConfig": {"destination": "https://www.gstatic.com/generate_204", "interval": "1m", "timeout": "5s", "sampling": 3}},\n' "$_SEL"
 	fi
 	printf '  "routing": {"domainStrategy": "IPIfNonMatch",\n'
-	if [ "$BAL_NEEDED" = "1" ]; then
-		printf '    "balancers": [{"tag": "balancer", "selector": ["proxy-"], "strategy": {"type": %s}, "fallbackTag": %s}],\n' \
-			"$(jstr "$BAL_STRATEGY")" "$(jstr "$FB_TAG")"
+	FO_FALLBACK="direct"
+	if [ "$FO_NEEDED" = "1" ] && [ -n "$FO_STANDBY" ] && node_exists "$FO_STANDBY"; then
+		FO_FALLBACK=$(node_tag "$FO_STANDBY")
+	fi
+	if [ "$BAL_NEEDED" = "1" ] || [ "$FO_NEEDED" = "1" ]; then
+		_BAL=""
+		if [ "$BAL_NEEDED" = "1" ]; then
+			_BAL="{\"tag\": \"balancer\", \"selector\": [\"proxy-\"], \"strategy\": {\"type\": $(jstr "$BAL_STRATEGY")}, \"fallbackTag\": $(jstr "$FB_TAG")}"
+		fi
+		if [ "$FO_NEEDED" = "1" ]; then
+			_FO="{"
+			_FO="$_FO\"tag\": \"failover\", \"selector\": [\"fo-\"], \"strategy\": {\"type\": \"leastLoad\"}, \"fallbackTag\": $(jstr "$FO_FALLBACK")}"
+			_BAL="${_BAL:+$_BAL, }$_FO"
+		fi
+		printf '    "balancers": [%s],\n' "$_BAL"
 	fi
 	printf '    "rules": [\n'
 	printf '    %s\n' "$RULES"

@@ -55,14 +55,16 @@ return view.extend({
 			]));
 		}
 
-		function xrayUpdate() {
-			return !!remote.xray && String(local.xray || '').indexOf(remote.xray) < 0;
+		function xrayDiff(L, R) {
+			return !!R.xray_num && L.xray_num !== R.xray_num;
 		}
-		function mosdnsUpdate() {
-			return !!remote.mosdns && String(local.mosdns || '').indexOf(remote.mosdns) < 0;
+		function mosdnsDiff(L, R) {
+			if (L.mosdns_kind !== 'mosdns-x')
+				return !!R.mosdns;
+			return !!R.mosdns_date && L.mosdns_date !== R.mosdns_date;
 		}
-		function geoUpdate() {
-			return !!remote.geo && local.geo_version !== remote.geo;
+		function geoDiff(L, R) {
+			return !!R.geo && L.geo_version !== R.geo;
 		}
 
 		function fill(d, c) {
@@ -75,10 +77,15 @@ return view.extend({
 				E('th', { 'class': 'th' }, _('远端版本')),
 				E('th', { 'class': 'th' }, _('状态'))
 			]));
-			row('Xray', L.xray, R.xray, !!R.xray && String(L.xray || '').indexOf(R.xray) < 0);
-			row('mosdns', L.mosdns, R.mosdns, !!R.mosdns && String(L.mosdns || '').indexOf(R.mosdns) < 0);
+			row('Xray', L.xray, R.xray, xrayDiff(L, R));
+			var mtext = L.mosdns || '-';
+			if (L.mosdns_kind && L.mosdns_kind !== 'mosdns-x')
+				mtext += ' ' + _('（官方 mosdns，非 mosdns-x）');
+			else if (L.mosdns_kind === 'mosdns-x' && L.mosdns_date)
+				mtext += ' ' + _('（mosdns-x，build %s）').format(L.mosdns_date);
+			row('mosdns', mtext, R.mosdns, mosdnsDiff(L, R));
 			row(_('geo 数据'), (L.geo_version || _('未记录')) + ' (' + fmtBytes(L.geosite) + ' / ' + fmtBytes(L.geoip) + ')',
-				R.geo, !!R.geo && L.geo_version !== R.geo);
+				R.geo, geoDiff(L, R));
 			cronRow.textContent = c.enabled ? _('已启用（每天 %s:00）').format(c.hour || '?') : _('未启用');
 		}
 

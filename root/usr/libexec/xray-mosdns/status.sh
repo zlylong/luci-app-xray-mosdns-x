@@ -7,7 +7,8 @@ enabled=$(g 'global.enabled'); [ -n "$enabled" ] || enabled=0
 main=$(g 'global.main_target'); [ -n "$main" ] || main=$(g 'global.node'); [ -n "$main" ] || main=direct
 case "$main" in
 	direct)  node="";        node_type="direct";   node_addr=""; node_remarks="直连" ;;
-	balance) node="balance"; node_type="balancer"; node_addr=""; node_remarks="负载均衡" ;;
+	balance)  node="balance";  node_type="balancer"; node_addr=""; node_remarks="负载均衡" ;;
+	failover) node="failover"; node_type="failover"; node_addr=""; node_remarks="主备" ;;
 	*)       node="$main";   node_type=$(g "$main.type"); [ -n "$node_type" ] || node_type=""
 	         node_addr=$(g "$main.address"); node_remarks=$(g "$main.remarks") ;;
 esac

@@ -32,6 +32,8 @@ LuCI 管理界面：用 **Xray**（TProxy 透明代理）+ **mosdns-x**（DNS �
 - **规则页**：从 geosite.dat/geoip.dat 自动提取标签（本机 1562 个 geosite + 260 个 geoip），支持搜索、多选、chips 展示
 - **负载均衡说明**：平衡模式会把所有“启用”节点纳入 Xray balancer；leastLoad 每分钟健康检查一次，
   自动选择当前延迟最低的可用节点（选路/故障切换，不是按连接数分摊），无可用节点时使用备用节点
+- **主备模型**：主节点 + 备节点；balancer 只包含主节点（单独 `fo-` 标签做健康检查），
+  主节点探测失败时通过 `fallbackTag` 自动切换到备节点（备节点未配置则回落到直连）
 
 ## 目录结构
 
@@ -164,6 +166,8 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
 - [x] 在线更新（Xray / mosdns-x / geo 数据，带备份）+ 远端版本对比
 - [x] geo 数据定时更新（每日 cron，对比 release 版本，一致则跳过）
 - [x] 分流规则可排序（↑/↓，序号即为匹配顺序）
+- [x] 主备模型（主节点 + 备节点自动切换）
+- [x] 更新页修正 mosdns-x 版本识别与远端版本对比
 - [x] 节点流量统计（Xray StatsService）
 - [x] DNS 页面中文化、日志等级可选
 - [ ] Gitea Actions 构建产物发布（未包含）

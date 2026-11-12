@@ -375,6 +375,58 @@ function balancePanel() {
 	]);
 }
 
+function failoverPanel() {
+	var global = uci.get(CONF, 'global') || {};
+	var enabled = E('input', { 'type': 'checkbox', 'class': 'cbi-input-checkbox' });
+	if (global.failover_enabled === '1') enabled.checked = true;
+
+	function nodeSelect(current) {
+		var sel = E('select', { 'class': 'cbi-input-select' });
+		sel.appendChild(E('option', { 'value': '' }, _('未选择')));
+		nodes().forEach(function(n) {
+			var addr = n.address ? n.address + ':' + (n.port || 443) : '';
+			var label = n.remarks ? n.remarks + (addr ? ' (' + addr + ')' : '') : (addr || n['.name']);
+			var o = E('option', { 'value': n['.name'] }, label);
+			if (n['.name'] === current) o.selected = true;
+			sel.appendChild(o);
+		});
+		return sel;
+	}
+
+	var primary = nodeSelect(global.failover_primary || '');
+	var standby = nodeSelect(global.failover_standby || '');
+
+	var save = E('button', { 'class': 'cbi-button cbi-button-apply' }, _('保存'));
+	save.addEventListener('click', function() {
+		uci.set(CONF, 'global', 'failover_enabled', enabled.checked ? '1' : '0');
+		uci.set(CONF, 'global', 'failover_primary', primary.value);
+		uci.set(CONF, 'global', 'failover_standby', standby.value);
+		if (!enabled.checked && uci.get(CONF, 'global', 'main_target') === 'failover')
+			uci.set(CONF, 'global', 'main_target', 'direct');
+		uci.save().then(function() { return uci.apply(); }).then(function() {
+			ui.addNotification(null, E('p', {}, _('主备设置已保存')), 'info');
+		});
+	});
+
+	function field(title, el) {
+		return E('div', { 'class': 'cbi-value' }, [
+			E('label', { 'class': 'cbi-value-title' }, title),
+			E('div', { 'class': 'cbi-value-field' }, el)
+		]);
+	}
+
+	return E('fieldset', { 'class': 'cbi-section' }, [
+		E('legend', {}, _('主备模型')),
+		E('p', { 'class': 'cbi-value-description' },
+			_('主节点健康检查（每分钟）正常时使用主节点；探测失败时自动切换到备节点。'
+			  + '启用后可把“分流总节点”或规则的策略设为“主备”。')),
+		field(_('启用主备'), enabled),
+		field(_('主节点'), primary),
+		field(_('备节点'), standby),
+		E('p', {}, save)
+	]);
+}
+
 function refreshTable() {
 	if (!tbody) return;
 	tbody.replaceChildren();
@@ -428,6 +480,7 @@ return view.extend({
 
 		var toolbar = E('div', { 'class': 'cbi-section-node' }, [ addBtn, ' ', impBtn, ' ', testAllBtn ]);
 		tableWrap.appendChild(balancePanel());
+		tableWrap.appendChild(failoverPanel());
 		tableWrap.appendChild(toolbar);
 		tableWrap.appendChild(E('table', { 'class': 'table cbi-section-table' }, [
 			E('thead', {}, [ E('tr', { 'class': 'tr table-titles' }, [

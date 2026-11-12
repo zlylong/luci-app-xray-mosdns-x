@@ -33,6 +33,10 @@ config global 'global'
 	option balancer_strategy 'leastLoad'
 	# node used when the balancer has no healthy member
 	option fallback_node ''
+	# 主备模型：主节点 + 备节点（主节点不可用时自动切到备节点）
+	option failover_enabled '0'
+	option failover_primary ''
+	option failover_standby ''
 	# also proxy/tproxy IPv6 traffic (experimental)
 	option ipv6_enabled '0'
 	# built-in split preset: chnroute | gfw | global | custom

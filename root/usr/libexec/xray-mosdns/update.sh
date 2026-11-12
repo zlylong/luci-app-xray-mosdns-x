@@ -69,6 +69,18 @@ cmd_versions() {
 		"$(jstr "$(geo_marker_read)")"
 }
 
+# normalize version strings for the update page
+xray_num() { printf '%s' "$1" | sed -n 's/.*Xray \([0-9][0-9.]*\).*/\1/p' | head -1; }
+mosdns_kind() {
+	case "$1" in
+		*"build time:"*) echo "mosdns-x" ;;
+		*) echo "mosdns" ;;
+	esac
+}
+mosdns_date() {
+	printf '%s' "$1" | sed -n 's/.*build time: \([0-9][0-9]\.[0-9][0-9]\.[0-9][0-9]\).*/\1/p' | head -1
+}
+
 cmd_check() {
 	xb=$(xray_bin); mb=$(mosdns_bin)
 	xv=$("$xb" version 2>/dev/null | head -1)
@@ -79,11 +91,14 @@ cmd_check() {
 	xr=$(remote_tag XTLS/Xray-core)
 	mr=$(remote_tag pmkol/mosdns-x)
 	gr=$(remote_tag Loyalsoldier/v2ray-rules-dat)
-	printf '{"ok":true,"local":{"xray":%s,"mosdns":%s,"geosite":%s,"geoip":%s,"geo_version":%s},"remote":{"xray":%s,"mosdns":%s,"geo":%s,"geo_auto":%s,"geo_hour":%s}}\n' \
-		"$(jstr "$xv")" "$(jstr "$mv")" \
+	printf '{"ok":true,"local":{"xray":%s,"xray_num":%s,"mosdns":%s,"mosdns_path":%s,"mosdns_kind":%s,"mosdns_date":%s,"geosite":%s,"geoip":%s,"geo_version":%s},"remote":{"xray":%s,"xray_num":%s,"mosdns":%s,"mosdns_date":%s,"geo":%s,"geo_auto":%s,"geo_hour":%s}}\n' \
+		"$(jstr "$xv")" "$(jstr "$(xray_num "$xv")")" \
+		"$(jstr "$mv")" "$(jstr "$mb")" "$(jstr "$(mosdns_kind "$mv")")" "$(jstr "$(mosdns_date "$mv")")" \
 		"$(jstr "$(geo_size "$gd/geosite.dat")")" "$(jstr "$(geo_size "$gd/geoip.dat")")" \
 		"$(jstr "$(geo_marker_read)")" \
-		"$(jstr "$xr")" "$(jstr "$mr")" "$(jstr "$gr")" \
+		"$(jstr "$xr")" "$(jstr "$(printf '%s' "$xr" | sed 's/^v//')")" \
+		"$(jstr "$mr")" "$(jstr "$(printf '%s' "$mr" | sed 's/^v//')")" \
+		"$(jstr "$gr")" \
 		"$(jstr "$(ug '@global[0].geo_auto_update')")" "$(jstr "$(ug '@global[0].geo_update_hour')")"
 }
 

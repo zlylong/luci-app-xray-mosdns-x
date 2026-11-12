@@ -16,6 +16,7 @@ var TYPES = {
 var STATIC_POLICIES = {
 	main: _('跟随总节点'),
 	balance: _('负载均衡'),
+	failover: _('主备'),
 	direct: _('直连'),
 	block: _('阻断')
 };
@@ -32,6 +33,10 @@ function policyOptions() {
 	if (global.balance_enabled === '1') {
 		opts.splice(1, 0, 'balance');
 		labels.balance = STATIC_POLICIES.balance;
+	}
+	if (global.failover_enabled === '1') {
+		opts.splice(opts.indexOf('balance') >= 0 ? 2 : 1, 0, 'failover');
+		labels.failover = STATIC_POLICIES.failover;
 	}
 	nodeList().forEach(function(n) {
 		var label = (n.remarks || n.address || n['.name']);
@@ -361,9 +366,12 @@ function mainPanel() {
 
 	var mainSel = E('select', { 'class': 'cbi-input-select' });
 	var optDirect = E('option', { 'value': 'direct' }, _('直连'));
+	var failoverOn = global.failover_enabled === '1';
 	var optBalance = E('option', { 'value': 'balance' }, _('负载均衡') + (balanceOn ? '' : _('（未启用）')));
+	var optFailover = E('option', { 'value': 'failover' }, _('主备') + (failoverOn ? '' : _('（未启用）')));
 	mainSel.appendChild(optDirect);
 	mainSel.appendChild(optBalance);
+	mainSel.appendChild(optFailover);
 	nodeList().forEach(function(n) {
 		mainSel.appendChild(E('option', { 'value': n['.name'] },
 			_('节点：') + (n.remarks || n.address || n['.name'])));
