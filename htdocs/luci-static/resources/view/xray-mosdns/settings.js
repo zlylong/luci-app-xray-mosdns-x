@@ -11,7 +11,7 @@ return view.extend({
 	render: function() {
 		var m, s, o;
 
-		m = new form.Map('xray-mosdns', _('Xray + mosdns-x'),
+		m = new form.Map('xray-mosdns', _('高级设置'),
 			_('Transparent proxy (TProxy) powered by Xray, with mosdns-x based DNS split, cache and ad blocking. ' +
 			  'Node/load-balancing options are on the Nodes page, split rules and the main target on the Rules page.'));
 

@@ -36,6 +36,12 @@
 				],
 				"/usr/libexec/xray-mosdns/update.sh": [
 					"exec"
+				],
+				"/usr/libexec/xray-mosdns/check-connect.sh": [
+					"exec"
+				],
+				"/etc/init.d/xray-mosdns": [
+					"exec"
 				]
 			}
 		},
