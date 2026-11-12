@@ -50,7 +50,6 @@ return view.extend({
 		lbStrategy.value = global.balancer_strategy || 'leastLoad';
 
 		var lbFallback = nodeSelect(global.fallback_node || '', true);
-		lbFallback.insertBefore(lbFallback.firstChild, null);
 
 		var lbSave = E('button', { 'class': 'cbi-button cbi-button-apply' }, '保存');
 		lbSave.addEventListener('click', function() {
