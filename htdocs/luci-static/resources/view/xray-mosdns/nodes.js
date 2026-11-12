@@ -348,6 +348,9 @@ function balancePanel() {
 		uci.set(CONF, 'global', 'balance_enabled', enabled.checked ? '1' : '0');
 		uci.set(CONF, 'global', 'balancer_strategy', strat.value);
 		uci.set(CONF, 'global', 'fallback_node', fb.value);
+		// turning LB off cannot keep it as the main target
+		if (!enabled.checked && uci.get(CONF, 'global', 'main_target') === 'balance')
+			uci.set(CONF, 'global', 'main_target', 'direct');
 		uci.save().then(function() { return uci.apply(); }).then(function() {
 			ui.addNotification(null, E('p', {}, _('负载均衡设置已保存')), 'info');
 		});

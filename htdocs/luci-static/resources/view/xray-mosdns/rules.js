@@ -25,9 +25,14 @@ function nodeList() {
 }
 
 function policyOptions() {
-	var opts = [ 'main', 'balance', 'direct', 'block' ];
+	var global = uci.get(CONF, 'global') || {};
+	var opts = [ 'main', 'direct', 'block' ];
 	var labels = {};
 	opts.forEach(function(k) { labels[k] = STATIC_POLICIES[k]; });
+	if (global.balance_enabled === '1') {
+		opts.splice(1, 0, 'balance');
+		labels.balance = STATIC_POLICIES.balance;
+	}
 	nodeList().forEach(function(n) {
 		var label = (n.remarks || n.address || n['.name']);
 		opts.push(n['.name']);
