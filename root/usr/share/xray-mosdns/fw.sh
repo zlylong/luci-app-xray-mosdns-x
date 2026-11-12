@@ -2,7 +2,6 @@
 # luci-app-xray-mosdns-x - nftables + policy routing helper
 # usage: fw.sh apply | clear | status
 OUT=/var/etc/xray-mosdns
-TABLE_NAME=inet xray-mosdns
 
 get_opt() { uci -q get "xray-mosdns.$1" 2>/dev/null; }
 FWMARK=$(get_opt 'global.fwmark'); [ -n "$FWMARK" ] || FWMARK=0x1
