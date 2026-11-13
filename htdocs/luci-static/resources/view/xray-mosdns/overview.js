@@ -80,7 +80,7 @@ return view.extend({
 		var api = global.api_port || '10085';
 		var mode = global.rule_mode || 'chnroute';
 		var main = st.main_target || global.main_target || 'direct';
-		var targetText = st.node_remarks || TARGET_LABEL[main] || '直连';
+		var targetText = st.node_remarks || st.node_address || TARGET_LABEL[main] || main;
 
 
 		function headLamps(s) {
