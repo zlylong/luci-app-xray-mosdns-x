@@ -297,6 +297,8 @@
 .xmx input[type="text"],
 .xmx input[type="password"],
 .xmx input[type="number"],
+.xmx input.cbi-input-text,
+.xmx input.cbi-input-password,
 .xmx textarea {
 	max-width: 100%;
 	padding: 6px 9px;
