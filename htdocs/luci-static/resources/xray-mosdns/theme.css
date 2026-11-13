@@ -27,6 +27,7 @@
 .xmx *,
 .xmx *::before,
 .xmx *::after { box-sizing: border-box; }
+.xmx { overflow-wrap: anywhere; }
 
 .xmx a {
 	color: color-mix(in srgb, var(--xmx-route) 62%, var(--xmx-ink));

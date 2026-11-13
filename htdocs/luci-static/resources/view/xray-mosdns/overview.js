@@ -289,7 +289,7 @@ return view.extend({
 		]);
 
 		/* ---------------------------------------------------------- versions */
-		var versionLine = E('p', { 'class': 'xmx-num xmx-muted', 'style': 'margin:0' }, [
+		var versionLine = E('p', { 'class': 'xmx-muted xmx-small', 'style': 'margin:0' }, [
 			xrayVersion(ver) + ' · ' + mosdnsVersion(ver) + ' · geo ' + (ver.geo_version || '未记录'),
 			' · ',
 			E('a', { 'href': '#' }, '组件更新')
