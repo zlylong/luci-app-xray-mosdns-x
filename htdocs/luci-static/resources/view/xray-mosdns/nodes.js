@@ -1,6 +1,7 @@
 'use strict';
 'require view';
 'require uci';
+'require xray-mosdns.ui as xm';
 'require fs';
 'require ui';
 
@@ -345,7 +346,17 @@ return view.extend({
 		]));
 
 		refreshTable();
-		return tableWrap;
+
+		var list = nodes();
+		var enabled = list.filter(function(n) { return n.enabled === '1'; }).length;
+		return xm.page({
+			title: '节点列表',
+			lede: '导入的节点都在这里。节点是否参与选路由“负载均衡 / 主备”和规则策略决定；测速只验证服务器连通性与延迟。',
+			lamps: [
+				xm.lamp(list.length ? 'on' : 'off', '节点', String(list.length)),
+				xm.lamp(enabled ? 'on' : 'warn', '已启用', String(enabled))
+			]
+		}, [ tableWrap ]);
 	},
 
 	handleSave: null,

@@ -4,6 +4,7 @@
 'require uci';
 'require ui';
 'require poll';
+'require xray-mosdns.ui as xm';
 
 var CONF = 'xray-mosdns';
 var LEVELS = [ 'debug', 'info', 'warning', 'error', 'none' ];
@@ -27,7 +28,8 @@ return view.extend({
 		});
 
 		var area = E('textarea', {
-			'style': 'width:100%;height:420px;font-family:monospace;font-size:12px;white-space:pre;',
+			'class': 'xmx-code',
+			'style': 'width:100%;height:420px;white-space:pre;',
 			'readonly': 'readonly',
 			'spellcheck': 'false'
 		}, [ (res && res[1] && res[1].stdout) || '' ]);
@@ -51,18 +53,20 @@ return view.extend({
 
 		poll.add(refresh, 15);
 
-		return E('div', {}, [
-			E('h2', {}, _('日志')),
-			E('div', { 'class': 'cbi-value' }, [
-				E('label', { 'class': 'cbi-value-title' }, _('日志等级')),
-				E('div', { 'class': 'cbi-value-field' }, [
-					sel, ' ', save,
-					E('div', { 'class': 'cbi-value-description' },
-						_('Xray 日志等级（debug/info/warning/error/none），保存后需重启插件服务生效。'))
-				])
+		return xm.page({
+			title: '运行日志',
+			lede: '最近 300 行 Xray / mosdns 日志，15 秒自动刷新。日志等级保存后需要重启服务生效。',
+			lamps: [ xm.lamp('on', '等级', level) ]
+		}, [
+			xm.section('日志等级', [
+				E('div', { 'class': 'xmx-row' }, [ sel, save ]),
+				E('p', { 'class': 'xmx-muted xmx-small' },
+					_('Xray 日志等级（debug/info/warning/error/none），保存后需重启插件服务生效。'))
 			]),
-			E('p', {}, [ reload, ' ', _('最近 300 行 Xray / mosdns 日志（自动刷新）') ]),
-			area
+			xm.section('最近日志', [
+				E('p', {}, [ reload ]),
+				area
+			])
 		]);
 	},
 

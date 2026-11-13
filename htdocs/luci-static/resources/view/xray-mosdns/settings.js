@@ -2,6 +2,7 @@
 'require view';
 'require form';
 'require uci';
+'require xray-mosdns.ui as xm';
 
 return view.extend({
 	load: function() {
@@ -11,11 +12,9 @@ return view.extend({
 	render: function() {
 		var m, s, o;
 
-		m = new form.Map('xray-mosdns', _('高级设置'),
-			_('Transparent proxy (TProxy) powered by Xray, with mosdns-x based DNS split, cache and ad blocking. ' +
-			  'Node/load-balancing options are on the Nodes page, split rules and the main target on the Rules page.'));
+		m = new form.Map('xray-mosdns', '', '');
 
-		s = m.section(form.NamedSection, 'global', 'global', _('基本设置'));
+		s = m.section(form.NamedSection, 'global', 'global', _('服务'));
 		s.addremove = false;
 
 		o = s.option(form.Flag, 'enabled', _('启用'));
@@ -67,6 +66,9 @@ return view.extend({
 			_('这些目标不会被 TProxy 劫持。'));
 		o.placeholder = '203.0.113.0/24';
 
-		return m.render();
+		return xm.page({
+			title: '高级设置',
+			lede: '透明代理、端口与运行参数。这里的开关会直接影响 nft、路由表和 Xray 启动参数，改完保存并重启服务生效。'
+		}, [ m.render() ]);
 	}
 });

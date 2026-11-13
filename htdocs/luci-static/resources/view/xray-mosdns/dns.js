@@ -2,6 +2,7 @@
 'require view';
 'require form';
 'require uci';
+'require xray-mosdns.ui as xm';
 
 return view.extend({
 	load: function() {
@@ -11,10 +12,9 @@ return view.extend({
 	render: function() {
 		var m, s, o;
 
-		m = new form.Map('xray-mosdns', _('DNS'),
-			_('mosdns-x handles client DNS: mainland domains are resolved through the domestic upstreams, everything else is sent through the proxy via the internal SOCKS inbound.'));
+		m = new form.Map('xray-mosdns', '', '');
 
-		s = m.section(form.NamedSection, 'dns', 'dns', _('DNS'));
+		s = m.section(form.NamedSection, 'dns', 'dns', _('上游与缓存'));
 		s.addremove = false;
 
 		o = s.option(form.Flag, 'enabled', _('Enable mosdns-x'),
@@ -61,6 +61,9 @@ return view.extend({
 		o = s.option(form.DynamicList, 'hosts', _('Static hosts'),
 			_('"domain ip" pairs, e.g. v1.example.com 203.0.113.10'));
 
-		return m.render();
+		return xm.page({
+			title: 'DNS',
+			lede: '客户端 DNS 由 mosdns-x 处理：国内域名走国内上游，其余通过内部 SOCKS 交给 Xray 代理解析；缓存与去广告也在这里。'
+		}, [ m.render() ]);
 	}
 });

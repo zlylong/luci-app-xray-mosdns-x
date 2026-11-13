@@ -1,10 +1,17 @@
 'use strict';
 'require view';
 'require uci';
+'require xray-mosdns.ui as xm';
 'require fs';
 'require ui';
 
 var CONF = 'xray-mosdns';
+var MODE_LABEL = {
+	chnroute: '大陆白名单',
+	gfw: 'GFW 列表',
+	global: '全局代理',
+	custom: '自定义规则'
+};
 
 var TYPES = {
 	domain: _('域名'),
@@ -398,8 +405,7 @@ function mainPanel() {
 		]);
 	}
 
-	return E('fieldset', { 'class': 'cbi-section' }, [
-		E('legend', {}, _('分流设置')),
+	return E('div', { 'class': 'cbi-section' }, [
 		E('p', { 'class': 'cbi-value-description' },
 			_('匹配顺序：先按上面的规则列表匹配（按序号从上到下），其次是“分流模式”内置规则，最后走“分流总节点”。')),
 		field(_('分流总节点'), mainSel, _('未命中任何规则时的默认出口，可选直连 / 某个节点 / 负载均衡 / 主备。')),
@@ -443,13 +449,26 @@ return view.extend({
 
 		refreshTable();
 
-		return E('div', {}, [
-			E('p', {}, _('规则按序号从上到下匹配，命中后使用对应策略；未命中时按“分流模式”内置规则，最后走“分流总节点”。可用 ↑/↓ 调整顺序。')),
-			E('p', { 'class': 'cbi-value-description' },
-				_('Geo 标签来源于 /usr/share/v2ray/geosite.dat 与 geoip.dat，支持搜索、多选；也可手动输入 domain:/full:/regexp:/CIDR。')),
-			toolbar,
-			table,
-			mainPanel()
+		var list = uci.sections(CONF, 'rule') || [];
+		var enabled = list.filter(function(r) { return r.enabled === '1'; }).length;
+		var mode = (uci.get(CONF, 'global') || {}).rule_mode || 'chnroute';
+
+		return xm.page({
+			title: '规则管理',
+			lede: '规则按序号从上到下匹配；下方是总开关级别的分流设置。规则列表里的“跟随总节点”会随分流总节点一起切换。',
+			lamps: [
+				xm.lamp(list.length ? 'on' : 'off', '规则', String(list.length)),
+				xm.lamp(enabled ? 'on' : 'warn', '已启用', String(enabled)),
+				xm.lamp('on', '模式', MODE_LABEL[mode] || mode)
+			]
+		}, [
+			xm.section('规则列表', [
+				E('p', { 'class': 'xmx-muted xmx-small' },
+					_('Geo 标签来源于 /usr/share/v2ray/geosite.dat 与 geoip.dat，支持搜索、多选；也可手动输入 domain:/full:/regexp:/CIDR。')),
+				toolbar,
+				table
+			]),
+			xm.section('分流设置', [ mainPanel() ])
 		]);
 	},
 

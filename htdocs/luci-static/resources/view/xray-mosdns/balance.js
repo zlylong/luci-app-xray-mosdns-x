@@ -2,6 +2,7 @@
 'require view';
 'require uci';
 'require ui';
+'require xray-mosdns.ui as xm';
 
 var CONF = 'xray-mosdns';
 
@@ -82,10 +83,17 @@ return view.extend({
 			});
 		});
 
-		return E('div', {}, [
-			E('h2', {}, '负载均衡与主备'),
-			E('fieldset', { 'class': 'cbi-section' }, [
-				E('legend', {}, '负载均衡'),
+		return xm.page({
+			title: '负载均衡',
+			lede: '两种选路模型，可分别启用，也可以同时存在。切换“分流总节点”后，规则里的“跟随总节点”会跟着变。',
+			lamps: [
+				xm.lamp(global.balance_enabled === '1' ? 'on' : 'off', '负载均衡',
+					global.balance_enabled === '1' ? '已启用' : '未启用'),
+				xm.lamp(global.failover_enabled === '1' ? 'on' : 'off', '主备',
+					global.failover_enabled === '1' ? '已启用' : '未启用')
+			]
+		}, [
+			xm.section('负载均衡', [ E('div', { 'class': 'cbi-section' }, [
 				E('p', { 'class': 'cbi-value-description' },
 					'启用后“分流总节点”和规则策略都可以选择“负载均衡”。成员是所有已启用的节点；'
 					+ 'leastLoad 每分钟探活并选择延迟最低的可用节点（自动选路/故障切换，不是按连接数分摊）。'),
@@ -93,16 +101,15 @@ return view.extend({
 				fieldRow('均衡策略', lbStrategy),
 				fieldRow('备用节点', lbFallback, '均衡器探测不到任何可用节点时使用。'),
 				E('p', {}, lbSave)
-			]),
-			E('fieldset', { 'class': 'cbi-section' }, [
-				E('legend', {}, '主备模型'),
+			]) ]),
+			xm.section('主备', [ E('div', { 'class': 'cbi-section' }, [
 				E('p', { 'class': 'cbi-value-description' },
 					'主节点健康检查（每分钟）正常时使用主节点；探测失败时自动切换到备节点（未设备节点则回落到直连）。'),
 				fieldRow('启用主备', foEnabled),
 				fieldRow('主节点', foPrimary),
 				fieldRow('备节点', foStandby),
 				E('p', {}, foSave)
-			])
+			]) ])
 		]);
 	},
 

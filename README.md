@@ -169,6 +169,7 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
 - [x] 分流规则可排序（↑/↓，序号即为匹配顺序）
 - [x] 主备模型（主节点 + 备节点自动切换）
 - [x] 更新页修正 mosdns-x 版本识别与远端版本对比
+- [x] v0.8.0 UI 重设计：线路图式首页、统一的技图风格（等宽数据、方形端子、主题自适应）
 - [x] 节点流量统计（Xray StatsService）
 - [x] DNS 页面中文化、日志等级可选
 - [ ] Gitea Actions 构建产物发布（未包含）

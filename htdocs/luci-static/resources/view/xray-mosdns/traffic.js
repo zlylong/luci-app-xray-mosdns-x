@@ -3,6 +3,7 @@
 'require uci';
 'require fs';
 'require poll';
+'require xray-mosdns.ui as xm';
 
 var CONF = 'xray-mosdns';
 
@@ -80,9 +81,11 @@ return view.extend({
 			});
 		}, 10);
 
-		return E('div', {}, [
-			E('h2', {}, _('节点流量')),
-			E('p', {}, _('仅统计代理节点流量（来自 Xray StatsService），每 10 秒刷新。')),
+		return xm.page({
+			title: '流量统计',
+			lede: '只统计代理节点的流量，数据来自 Xray StatsService；直连与 DNS 流量不计入。每 10 秒刷新。'
+		}, [
+			xm.section('节点流量', [
 			errEl,
 			E('table', { 'class': 'table' }, [
 				E('thead', {}, [ E('tr', { 'class': 'tr table-titles' }, [
@@ -93,7 +96,8 @@ return view.extend({
 				]) ]),
 				tbody
 			]),
-			E('p', {}, [ _('节点流量合计（上传 / 下载）：'), totalEl ])
+			E('p', { 'class': 'xmx-num xmx-muted' }, [ _('合计（上传 / 下载）：'), totalEl ])
+			])
 		]);
 	},
 

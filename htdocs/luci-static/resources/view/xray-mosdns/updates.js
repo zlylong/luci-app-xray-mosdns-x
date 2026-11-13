@@ -3,6 +3,7 @@
 'require fs';
 'require uci';
 'require ui';
+'require xray-mosdns.ui as xm';
 
 var SCRIPT = '/usr/libexec/xray-mosdns/update.sh';
 var FRONTEND_VERSION = '0.6.1';
@@ -159,22 +160,26 @@ return view.extend({
 			});
 		});
 
-		return E('div', {}, [
-			E('h2', {}, _('更新')),
-			E('p', {}, _('前端版本：') + FRONTEND_VERSION),
-			E('p', {}, _('在线更新 Xray、mosdns-x 与 geo 规则数据（来源：GitHub 最新 release）。'
-				+ '更新 Xray 会影响 PassWall（共用 /usr/bin/xray），更新后请重启相关服务。')),
-			info,
-			E('p', {}, [ checkBtn, ' ', btn(_('更新 geo 数据'), 'geo'), ' ', btn(_('更新 Xray'), 'xray'), ' ', btn(_('更新 mosdns-x'), 'mosdns') ]),
-			E('h2', {}, _('geo 定时更新')),
-			E('p', { 'class': 'cbi-value-description' },
-				_('每天定时检查并更新 geo 数据（对比远端 release 版本，相同则跳过）。当前：') , cronRow),
-			E('div', { 'class': 'cbi-value' }, [
-				E('label', { 'class': 'cbi-value-title' }, _('启用定时更新')),
-				E('div', { 'class': 'cbi-value-field' }, [ autoChk, ' ', _('每天'), ' ', hourSel, ' ', savePlan ])
+		return xm.page({
+			title: '组件更新',
+			lede: '在线更新 Xray、mosdns-x 与 geo 规则数据，来源是 GitHub 最新 release；更新 Xray 会影响共用 /usr/bin/xray 的 PassWall。',
+			lamps: [ xm.lamp('on', '前端', FRONTEND_VERSION) ]
+		}, [
+			xm.section('版本', [
+				info,
+				E('div', { 'class': 'xmx-row', 'style': 'margin-top:12px' }, [
+					checkBtn,
+					btn(_('更新 geo 数据'), 'geo'),
+					btn(_('更新 Xray'), 'xray'),
+					btn(_('更新 mosdns-x'), 'mosdns')
+				])
 			]),
-			E('h2', {}, _('执行结果')),
-			output
+			xm.section('geo 定时更新', [
+				E('p', { 'class': 'xmx-muted xmx-small' },
+					_('每天定时检查并更新 geo 数据（对比远端 release 版本，相同则跳过）。当前：') , cronRow),
+				E('div', { 'class': 'xmx-row' }, [ autoChk, E('span', {}, _('每天')), hourSel, savePlan ])
+			]),
+			xm.section('执行结果', [ output ])
 		]);
 	},
 

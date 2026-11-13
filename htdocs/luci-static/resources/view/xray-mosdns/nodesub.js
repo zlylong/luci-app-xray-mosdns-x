@@ -3,6 +3,7 @@
 'require fs';
 'require uci';
 'require ui';
+'require xray-mosdns.ui as xm';
 
 var CONF = 'xray-mosdns';
 
@@ -14,10 +15,11 @@ return view.extend({
 	render: function() {
 		var area = E('textarea', {
 			'id': 'nm-import',
-			'style': 'width:100%;height:320px;font-family:monospace;font-size:12px;',
+			'class': 'xmx-code',
+			'style': 'width:100%;height:300px;',
 			'placeholder': 'vless://...\nvmess://...\ntrojan://...\nss://...\nhysteria2://...'
 		});
-		var output = E('pre', { 'style': 'white-space:pre-wrap;max-height:160px;overflow:auto;background:#f5f5f5;padding:8px;border-radius:4px;' }, []);
+		var output = E('pre', { 'class': 'xmx-code' }, []);
 
 		var btn = E('button', { 'class': 'cbi-button cbi-button-apply' }, '导入节点');
 		btn.addEventListener('click', function() {
@@ -45,15 +47,19 @@ return view.extend({
 			});
 		});
 
-		return E('div', {}, [
-			E('h2', {}, '节点订阅 / 导入'),
-			E('p', {}, '粘贴分享链接（每行一个），支持 vless / vmess / trojan / shadowsocks（SIP002）/ hysteria2（hysteria2:// 或 hy2://）。'
-				+ '导入的节点默认禁用，请到“节点列表”中启用并选择。'),
-			area,
-			E('p', {}, btn),
-			E('p', { 'class': 'cbi-value-description' }, '注意：Hysteria2 / TUIC / SSR 之外的协议暂不支持。'),
-			E('h2', {}, '执行结果'),
-			output
+		return xm.page({
+			title: '节点订阅',
+			lede: '粘贴分享链接，一次导入多个节点。导入后节点默认禁用，去“节点列表”启用并决定它们参与哪种选路。',
+			lamps: [ xm.lamp('on', '支持', 'vless · vmess · trojan · ss · hysteria2') ]
+		}, [
+			xm.section('粘贴链接', [
+				area,
+				E('div', { 'class': 'xmx-row', 'style': 'margin-top:10px' }, [
+					btn,
+					E('span', { 'class': 'xmx-muted xmx-small' }, '每行一个；支持 vless / vmess / trojan / shadowsocks（SIP002）/ hysteria2（hy2://）。')
+				])
+			]),
+			xm.section('执行结果', [ output ])
 		]);
 	},
 
