@@ -6,6 +6,9 @@
 // never flushed here. That keeps them in step with the mosdns cache across
 // reloads; they are flushed separately when the DNS rules change.
 //
+// Sets: bypass4/6 (never proxied), ipg4_N/ipg6_N (IP rules, in rule order),
+// direct4_dns/proxy4_dns and their v6 twins (filled by mosdns).
+//
 // Packet path (prerouting, mangle priority):
 //   1. only traffic entering from the LAN devices is considered
 //   2. flows already handed to Xray keep going there (conntrack mark)
@@ -25,6 +28,8 @@ const RESERVED6 = [ '::/127', 'fc00::/7', 'fe80::/10', 'ff00::/8' ];
 
 const DNS_SETS = [ 'direct4_dns', 'direct6_dns', 'proxy4_dns', 'proxy6_dns' ];
 const DNS_TIMEOUT = '3d';
+// fixed number of ordered IP-rule groups, so the ruleset can always be re-applied in place
+const IP_GROUPS = 8;
 
 function split_family(list) {
 	let r = { v4: [], v6: [] };
@@ -51,32 +56,57 @@ export function build(cfg, plan, env) {
 
 	// ------------------------------------------------------------ set contents
 	let bypass = split_family([ ...g.bypass_ips, ...env.node_ips.v4, ...env.node_ips.v6 ]);
-	let direct = { v4: [], v6: [] };
-	let proxy = { v4: [], v6: [] };	// "must reach Xray": proxied and blocked destinations
+
+	// IP rules keep their order: consecutive rules of one kind share a group,
+	// and the groups are tested in sequence. "proxy" here means "must reach
+	// Xray", which also covers blocked destinations.
+	let groups = [];
 	for (let r in plan.rules) {
 		if (r.type != 'ip')
 			continue;
-		const lit = split_family(r.values);	// geoip:* tags stay Xray-only
-		const dst = (r.class == 'direct') ? direct : proxy;
-		push(dst.v4, ...lit.v4);
-		push(dst.v6, ...lit.v6);
+		const kind = (r.class == 'direct') ? 'direct' : 'proxy';
+		let grp = groups[length(groups) - 1];
+		if (!grp || grp.kind != kind) {
+			grp = { kind, v4: [], v6: [] };
+			push(groups, grp);
+		}
+		const lit = split_family(r.values);
+		push(grp.v4, ...lit.v4);
+		push(grp.v6, ...lit.v6);
+		for (let v in r.values) {
+			const m = match(v, /^geoip:([A-Za-z0-9_-]+)$/);
+			if (!m || lc(m[1]) == 'private')
+				continue;	// negated / private tags stay Xray-only
+			const set = g.kernel_split ? env.geoip(m[1]) : null;
+			if (set) {
+				push(grp.v4, ...set.v4);
+				push(grp.v6, ...set.v6);
+			}
+		}
+	}
+	// a trailing group that only repeats the default decides nothing
+	while (length(groups) && groups[length(groups) - 1].kind == plan.default_class)
+		pop(groups);
+	// more groups than slots: fold the tail into the last slot of the same kind
+	while (length(groups) > IP_GROUPS) {
+		const extra = pop(groups);
+		for (let i = IP_GROUPS - 1; i >= 0; i--) {
+			if (groups[i].kind == extra.kind) {
+				push(groups[i].v4, ...extra.v4);
+				push(groups[i].v6, ...extra.v6);
+				break;
+			}
+		}
 	}
 
-	const chn = env.chnroute ?? { v4: [], v6: [] };
-	// without a mainland list the carve-out cannot be done in the kernel;
-	// everything is handed to Xray, whose geoip:cn rule still applies
-	const cn_kernel = (plan.cn_direct && length(chn.v4) > 0);
-
-	const static_sets = {
+	let static_sets = {
 		bypass4: [ 'ipv4_addr', [ ...RESERVED4, ...bypass.v4 ] ],
 		bypass6: [ 'ipv6_addr', [ ...RESERVED6, ...bypass.v6 ] ],
-		direct4: [ 'ipv4_addr', direct.v4 ],
-		direct6: [ 'ipv6_addr', direct.v6 ],
-		proxy4: [ 'ipv4_addr', proxy.v4 ],
-		proxy6: [ 'ipv6_addr', proxy.v6 ],
-		chnroute4: [ 'ipv4_addr', cn_kernel ? chn.v4 : [] ],
-		chnroute6: [ 'ipv6_addr', cn_kernel ? chn.v6 : [] ],
 	};
+	for (let i = 0; i < IP_GROUPS; i++) {
+		static_sets[`ipg4_${i}`] = [ 'ipv4_addr', groups[i]?.v4 ?? [] ];
+		static_sets[`ipg6_${i}`] = [ 'ipv6_addr', groups[i]?.v6 ?? [] ];
+	}
 
 	// ------------------------------------------------------------ objects
 	push(out, `add table ${T}`);
@@ -114,27 +144,22 @@ export function build(cfg, plan, env) {
 		push(pre, 'meta nfproto ipv6 return');
 
 	if (g.kernel_split) {
-		push(pre, 'ip daddr @direct4 return');
+		// addresses mosdns resolved for a domain rule are the most specific
+		// information available, so they are tested before the IP rules
 		push(pre, 'ip daddr @direct4_dns return');
-		push(pre, 'ip daddr @proxy4 goto do_tproxy');
 		push(pre, 'ip daddr @proxy4_dns goto do_tproxy');
 		if (g.ipv6) {
-			push(pre, 'ip6 daddr @direct6 return');
 			push(pre, 'ip6 daddr @direct6_dns return');
-			push(pre, 'ip6 daddr @proxy6 goto do_tproxy');
 			push(pre, 'ip6 daddr @proxy6_dns goto do_tproxy');
 		}
-		if (plan.default_class == 'direct') {
-			push(pre, 'return');
+		for (let i = 0; i < length(groups); i++) {
+			const verdict = (groups[i].kind == 'direct') ? 'return' : 'goto do_tproxy';
+			if (length(groups[i].v4))
+				push(pre, `ip daddr @ipg4_${i} ${verdict}`);
+			if (g.ipv6 && length(groups[i].v6))
+				push(pre, `ip6 daddr @ipg6_${i} ${verdict}`);
 		}
-		else {
-			if (cn_kernel) {
-				push(pre, 'ip daddr @chnroute4 return');
-				if (g.ipv6 && length(chn.v6))
-					push(pre, 'ip6 daddr @chnroute6 return');
-			}
-			push(pre, 'goto do_tproxy');
-		}
+		push(pre, (plan.default_class == 'direct') ? 'return' : 'goto do_tproxy');
 	}
 	else {
 		push(pre, 'goto do_tproxy');

@@ -5,8 +5,6 @@
 config global 'global'
 	# master switch (0 = installed but inactive)
 	option enabled '0'
-	# set to 1 only if you know both stacks can coexist (not recommended)
-	option allow_coexist '0'
 	# transparent proxy mode: tproxy (nft tproxy + policy routing)
 	option proxy_mode 'tproxy'
 	# port that Xray tproxy inbound listens on
@@ -25,26 +23,22 @@ config global 'global'
 	option socks_port '1070'
 	# local Xray stats API port (node traffic counters)
 	option api_port '10085'
-	# 分流总节点: direct | balance | <node section name>
+	# config layout version (set by the package, do not change)
+	option schema '2'
+	# 分流总节点: direct | <node section> | <group section>
 	option main_target 'direct'
-	# enable load balancing (selectable as main target or rule target)
-	option balance_enabled '0'
-	# balancer strategy: leastLoad | roundRobin | random
-	option balancer_strategy 'leastLoad'
-	# node used when the balancer has no healthy member
-	option fallback_node ''
-	# 主备模型：主节点 + 备节点（主节点不可用时自动切到备节点）
-	option failover_enabled '0'
-	option failover_primary ''
-	option failover_standby ''
+	# health probe used by node groups
+	option probe_url 'https://www.gstatic.com/generate_204'
+	option probe_interval '1m'
 	# decide proxy-vs-direct in nftables so direct traffic never enters Xray
 	option kernel_split '1'
-	# logical interfaces whose traffic is proxied (WAN-side traffic is never touched)
+	# logical interfaces whose traffic is proxied, e.g. lan, a guest network, a VPN
+	# interface (traffic entering from anything else, including WAN, is never touched)
 	list lan_ifaces 'lan'
 	# also proxy/tproxy IPv6 traffic (experimental)
 	option ipv6_enabled '0'
-	# built-in split preset: chnroute | gfw | global | custom
-	option rule_mode 'chnroute'
+	# traffic no rule claims: proxy (via 分流总节点) | direct
+	option default_action 'proxy'
 	# scheduled geo data update (cron): 0/1 and hour of day
 	option geo_auto_update '0'
 	option geo_update_hour '4'
@@ -63,8 +57,6 @@ config dns 'dns'
 	option cache_size '8192'
 	# cache queries carrying EDNS (needed by most modern clients)
 	option cache_everything '1'
-	# block ad domains via geosite:category-ads-all
-	option adblock '1'
 	# drop AAAA answers for proxied domains (prevents IPv6 bypass)
 	option filter_proxy_ipv6 '1'
 	# bootstrap resolver used to reach DoH/DoT upstreams (direct, mainland)
@@ -77,6 +69,7 @@ config dns 'dns'
 	# static hosts entries: "<domain> <ip>"
 	list hosts ''
 
+# enabled '0' = 不生成、不可选
 config node 'node_example'
 	option enabled '0'
 	option remarks 'example'
@@ -95,12 +88,52 @@ config node 'node_example'
 	option host ''
 	option service_name ''
 
-# 分流规则（按顺序匹配）
+# 节点组：把几个节点组合成一个出口，可以像节点一样被选作总节点或规则出口
+# strategy: fastest（最快）| ordered（按顺序，列表顺序即优先级）| roundrobin | random
+# fallback: 成员全部不可用时的出口，direct | block | <node section>
+# failback: 仅 ordered。0（默认）= 切换后只有当前成员不可用才再切；1 = 前面的成员恢复后立即切回
+#config group 'hk'
+#	option remarks '香港'
+#	option strategy 'fastest'
+#	list member 'node_a'
+#	list member 'node_b'
+#	option fallback 'direct'
+
+# 分流规则：从上到下匹配，第一条命中的生效
 # rule_type: domain | ip | port | network
-# outbound:  main（跟随分流总节点）| balance | direct | block | <node section>
-config rule 'rule_example'
-	option enabled '0'
-	option remarks 'example-domain-rule'
+# outbound:  main（跟随分流总节点）| direct | block | <node section> | <group section>
+# 下面几条是预置规则，和你自己加的规则没有区别，可以关掉、修改、调整顺序。
+config rule 'builtin_ads'
+	option enabled '1'
+	option remarks '广告'
 	option rule_type 'domain'
-	option value 'domain:example.org,geosite:google'
+	list value 'geosite:category-ads-all'
+	option outbound 'block'
+
+config rule 'builtin_cn_domain'
+	option enabled '1'
+	option remarks '国内域名'
+	option rule_type 'domain'
+	list value 'geosite:cn'
+	option outbound 'direct'
+
+config rule 'builtin_cn_ip'
+	option enabled '1'
+	option remarks '国内 IP'
+	option rule_type 'ip'
+	list value 'geoip:cn'
+	option outbound 'direct'
+
+config rule 'builtin_noncn'
+	option enabled '1'
+	option remarks '非国内域名'
+	option rule_type 'domain'
+	list value 'geosite:geolocation-!cn'
+	option outbound 'main'
+
+config rule 'builtin_gfw'
+	option enabled '0'
+	option remarks 'GFW 列表'
+	option rule_type 'domain'
+	list value 'geosite:gfw'
 	option outbound 'main'

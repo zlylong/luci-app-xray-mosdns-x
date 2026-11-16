@@ -15,23 +15,17 @@ uci -q get xray-mosdns.@dns[0] >/dev/null 2>&1 || {
 	set xray-mosdns.dns.mosdns_bin='/usr/bin/mosdns'
 	set xray-mosdns.dns.cache_size='8192'
 	set xray-mosdns.dns.cache_everything='1'
-	set xray-mosdns.dns.adblock='1'
 	set xray-mosdns.dns.filter_proxy_ipv6='1'
 	set xray-mosdns.dns.bootstrap='223.5.5.5'
 	EOC
 }
 
-d '@global[0].allow_coexist' '0'
 d '@global[0].socks_port' '1070'
 d '@global[0].api_port' '10085'
 d '@global[0].ipv6_enabled' '0'
-d '@global[0].balancer_strategy' 'leastLoad'
 d '@global[0].geo_auto_update' '0'
 d '@global[0].geo_update_hour' '4'
-d '@global[0].failover_enabled' '0'
 d '@global[0].kernel_split' '1'
-d '@global[0].rule_mode' 'chnroute'
-d '@global[0].balance_enabled' '0'
 d '@dns[0].redirect' '1'
 
 # 0.9: mosdns listens on a wildcard address; 5353 would collide with mDNS
@@ -53,8 +47,90 @@ if [ -z "$(g '@global[0].main_target')" ]; then
 	[ -n "$(g '@global[0].main_target')" ] || s '@global[0].main_target' 'direct'
 fi
 
+# 0.9.2: the split "mode" and the ad-block switch become ordinary rule rows
+# (appended after the user's own rules, which is where they used to apply)
+if [ -z "$(g '@global[0].default_action')" ]; then
+	mode=$(g '@global[0].rule_mode'); [ -n "$mode" ] || mode=chnroute
+	ads=$(g '@dns[0].adblock'); [ -n "$ads" ] || ads=1
+	cn=0; gfw=0; act=proxy
+	case "$mode" in
+		chnroute) cn=1 ;;
+		gfw) gfw=1; act=direct ;;
+	esac
+	s '@global[0].default_action' "$act"
+
+	# $1 name  $2 enabled  $3 remarks  $4 type  $5 value  $6 outbound
+	builtin() {
+		uci -q get "xray-mosdns.$1" >/dev/null 2>&1 && return 0
+		uci -q batch <<-EOC
+		set xray-mosdns.$1=rule
+		set xray-mosdns.$1.enabled='$2'
+		set xray-mosdns.$1.remarks='$3'
+		set xray-mosdns.$1.rule_type='$4'
+		add_list xray-mosdns.$1.value='$5'
+		set xray-mosdns.$1.outbound='$6'
+		EOC
+	}
+	builtin builtin_ads       "$ads" '广告'       domain 'geosite:category-ads-all' block
+	builtin builtin_cn_domain "$cn"  '国内域名'   domain 'geosite:cn'               direct
+	builtin builtin_cn_ip     "$cn"  '国内 IP'    ip     'geoip:cn'                 direct
+	builtin builtin_noncn     "$cn"  '非国内域名' domain 'geosite:geolocation-!cn'  main
+	builtin builtin_gfw       "$gfw" 'GFW 列表'   domain 'geosite:gfw'              main
+fi
+uci -q delete 'xray-mosdns.@global[0].rule_mode'
+uci -q delete 'xray-mosdns.@dns[0].adblock'
+
+# 0.9.2: the single balancer and the primary/standby pair become node groups,
+# and a node's "enabled" flag now means "usable" instead of "balancer member"
+if [ "$(g '@global[0].schema')" != "2" ]; then
+	main=$(g '@global[0].main_target')
+	outs=$(uci -q -X show xray-mosdns | sed -n "s/^xray-mosdns\.[^.]*\.outbound='\(.*\)'\$/\1/p")
+	uses() { [ "$main" = "$1" ] || echo "$outs" | grep -qx "$1"; }
+	fb=$(g '@global[0].fallback_node')
+	pri=$(g '@global[0].failover_primary')
+	sby=$(g '@global[0].failover_standby')
+
+	if ! uci -q get xray-mosdns.balance >/dev/null 2>&1 &&
+	   { [ "$(g '@global[0].balance_enabled')" = "1" ] || uses balance; }; then
+		case "$(g '@global[0].balancer_strategy')" in
+			roundRobin) strat=roundrobin ;;
+			random) strat=random ;;
+			*) strat=fastest ;;
+		esac
+		uci -q set xray-mosdns.balance=group
+		s balance.remarks '负载均衡'
+		s balance.strategy "$strat"
+		# members: what "enabled" used to select
+		for n in $(uci -q -X show xray-mosdns | sed -n "s/^xray-mosdns\.\([^.=]*\)=node\$/\1/p"); do
+			[ "$(g "$n.enabled")" = "1" ] && uci -q add_list "xray-mosdns.balance.member=$n"
+		done
+		s balance.fallback "${fb:-direct}"
+	fi
+
+	if ! uci -q get xray-mosdns.failover >/dev/null 2>&1 &&
+	   { [ "$(g '@global[0].failover_enabled')" = "1" ] || uses failover; }; then
+		uci -q set xray-mosdns.failover=group
+		s failover.remarks '主备'
+		s failover.strategy 'ordered'
+		for n in $pri $sby; do
+			uci -q add_list "xray-mosdns.failover.member=$n"
+		done
+		s failover.fallback 'direct'
+	fi
+
+	# every node something still points at has to stay usable
+	for t in $main $outs $fb $pri $sby; do
+		[ "$(uci -q get "xray-mosdns.$t")" = "node" ] && s "$t.enabled" '1'
+	done
+
+	for opt in balance_enabled balancer_strategy fallback_node failover_enabled failover_primary failover_standby; do
+		uci -q delete "xray-mosdns.@global[0].$opt"
+	done
+	s '@global[0].schema' '2'
+fi
+
 # drop removed legacy options/lists
-for opt in node_mode node bypass_chn default_outbound proxy_domains direct_domains block_domains; do
+for opt in node_mode node bypass_chn default_outbound proxy_domains direct_domains block_domains allow_coexist; do
 	uci -q delete "xray-mosdns.@global[0].$opt"
 done
 uci -q delete 'xray-mosdns.@dns[0].xray_dns_port'

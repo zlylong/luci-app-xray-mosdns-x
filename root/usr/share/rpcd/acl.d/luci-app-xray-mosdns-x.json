@@ -31,9 +31,6 @@
 				"/usr/libexec/xray-mosdns/latency.sh": [
 					"exec"
 				],
-				"/usr/libexec/xray-mosdns/geo-tags.sh": [
-					"exec"
-				],
 				"/usr/libexec/xray-mosdns/update.sh": [
 					"exec"
 				],
@@ -41,6 +38,12 @@
 					"exec"
 				],
 				"/etc/init.d/xray-mosdns": [
+					"exec"
+				],
+				"/usr/libexec/xray-mosdns/groups.uc": [
+					"exec"
+				],
+				"/usr/libexec/xray-mosdns/geoview.uc": [
 					"exec"
 				]
 			}

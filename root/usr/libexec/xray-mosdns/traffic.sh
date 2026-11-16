@@ -1,6 +1,6 @@
 #!/bin/sh
 # Node traffic counters from the Xray StatsService API (only proxy node traffic).
-# Output: {"nodes":[{"tag":"proxy-x","uplink":N,"downlink":N,"total":N}],"error":null}
+# Output: {"nodes":[{"tag":"x.node","uplink":N,"downlink":N,"total":N}],"error":null}
 CFG=xray-mosdns
 XRAY="${XRAY:-$(uci -q get "$CFG.@global[0].xray_bin" 2>/dev/null || true)}"
 [ -n "$XRAY" ] || XRAY=/usr/bin/xray
@@ -35,7 +35,7 @@ for item in data.get("stat", []):
     if len(parts) != 4 or parts[0] != "outbound" or parts[2] != "traffic":
         continue
     tag, direction = parts[1], parts[3]
-    if not (tag.startswith("proxy-") or tag.startswith("out-")):
+    if not tag.endswith(".node"):
         continue
     entry = nodes.setdefault(tag, {"tag": tag, "uplink": 0, "downlink": 0})
     if direction == "uplink":

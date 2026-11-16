@@ -19,3 +19,18 @@ config node 'hk1'
 	option port '443'
 	option password 'secret'
 	option tls_server_name 'hy.example.net'
+
+# rule values written by the 0.9 UI are uci lists
+config rule
+	option enabled '1'
+	option rule_type 'port'
+	list value '22'
+	list value '3389'
+	option outbound 'direct'
+
+config rule
+	option enabled '1'
+	option rule_type 'domain'
+	list value 'geosite:openai'
+	list value 'domain:example.org'
+	option outbound 'main'

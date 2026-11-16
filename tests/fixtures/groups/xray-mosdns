@@ -1,0 +1,63 @@
+config global 'global'
+	option enabled '1'
+	option schema '2'
+	option main_target 'hk'
+	option default_action 'proxy'
+	option probe_url 'https://probe.example/204'
+	option probe_interval '30s'
+
+config dns 'dns'
+	option enabled '1'
+
+config node 'a'
+	option enabled '1'
+	option type 'trojan'
+	option address '198.51.100.1'
+	option password 'pw'
+	option tls '1'
+
+config node 'b'
+	option enabled '1'
+	option type 'trojan'
+	option address '198.51.100.2'
+	option password 'pw'
+	option tls '1'
+
+config node 'c'
+	option enabled '0'
+	option type 'trojan'
+	option address '198.51.100.3'
+	option password 'pw'
+	option tls '1'
+
+# ordered, with a disabled member in the middle
+config group 'hk'
+	option remarks '香港'
+	option strategy 'ordered'
+	list member 'a'
+	list member 'c'
+	list member 'b'
+	option fallback 'block'
+
+# no usable member: targets resolve straight to the fallback node
+config group 'empty'
+	option strategy 'fastest'
+	list member 'c'
+	option fallback 'a'
+
+# defined but not referenced anywhere
+config group 'unused'
+	option strategy 'random'
+	list member 'b'
+
+config rule
+	option enabled '1'
+	option rule_type 'domain'
+	list value 'geosite:netflix'
+	option outbound 'empty'
+
+config rule
+	option enabled '1'
+	option rule_type 'ip'
+	list value '192.0.2.0/24'
+	option outbound 'b'

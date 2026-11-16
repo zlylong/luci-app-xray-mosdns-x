@@ -1,7 +1,7 @@
 # luci-app-xray-mosdns-x
 
 LuCI 管理界面：用 **Xray**（TProxy 透明代理）+ **mosdns-x**（DNS 分流/缓存/去广告）
-替代 PassWall、ChinaDNS 和 dnsmasq 解析功能的插件。当前为 **v0.9.0 开发版**，默认 **不启用**：
+替代 PassWall、ChinaDNS 和 dnsmasq 解析功能的插件。当前为 **v0.9.2 开发版**，默认 **不启用**：
 安装后 `xray-mosdns.global.enabled` 仍为 `0`，不会改动现有代理/DNS 链路。
 
 ## 架构
@@ -17,24 +17,25 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
                  ├─ 规则：直连          ──► 国内上游 ──► 应答 IP 写入 direct4_dns
                  ├─ 规则：代理          ──► SOCKS5 → Xray → 国外 DNS ──► 应答 IP 写入 proxy4_dns
                  ├─ 广告域名            ──► NXDOMAIN
-                 └─ 分流模式内置规则（大陆白名单 / GFW / 全局 / 自定义）
+                 └─ 未命中任何规则：按默认出口（直连走国内上游，代理走国外上游）
 
 转发（nft prerouting，只处理从 LAN 接口进入的 TCP/UDP）：
   已交给 Xray 的连接（conntrack 标记）──► TProxy
   非新建连接                            ──► 内核直接转发
   新连接按目的地址判定一次：
     保留地址 / 节点地址 / bypass_ips   ──► 直连
-    direct4 / direct4_dns               ──► 直连
-    proxy4 / proxy4_dns                 ──► TProxy :12345 ──► Xray
-    chnroute4（大陆白名单模式）         ──► 直连
-    其余                                ──► 按模式默认（GFW 模式直连，其它模式 TProxy）
+    direct4_dns（域名规则解析出的地址）  ──► 直连
+    proxy4_dns                          ──► TProxy :12345 ──► Xray
+    ipg4_0 … ipg4_7（IP 规则，按规则顺序） ──► 直连或 TProxy
+    其余                                ──► 默认出口
 ```
 
 - **内核分流**：直连流量不进 Xray，留在内核转发路径上（可用 flow offload）；只有需要代理的
   流量才 TProxy。`kernel_split=0` 可退回“全部进 Xray 再分流”
 - **DNS 接管不改 dnsmasq**：LAN 的 53 端口由 nft 重定向到 mosdns-x，写死 DNS 的客户端也会被接管；
   mosdns 能看到真实客户端 IP。停止服务或删除 nft 表后立即回到 dnsmasq，没有需要还原的配置
-- **只处理 LAN 入口**：从 WAN 进入的流量、发往路由器自身的流量都不会被 TProxy
+- **只处理选中的入口接口**：默认是 LAN，可以在“系统 → 接口”里加上 VPN 等接口；
+  从其他接口（包括 WAN）进入的流量、发往路由器自身的流量都不会被 TProxy
 - **连接级判定**：一个连接只在首包判定一次，之后集合内容变化不会打断已有连接
 - **节点域名不在生成配置时解析**：直接交给 Xray 在拨号时解析，开机 WAN 未就绪也能启动，
   节点 IP 变化无需重启；节点域名在 mosdns 中固定走国内上游
@@ -42,11 +43,17 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
   发生变化的进程；生成失败时保留上一份可用配置继续运行
 - 国外 DNS 通过 Xray 的内部 SOCKS inbound 经代理解析，避免 DNS 泄漏
 - `filter_proxy_ipv6` 会丢弃代理域名的 AAAA 应答，防止 IPv6 绕过代理
-- **多节点**：负载均衡（leastLoad/roundRobin/random，带 burstObservatory 健康检查与备用节点）、
-  主备模型（主节点探测失败时切到备节点）
-- **规则**：按 域名/IP/端口/协议 分流到 总节点/指定节点/负载均衡/主备/直连/阻断，按顺序匹配，
-  优先级高于分流模式；域名规则同时决定 DNS 上游，命中的用户规则不受去广告拦截
-- **GFW 模式**：只有 `geosite:gfw` 和规则指定的目标走代理，其余全部直连
+- **节点组**：把几个节点组合成一个出口，可以建任意多个，和节点一样能被选作总节点或规则出口。
+  策略有 最快 / 按顺序 / 轮询 / 随机；成员由 Xray 的 burstObservatory 探测，全部不可用时走组的兜底出口。
+  “按顺序”由一个看护进程（`groups.uc watch`）每 10 秒检查一次：当前成员可用就保持不动，
+  不可用时切到列表里最靠前的可用成员。默认不会因为前面的成员恢复而切回，
+  需要切回可以打开组的“恢复后切回”；概览页显示每个组当前的出口，并可临时锁定到某个成员
+- **节点的“启用”**就是字面意思：未启用的节点不生成出站、不能被选用，和是否属于某个组无关
+- **没有“分流模式”**：只有一张规则表和一个默认出口。“国内直连”“GFW 列表”“去广告”都是表里
+  看得见的普通规则行，可以开关、修改、拖动排序；“大陆白名单 / GFW 列表 / 全局”是一键预设，
+  只负责设置默认出口并开关这几行
+- **规则**：按 域名/IP/端口/协议 分流到 总节点/指定节点/节点组/直连/阻断，第一条命中的生效；
+  域名规则同时决定 DNS 上游；IP 规则里的任何 `geoip:` 标签都会从 geoip.dat 提取进内核集合
 
 ## 目录结构
 
@@ -64,7 +71,17 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
 │   ├── geoip.uc                              从 geoip.dat 提取大陆网段（带缓存）
 │   └── util.uc                               校验、YAML 输出等
 ├── root/usr/libexec/xray-mosdns/             状态、流量、测速、更新、导入等辅助脚本
-├── htdocs/luci-static/resources/view/xray-mosdns/   LuCI 页面
+│   ├── groups.uc                             节点组：查询当前出口、锁定、看护进程
+│   └── geoview.uc                            geo 数据查询：tags / lookup / list / dump
+├── htdocs/luci-static/resources/view/xray-mosdns/   LuCI 页面（原生表单组件，无自定义主题）
+│   ├── status.js                             概览：运行状态、启停、连通性、节点流量
+│   ├── nodelist.js                           节点：列表、导入、测速、节点组
+│   ├── routing.js                            分流：总节点、分流模式、规则
+│   ├── resolver.js                           DNS：接管、上游、缓存与过滤
+│   ├── system.js                             系统：运行参数
+│   ├── components.js                         更新：Xray / mosdns-x / geo 数据、定时更新
+│   ├── geoview.js                            Geo 查询：域名/IP 反查数据集、查看和下载数据集内容
+│   └── logview.js                            日志
 ├── tests/                                    夹具配置 + 生成/断言脚本
 └── ci/gitea-actions-build.yml                Gitea Actions CI（暂未启用）
 ```
@@ -77,6 +94,7 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
 podman run --rm --network none -v "$PWD":/src:ro -v /tmp/xm-test:/out \
     docker.io/openwrt/rootfs:x86-64-24.10.4 sh /src/tests/gen.sh /src /out
 python3 tests/check.py /tmp/xm-test          # 对三套夹具的输出做断言
+# tests/migrate.sh（同样在 rootfs 里跑）：升级迁移前后生成结果必须逐字节一致
 xray run -test -c /tmp/xm-test/chnroute/xray.json
 ```
 
@@ -90,7 +108,7 @@ xray run -test -c /tmp/xm-test/chnroute/xray.json
 - `nftables` + `kmod-nft-tproxy` + `ip-full`（nftables/ip-full 已声明为包依赖；
   `kmod-nft-tproxy` 需单独安装，避免 SDK/CI 触发内核编译）
 - `ucode` + `ucode-mod-uci` / `ucode-mod-fs` / `ucode-mod-ubus`（生成器；LuCI 本身已依赖）
-- `python3`（仅流量统计页和 geo 标签选择器使用，未声明为包依赖）
+- `python3`（仅概览页的节点流量和节点测速使用，未声明为包依赖）
 - `/usr/share/v2ray/geosite.dat`、`geoip.dat`（Loyalsoldier / v2ray 数据）
 
 ## 代码仓库与 CI
@@ -158,27 +176,36 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
 | global | node | 选中的节点 section 名 |
 | global | socks_port | 内部 SOCKS 端口（给 mosdns 转发国外 DNS），默认 1070 |
 | global | kernel_split | 内核分流（默认 1）；0 = 所有流量进 Xray 再分流 |
-| global | lan_ifaces | 被代理的逻辑接口列表，默认 `lan` |
+| global | lan_ifaces | 被代理的逻辑接口列表，默认 `lan`；可以加 VPN 等接口，界面里从系统接口中选择 |
 | global | lan_devices | 直接指定设备名（如 `br-lan`），设置后不再查询 lan_ifaces |
 | dns | listen_port | mosdns 监听端口，默认 5335（不要用 5353，mDNS 占用） |
 | dns | redirect | nft 把 LAN 的 53 端口重定向到 mosdns（默认 1） |
-| dns | adblock | geosite:category-ads-all 拦截 |
 | dns | filter_proxy_ipv6 | 代理域名丢弃 AAAA |
 | dns | domestic_dns | 国内 DoH/DoT/明文上游列表 |
 | dns | hosts | 静态域名映射（节点域名/VPS 域名解析用） |
-| global | rule_mode | chnroute（大陆白名单）/ gfw（仅 GFW 列表走代理）/ global / custom |
-| global | node_mode | single / balance（负载均衡） |
-| global | balancer_strategy | leastLoad / roundRobin / random |
-| global | fallback_node | balancer 无健康节点时的兜底节点 |
+| global | default_action | 没有命中任何规则的流量：proxy（走总节点）/ direct |
+| group | remarks / strategy / member / fallback | 节点组：名称；fastest / ordered / roundrobin / random；成员列表（ordered 时即挑选顺序）；全部不可用时的出口 |
+| group | failback | 仅 ordered：0（默认）切换后只有当前成员不可用才再切；1 前面的成员恢复后立即切回 |
+| global | probe_url / probe_interval | 节点组的探测地址与间隔，默认 gstatic generate_204 / 1m |
+| global | schema | 配置版本，由包维护，不要改 |
 | global | ipv6_enabled | 启用 IPv6 TProxy（实验性） |
 | node | type/address/port/uuid/... | vless / vmess / trojan / shadowsocks / hysteria2 节点 |
 | global | api_port | Xray 本地统计 API 端口（默认 10085，用于节点流量） |
-| rule | rule_type/value/outbound | 自定义分流规则：domain/ip/port/network → proxy/direct/block |
+| rule | rule_type/value/outbound | 分流规则，从上到下匹配：domain/ip/port/network → main/节点/balance/failover/direct/block；`value` 是列表 |
+| rule | builtin_ads / builtin_cn_domain / builtin_cn_ip / builtin_noncn / builtin_gfw | 预置规则行，和普通规则完全一样，“快速预设”只是开关它们 |
 
 ## 已知限制
 
-- 内核分流按目的 IP 判定：端口/协议规则、`geoip:` 标签规则只对进入 Xray 的流量生效。
-  例如大陆白名单模式下“22 端口走代理”对国内 IP 不生效（国内 IP 在内核已直连）
+- 内核分流按目的 IP 判定：端口/协议规则只对进入 Xray 的流量生效。
+  例如启用“国内 IP 直连”时，“22 端口走代理”对国内 IP 不生效（国内 IP 在内核已直连）
+- 内核里域名规则解析出的地址先于 IP 规则判定，IP 规则之间保持表中的顺序（最多 8 组连续同类规则）；
+  进入 Xray 的流量再按完整的规则顺序判定一次
+- 预置行可以被拖到自己的规则前面从而盖住它们，顺序由你负责
+- “按顺序”的切换延迟约等于探测间隔加看护周期（默认 1 分钟 + 10 秒）；看护进程退出时组会停在
+  最后锁定的成员上，由 procd 拉起后恢复
+- “按顺序”组记住的当前成员保存在 Xray 进程里：Xray 重启（改配置、更新、重启路由器）后，
+  会重新从列表最靠前的可用成员开始
+- 轮询和随机会让同一网站看到多个出口 IP，可能触发登录验证；节点组的锁定是临时的，重启后恢复自动
 - 多个域名共用同一 IP（CDN）且分属代理与直连时，以先写入集合的一方为准，直连集合优先
 - 客户端若绕过本机 DNS（DoH/DoT），其流量只能按 IP 集合和模式默认值判定
 - 路由器自身发出的流量不经过 TProxy（未挂 output 链）
@@ -214,6 +241,9 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
 - [x] 节点流量统计（Xray StatsService）
 - [x] DNS 页面中文化、日志等级可选
 - [x] v0.9.0 数据面重构：ucode 生成器、单一分流计划、内核分流、nft 重定向接管 DNS、无断流重载
+- [x] v0.9.0 前端重做：改用 LuCI 原生组件，10 个页面合并为 5 个
+- [x] v0.9.1 取消分流模式：默认出口 + 可见的预置规则行 + 一键预设；去广告并入规则表
+- [x] v0.9.2 节点组：取代单一的负载均衡和主备，支持多组、多级按顺序切换、查看与锁定当前出口
 - [ ] 路由器自身流量代理（output 链）
 - [ ] 去广告订阅列表 / 查询日志（替代 ADG）
 - [ ] 订阅 URL 自动更新、按设备访问控制

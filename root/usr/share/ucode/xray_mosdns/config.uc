@@ -46,10 +46,6 @@ export function load(confdir) {
 	if (!match(route_table, /^[0-9]{1,10}$/))
 		fail(`invalid route_table '${route_table}'`);
 
-	let mode = str(g.rule_mode, 'chnroute');
-	if (!(mode in [ 'chnroute', 'gfw', 'global', 'custom' ]))
-		mode = 'chnroute';
-
 	let cfg = {
 		global: {
 			enabled: bool(g.enabled),
@@ -61,17 +57,16 @@ export function load(confdir) {
 			socks_port: port(g.socks_port, 1070, 'socks_port'),
 			api_port: port(g.api_port, 10085, 'api_port'),
 			main_target: str(g.main_target, null),
-			balance_enabled: bool(g.balance_enabled),
-			balancer_strategy: str(g.balancer_strategy, 'leastLoad'),
-			fallback_node: str(g.fallback_node, null),
-			failover_enabled: bool(g.failover_enabled),
-			failover_primary: str(g.failover_primary, null),
-			failover_standby: str(g.failover_standby, null),
+			// health probe used by node groups
+			probe_url: str(g.probe_url, 'https://www.gstatic.com/generate_204'),
+			probe_interval: str(g.probe_interval, '1m'),
 			ipv6: bool(g.ipv6_enabled),
-			rule_mode: mode,
+			// what happens to traffic no rule claims: proxy | direct
+			default_action: str(g.default_action, null),
 			// decide proxy-vs-direct in the kernel so direct traffic never enters Xray
 			kernel_split: bool(g.kernel_split, true),
-			lan_ifaces: list(g.lan_ifaces),
+			// a uci list, or one space separated string (both are written by LuCI widgets)
+			lan_ifaces: words(g.lan_ifaces),
 			lan_devices: list(g.lan_devices),
 			bypass_ips: ip_list(g.bypass_ips, 'bypass_ips'),
 		},
@@ -82,7 +77,6 @@ export function load(confdir) {
 			redirect: bool(d.redirect, true),
 			cache_size: +str(d.cache_size, '8192'),
 			cache_everything: bool(d.cache_everything, true),
-			adblock: bool(d.adblock, true),
 			filter_proxy_ipv6: bool(d.filter_proxy_ipv6, true),
 			bootstrap: str(d.bootstrap, '223.5.5.5'),
 			remote_dns: str(d.remote_dns, '1.1.1.1'),
@@ -92,8 +86,15 @@ export function load(confdir) {
 			dnsmasq_port: 53,
 		},
 		nodes: [],
+		groups: [],
 		rules: [],
+		// configs older than 0.9.2: a node's "enabled" flag meant "balancer
+		// member", and disabled nodes could still be used as a target
+		legacy_nodes: (+str(g.schema, '1') < 2),
 	};
+
+	if (!match(cfg.global.probe_interval, /^[0-9]+[smh]$/))
+		fail(`invalid probe_interval '${cfg.global.probe_interval}' (use e.g. 30s, 1m)`);
 
 	// the kernel sets are filled from DNS answers; without mosdns only Xray can classify
 	if (!cfg.dns.enabled && cfg.global.kernel_split) {
@@ -112,7 +113,7 @@ export function load(confdir) {
 
 	// legacy selection (pre-0.5 configs)
 	if (cfg.global.main_target == null) {
-		if (str(g.node_mode, '') == 'balance' || cfg.global.balance_enabled)
+		if (str(g.node_mode, '') == 'balance' || bool(g.balance_enabled))
 			cfg.global.main_target = 'balance';
 		else
 			cfg.global.main_target = str(g.node, 'direct');
@@ -141,6 +142,47 @@ export function load(confdir) {
 		});
 	}
 
+	for (let s in sections(all, 'group')) {
+		let strategy = str(s.strategy, 'fastest');
+		if (!(strategy in [ 'fastest', 'ordered', 'roundrobin', 'random' ]))
+			strategy = 'fastest';
+		push(cfg.groups, {
+			name: s['.name'],
+			remarks: str(s.remarks, s['.name']),
+			strategy,
+			members: list(s.member),
+			fallback: str(s.fallback, 'direct'),
+			// ordered only: return to an earlier member as soon as it recovers
+			failback: bool(s.failback),
+		});
+	}
+
+	// Pre-0.9.2 configs have one global balancer ("balance": every enabled
+	// node) and one primary/standby pair ("failover"). uci-defaults turns
+	// them into group sections; this gives an unconverted file the same meaning.
+	if (cfg.legacy_nodes) {
+		const have = {};
+		for (let grp in cfg.groups)
+			have[grp.name] = true;
+		const outs = map(sections(all, 'rule'), r => str(r.outbound, 'main'));
+		if (!have.balance && (bool(g.balance_enabled) || cfg.global.main_target == 'balance' || ('balance' in outs))) {
+			const strat = { leastLoad: 'fastest', roundRobin: 'roundrobin', random: 'random' };
+			push(cfg.groups, {
+				name: 'balance', remarks: 'balance',
+				strategy: strat[str(g.balancer_strategy, 'leastLoad')] ?? 'fastest',
+				members: map(filter(cfg.nodes, n => n.enabled), n => n.name),
+				fallback: str(g.fallback_node, 'direct'),
+			});
+		}
+		if (!have.failover && (bool(g.failover_enabled) || cfg.global.main_target == 'failover' || ('failover' in outs))) {
+			push(cfg.groups, {
+				name: 'failover', remarks: 'failover', strategy: 'ordered',
+				members: filter([ str(g.failover_primary, null), str(g.failover_standby, null) ], v => v != null),
+				fallback: 'direct',
+			});
+		}
+	}
+
 	for (let s in sections(all, 'rule')) {
 		if (!bool(s.enabled))
 			continue;
@@ -150,10 +192,35 @@ export function load(confdir) {
 		push(cfg.rules, {
 			name: s['.name'],
 			type: str(s.rule_type, 'domain'),
-			raw: str(s.value, ''),
+			raw: join(',', values),
 			values,
 			outbound: str(s.outbound, 'main'),
 		});
+	}
+
+	// Configs older than 0.9.2 have a split "mode" with hidden built-in rules
+	// and a separate ad-block switch. uci-defaults converts those on upgrade;
+	// this keeps an unconverted file working with the same meaning.
+	if (!(cfg.global.default_action in [ 'proxy', 'direct' ])) {
+		const mode = str(g.rule_mode, 'chnroute');
+		cfg.global.default_action = (mode == 'gfw') ? 'direct' : 'proxy';
+		const have = {};
+		for (let r in sections(all, 'rule'))
+			have[r['.name']] = true;
+		const legacy = function(name, type, value, outbound) {
+			if (!have[name])
+				push(cfg.rules, { name, type, values: [ value ], raw: value, outbound });
+		};
+		if (bool(d.adblock, true))
+			legacy('builtin_ads', 'domain', 'geosite:category-ads-all', 'block');
+		if (mode == 'chnroute') {
+			legacy('builtin_cn_domain', 'domain', 'geosite:cn', 'direct');
+			legacy('builtin_cn_ip', 'ip', 'geoip:cn', 'direct');
+			legacy('builtin_noncn', 'domain', 'geosite:geolocation-!cn', 'main');
+		}
+		else if (mode == 'gfw') {
+			legacy('builtin_gfw', 'domain', 'geosite:gfw', 'main');
+		}
 	}
 
 	// dnsmasq keeps serving local names; mosdns forwards those zones to it
@@ -177,85 +244,127 @@ export function load(confdir) {
 // ---------------------------------------------------------------- plan
 export function plan(cfg) {
 	const g = cfg.global;
-	let by_name = {};
+	let by_name = {}, group_by_name = {};
 	for (let n in cfg.nodes)
 		by_name[n.name] = n;
+	for (let grp in cfg.groups)
+		group_by_name[grp.name] = grp;
 
 	let p = {
-		mode: g.rule_mode,
 		main: g.main_target,
-		bal_needed: (g.main_target == 'balance' || g.balance_enabled),
-		fo_needed: (g.main_target == 'failover' || g.failover_enabled),
-		needed: [],
+		needed: [],		// node names that get an outbound
+		groups: [],		// groups that are actually used
 		by_name,
 		rules: [],
 	};
+	let used = {};		// group name -> resolved group
+
+	// outbound tags never change with the configuration around them, so
+	// traffic counters keep their identity
+	p.tag = name => `${name}.node`;
+	p.group_tag = name => `${name}.group`;
+
+	function usable(name) {
+		return by_name[name] && (by_name[name].enabled || cfg.legacy_nodes);
+	}
 
 	function need(name) {
 		if (!(name in p.needed))
 			push(p.needed, name);
 	}
 
-	if (!(p.main in [ 'direct', 'balance', 'failover' ])) {
-		if (!by_name[p.main])
-			fail(`main node '${p.main}' not found`);
-		need(p.main);
+	// direct / block / node tag for a group's "nothing is healthy" case
+	function fallback_tag(grp) {
+		if (grp.fallback in [ 'direct', 'block' ])
+			return grp.fallback;
+		if (!usable(grp.fallback)) {
+			note(`group ${grp.name}: fallback '${grp.fallback}' is not an enabled node, using direct`);
+			return 'direct';
+		}
+		need(grp.fallback);
+		return p.tag(grp.fallback);
 	}
-	p.main_class = (p.main == 'direct') ? 'direct' : 'proxy';
+
+	function use_group(name) {
+		if (used[name])
+			return used[name];
+		const grp = group_by_name[name];
+		let members = [];
+		for (let m in grp.members) {
+			if (!usable(m)) {
+				note(`group ${name}: member '${m}' is missing or disabled, skipped`);
+				continue;
+			}
+			if (!(m in members)) {
+				push(members, m);
+				need(m);
+			}
+		}
+		used[name] = {
+			name, remarks: grp.remarks, strategy: grp.strategy, members,
+			failback: !!grp.failback,
+			tag: p.group_tag(name), fallback_tag: fallback_tag(grp),
+		};
+		push(p.groups, used[name]);
+		return used[name];
+	}
+
+	// validates a target and registers what it needs; returns its class
+	function claim(target, what) {
+		if (target == 'direct')
+			return 'direct';
+		if (target == 'block')
+			return 'block';
+		if (group_by_name[target]) {
+			use_group(target);
+			return 'proxy';
+		}
+		if (!by_name[target])
+			fail(`${what}: unknown target '${target}'`);
+		if (!usable(target))
+			fail(`${what}: node '${target}' is disabled`);
+		need(target);
+		return 'proxy';
+	}
+
+	// the Xray routing target for anything claim() accepted
+	p.target = function(target) {
+		if (target == 'main' || target == 'proxy')
+			target = p.main;
+		if (target in [ 'direct', 'block' ])
+			return { outboundTag: target };
+		const grp = used[target];
+		if (grp)
+			return length(grp.members) ? { balancerTag: grp.tag } : { outboundTag: grp.fallback_tag };
+		return { outboundTag: p.tag(target) };
+	};
+
+	if (p.main == 'block')
+		fail('the main target cannot be "block"');
+	p.main_class = claim(p.main, 'main target');
 
 	for (let r in cfg.rules) {
-		let cls;
-		switch (r.outbound) {
-		case 'main':
-		case 'proxy':    cls = p.main_class; break;
-		case 'direct':   cls = 'direct'; break;
-		case 'block':    cls = 'block'; break;
-		case 'balance':  cls = 'proxy'; p.bal_needed = true; break;
-		case 'failover': cls = 'proxy'; p.fo_needed = true; break;
-		default:
-			if (!by_name[r.outbound])
-				fail(`rule ${r.name}: unknown outbound '${r.outbound}'`);
-			need(r.outbound);
-			cls = 'proxy';
-		}
 		if (!(r.type in [ 'domain', 'ip', 'port', 'network' ])) {
 			note(`rule ${r.name}: unknown type '${r.type}', skipped`);
 			continue;
 		}
+		const cls = (r.outbound in [ 'main', 'proxy' ])
+			? p.main_class
+			: claim(r.outbound, `rule ${r.name}`);
 		push(p.rules, { ...r, class: cls });
 	}
 
-	if (p.bal_needed) {
-		if (g.fallback_node && by_name[g.fallback_node])
-			need(g.fallback_node);
-		for (let n in cfg.nodes)
-			if (n.enabled)
-				need(n.name);
-		if (!length(p.needed))
-			fail('load balancing enabled but no enabled node');
-	}
+	// What happens to traffic no rule claims. With a direct main target
+	// there is nothing to proxy to, whatever the default says.
+	p.default_class = (p.main_class == 'direct') ? 'direct' : g.default_action;
 
-	if (p.fo_needed) {
-		if (!g.failover_primary || !by_name[g.failover_primary])
-			fail('failover: primary node not set');
-		need(g.failover_primary);
-		if (g.failover_standby && by_name[g.failover_standby])
-			need(g.failover_standby);
-	}
-
-	// What happens to traffic no rule and no built-in list claims.
-	//   chnroute: proxy, with mainland destinations carved out
-	//   gfw:      direct, only listed domains are proxied
-	//   global / custom: proxy
-	if (p.main_class == 'direct')
-		p.default_class = 'direct';
-	else
-		p.default_class = (p.mode == 'gfw') ? 'direct' : 'proxy';
-	p.cn_direct = (p.mode == 'chnroute' && p.main_class == 'proxy');
-
-	p.tag = function(name) {
-		return (p.bal_needed && by_name[name]?.enabled) ? `proxy-${name}` : `out-${name}`;
-	};
+	// When mainland addresses are sent direct, an unclassified name can be
+	// resolved the ChinaDNS way: a domestic answer is trusted only if it is
+	// a mainland address (which then goes direct anyway).
+	p.cn_ip_direct = false;
+	for (let r in p.rules)
+		if (r.type == 'ip' && r.class == 'direct' && ('geoip:cn' in map(r.values, lc)))
+			p.cn_ip_direct = true;
 
 	return p;
 };

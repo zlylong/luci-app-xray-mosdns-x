@@ -105,27 +105,29 @@ function outbound(n, tag) {
 	fail(`node ${n.name}: unsupported node type '${n.type}'`);
 }
 
+// How a group strategy maps onto an Xray balancer.
+//  fastest: leastLoad picks the member with the best probe results
+//  ordered: leastLoad only does the health checking here (expected = all
+//           members keeps every healthy one selectable); the group watcher
+//           pins the first healthy member in list order. Xray's own
+//           "costs" weight probe jitter, not latency, so they cannot
+//           express a strict priority.
+function strategy(grp) {
+	switch (grp.strategy) {
+	case 'ordered':    return { type: 'leastLoad', settings: { expected: length(grp.members) } };
+	case 'roundrobin': return { type: 'roundRobin' };
+	case 'random':     return { type: 'random' };
+	}
+	return { type: 'leastLoad' };
+}
+
 export function build(cfg, plan, env) {
 	const g = cfg.global;
-
-	function target(out) {
-		if (out == 'main' || out == 'proxy')
-			out = plan.main;
-		switch (out) {
-		case 'direct':   return { outboundTag: 'direct' };
-		case 'block':    return { outboundTag: 'block' };
-		case 'balance':  return { balancerTag: 'balancer' };
-		case 'failover': return { balancerTag: 'failover' };
-		}
-		return { outboundTag: plan.tag(out) };
-	}
 
 	// ------------------------------------------------------------ outbounds
 	let outbounds = [];
 	for (let name in plan.needed)
 		push(outbounds, outbound(plan.by_name[name], plan.tag(name)));
-	if (plan.fo_needed)
-		push(outbounds, outbound(plan.by_name[g.failover_primary], `fo-${g.failover_primary}`));
 	push(outbounds, { tag: 'direct', protocol: 'freedom' });
 	push(outbounds, { tag: 'block', protocol: 'blackhole' });
 
@@ -138,7 +140,7 @@ export function build(cfg, plan, env) {
 	if (length(node_ips))
 		push(rules, { type: 'field', ip: node_ips, outboundTag: 'direct' });
 
-	// user rules have priority over the built-in split mode
+	// rules in list order; presets such as "mainland direct" are ordinary rules
 	for (let r in plan.rules) {
 		let rule = { type: 'field' };
 		switch (r.type) {
@@ -147,20 +149,13 @@ export function build(cfg, plan, env) {
 		case 'port':    rule.port = r.raw; break;
 		case 'network': rule.network = r.raw; break;
 		}
-		push(rules, { ...rule, ...target(r.outbound) });
+		push(rules, { ...rule, ...plan.target(r.outbound) });
 	}
 
-	if (plan.cn_direct) {
-		push(rules, { type: 'field', domain: [ 'geosite:cn' ], outboundTag: 'direct' });
-		push(rules, { type: 'field', ip: [ 'geoip:cn' ], outboundTag: 'direct' });
-	}
-	if (plan.mode == 'gfw')
-		push(rules, { type: 'field', domain: [ 'geosite:gfw' ], ...target('main') });
-
-	// default: follows the plan (GFW mode leaves everything else direct)
+	// default: whatever no rule claimed
 	push(rules, {
 		type: 'field', network: 'tcp,udp',
-		...(plan.default_class == 'proxy' ? target('main') : { outboundTag: 'direct' }),
+		...(plan.default_class == 'proxy' ? plan.target('main') : { outboundTag: 'direct' }),
 	});
 
 	// ------------------------------------------------------------ inbounds
@@ -201,45 +196,34 @@ export function build(cfg, plan, env) {
 		],
 		outbounds,
 		stats: {},
-		api: { tag: 'api', services: [ 'StatsService' ] },
+		// RoutingService: lets the group watcher and the UI read and pin balancer choices
+		api: { tag: 'api', services: [ 'StatsService', 'RoutingService' ] },
 		policy: { system: {
 			statsInboundUplink: true, statsInboundDownlink: true,
 			statsOutboundUplink: true, statsOutboundDownlink: true,
 		} },
 	};
 
-	// ------------------------------------------------------------ balancers
+	// ------------------------------------------------------------ groups
 	let routing = { domainStrategy: 'IPIfNonMatch' };
-	if (plan.bal_needed || plan.fo_needed) {
-		// the observatory also registers the balancer members as used outbounds,
-		// otherwise fallbackTag/selector members may be pruned as unresolved deps
-		let selector = [];
-		let balancers = [];
-		if (plan.bal_needed) {
-			push(selector, 'proxy-');
-			let fb = 'direct';
-			if (g.fallback_node && plan.by_name[g.fallback_node])
-				fb = plan.tag(g.fallback_node);
-			push(balancers, {
-				tag: 'balancer', selector: [ 'proxy-' ],
-				strategy: { type: g.balancer_strategy }, fallbackTag: fb,
-			});
-		}
-		if (plan.fo_needed) {
-			push(selector, 'fo-', 'out-');
-			let fb = 'direct';
-			if (g.failover_standby && plan.by_name[g.failover_standby])
-				fb = plan.tag(g.failover_standby);
-			push(balancers, {
-				tag: 'failover', selector: [ 'fo-' ],
-				strategy: { type: 'leastLoad' }, fallbackTag: fb,
-			});
-		}
+	let balancers = [], probed = [];
+	for (let grp in plan.groups) {
+		if (!length(grp.members))
+			continue;	// nothing to choose from: targets point at the fallback directly
+		const tags = map(grp.members, plan.tag);
+		for (let t in tags)
+			if (!(t in probed))
+				push(probed, t);
+		// selectors are prefix matches; every node tag ends in ".node", so a
+		// full tag can only match itself
+		push(balancers, { tag: grp.tag, selector: tags, strategy: strategy(grp), fallbackTag: grp.fallback_tag });
+	}
+	if (length(balancers)) {
 		conf.burstObservatory = {
-			subjectSelector: selector,
+			subjectSelector: probed,
 			pingConfig: {
-				destination: 'https://www.gstatic.com/generate_204',
-				interval: '1m', timeout: '5s', sampling: 3,
+				destination: g.probe_url,
+				interval: g.probe_interval, timeout: '5s', sampling: 3,
 			},
 		};
 		routing.balancers = balancers;

@@ -13,83 +13,67 @@
 		}
 	},
 	"admin/services/xray-mosdns/overview": {
-		"title": "基本设置",
+		"title": "概览",
 		"order": 10,
 		"action": {
 			"type": "view",
-			"path": "xray-mosdns/overview"
+			"path": "xray-mosdns/status"
 		}
 	},
 	"admin/services/xray-mosdns/nodes": {
-		"title": "节点列表",
+		"title": "节点",
 		"order": 20,
 		"action": {
 			"type": "view",
-			"path": "xray-mosdns/nodes"
+			"path": "xray-mosdns/nodelist"
 		}
 	},
-	"admin/services/xray-mosdns/nodesub": {
-		"title": "节点订阅",
+	"admin/services/xray-mosdns/routing": {
+		"title": "分流",
 		"order": 30,
 		"action": {
 			"type": "view",
-			"path": "xray-mosdns/nodesub"
-		}
-	},
-	"admin/services/xray-mosdns/settings": {
-		"title": "高级设置",
-		"order": 40,
-		"action": {
-			"type": "view",
-			"path": "xray-mosdns/settings"
-		}
-	},
-	"admin/services/xray-mosdns/balance": {
-		"title": "负载均衡",
-		"order": 50,
-		"action": {
-			"type": "view",
-			"path": "xray-mosdns/balance"
-		}
-	},
-	"admin/services/xray-mosdns/rules": {
-		"title": "规则管理",
-		"order": 60,
-		"action": {
-			"type": "view",
-			"path": "xray-mosdns/rules"
+			"path": "xray-mosdns/routing"
 		}
 	},
 	"admin/services/xray-mosdns/dns": {
 		"title": "DNS",
-		"order": 80,
+		"order": 40,
 		"action": {
 			"type": "view",
-			"path": "xray-mosdns/dns"
+			"path": "xray-mosdns/resolver"
+		}
+	},
+	"admin/services/xray-mosdns/system": {
+		"title": "系统",
+		"order": 50,
+		"action": {
+			"type": "view",
+			"path": "xray-mosdns/system"
 		}
 	},
 	"admin/services/xray-mosdns/updates": {
-		"title": "组件更新",
-		"order": 90,
+		"title": "更新",
+		"order": 60,
 		"action": {
 			"type": "view",
-			"path": "xray-mosdns/updates"
-		}
-	},
-	"admin/services/xray-mosdns/traffic": {
-		"title": "流量统计",
-		"order": 100,
-		"action": {
-			"type": "view",
-			"path": "xray-mosdns/traffic"
+			"path": "xray-mosdns/components"
 		}
 	},
 	"admin/services/xray-mosdns/log": {
-		"title": "运行日志",
-		"order": 110,
+		"title": "日志",
+		"order": 70,
 		"action": {
 			"type": "view",
-			"path": "xray-mosdns/log"
+			"path": "xray-mosdns/logview"
+		}
+	},
+	"admin/services/xray-mosdns/geoview": {
+		"title": "Geo 查询",
+		"order": 55,
+		"action": {
+			"type": "view",
+			"path": "xray-mosdns/geoview"
 		}
 	}
 }

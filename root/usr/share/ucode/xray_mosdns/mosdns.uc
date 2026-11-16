@@ -162,7 +162,7 @@ export function build(cfg, plan) {
 	if (length(node_domains))
 		push(main, { if: 'query_is_node', exec: [ 'local_seq', '_return' ] });
 
-	// user rules, in the same order Xray evaluates them
+	// rules, in the same order Xray evaluates them
 	let i = 0;
 	for (let r in plan.rules) {
 		if (r.type != 'domain')
@@ -184,34 +184,16 @@ export function build(cfg, plan) {
 		}
 	}
 
-	// a user rule above acts as an allow-list entry for the ad filter
-	if (d.adblock) {
-		qmatch('query_is_ad_domain', { domain: [ 'provider:geosite:category-ads-all' ] });
-		push(main, { if: 'query_is_ad_domain', exec: [ '_new_nxdomain_response', '_return' ] });
-	}
-
-	// built-in split mode
-	if (plan.main_class == 'direct') {
+	// names no rule claimed follow the default
+	if (plan.default_class == 'direct') {
 		push(main, 'local_seq');
 	}
-	else if (plan.mode == 'chnroute') {
-		qmatch('query_is_local_domain', { domain: [ 'provider:geosite:cn' ] });
-		qmatch('query_is_non_local_domain', { domain: [ 'provider:geosite:geolocation-!cn' ] });
-		push(main, { if: 'query_is_local_domain', exec: via_local(false) });
-		push(main, { if: 'query_is_non_local_domain', exec: via_proxy(false) });
+	else if (plan.cn_ip_direct) {
 		push(main, 'fallback_seq');
-	}
-	else if (plan.mode == 'gfw') {
-		qmatch('query_is_gfw_domain', { domain: [ 'provider:geosite:gfw' ] });
-		push(main, { if: 'query_is_gfw_domain', exec: via_proxy(true) });
-		push(main, 'local_seq');
-	}
-	else if (plan.mode == 'global') {
-		for (let e in via_proxy(false))
-			push(main, e);
 	}
 	else {
-		push(main, 'fallback_seq');
+		for (let e in via_proxy(false))
+			push(main, e);
 	}
 
 	plugin('main_sequence', 'sequence', { exec: main });
