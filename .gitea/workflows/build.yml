@@ -9,48 +9,65 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # The official ImmortalWrt SDK image: the SDK is already unpacked in
+    # /home/build/immortalwrt, so nothing has to be downloaded or installed.
+    # Steps run as root (the runner's workspace is not writable for the
+    # image's own "build" user); the SDK itself is driven as "build".
+    container:
+      image: immortalwrt/sdk:x86-64-openwrt-25.12.2
+      options: --user root
+    # packaging (fakeroot) has hung inside a runner container before: fail in
+    # reasonable time instead of holding the runner
     timeout-minutes: 45
+    env:
+      SDK: /home/build/immortalwrt
     steps:
+      # checkout and upload-artifact are JavaScript actions and the SDK image
+      # has no Node.js
+      - name: Install Node.js for the actions
+        run: |
+          curl -fsSL --retry 3 https://nodejs.org/dist/v20.18.0/node-v20.18.0-linux-x64.tar.xz \
+            | tar -xJ --strip-components=1 -C /usr/local
+          node --version
+
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install build dependencies
+      - name: Copy the package into the SDK
         run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            build-essential git unzip wget curl rsync ca-certificates \
-            python3 gawk gettext libncurses-dev zlib1g-dev file bc cpio \
-            time zstd libssl-dev patch diffstat texinfo chrpath socat \
-            python3-pexpect python3-jinja2 python3-git iputils-ping bzip2 gzip
+          rm -rf "$SDK/package/luci-app-xray-mosdns-x"
+          mkdir -p "$SDK/package/luci-app-xray-mosdns-x"
+          tar -C "$GITHUB_WORKSPACE" --exclude=.git --exclude=out -cf - . \
+            | tar -C "$SDK/package/luci-app-xray-mosdns-x" -xf -
+          chown -R build:build "$SDK/package/luci-app-xray-mosdns-x"
 
-      - name: Download ImmortalWrt 25.12.2 x86/64 SDK
+      - name: Prepare feeds
         run: |
-          mkdir -p "$RUNNER_TEMP/sdk"
-          cd "$RUNNER_TEMP/sdk"
-          URL=https://downloads.immortalwrt.org/releases/25.12.2/targets/x86/64/immortalwrt-sdk-25.12.2-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst
-          curl -fsSL --retry 3 -o sdk.tar.zst "$URL"
-          tar --zstd -xf sdk.tar.zst
-          rm -f sdk.tar.zst
-          ls -d immortalwrt-sdk-*
+          su build -s /bin/bash -c '
+            set -e
+            cd "$SDK"
+            ./scripts/feeds update -a
+            ./scripts/feeds install luci
+            # the SDK ships without .config, which makes package/.../compile spawn menuconfig
+            TERM=dumb make defconfig
+          '
 
       - name: Build luci-app-xray-mosdns-x
         run: |
-          SDK=$(ls -d "$RUNNER_TEMP"/sdk/immortalwrt-sdk-* | head -1)
-          cp -r "$GITHUB_WORKSPACE" "$SDK/package/luci-app-xray-mosdns-x"
-          cd "$SDK"
-          ./scripts/feeds update -a
-          ./scripts/feeds install luci
-          # SDK ships without .config, which makes package/.../compile spawn menuconfig
-          TERM=dumb make defconfig
-          TERM=dumb make package/luci-app-xray-mosdns-x/compile V=s
+          su build -s /bin/bash -c '
+            set -e
+            cd "$SDK"
+            TERM=dumb make package/luci-app-xray-mosdns-x/compile V=s -j"$(nproc)"
+          '
 
       - name: Collect artifacts
         run: |
-          SDK=$(ls -d "$RUNNER_TEMP"/sdk/immortalwrt-sdk-* | head -1)
           mkdir -p out
           find "$SDK/bin" -name 'luci-app-xray-mosdns-x*' -exec cp -v {} out/ \;
           find "$SDK/bin" -name 'luci-i18n-xray-mosdns-x*' -exec cp -v {} out/ \;
           ls -la out/
+          # an empty directory means the build produced nothing
+          ls out/luci-app-xray-mosdns-x* >/dev/null
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
