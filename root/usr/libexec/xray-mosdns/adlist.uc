@@ -6,7 +6,7 @@
 //   adlist.uc ensure            start an update if an enabled list has no data yet
 //   adlist.uc status            what is installed, as JSON
 //   adlist.uc catalog           the AdGuard blocklist catalogue, as JSON
-//   adlist.uc catalog-update    refresh the catalogue from AdGuard's registry
+//   adlist.uc catalog-sync      refresh the catalogue and bring subscriptions in line with it
 //   adlist.uc cron-sync         make the daily update job match the settings
 //
 // Lists are in the syntax AdGuard Home reads. Only what a DNS server that
@@ -196,10 +196,114 @@ function convert_file(src, block_path, allow_path) {
 	return st;
 }
 
-// ---------------------------------------------------------------- update
 function state_path(cfg) {
 	return `${cfg.dir}/state.json`;
 }
+
+// ---------------------------------------------------------------- catalogue
+function current_catalog() {
+	return load(CATALOG, null) ?? load(SHIPPED, null);
+}
+
+function cmd_catalog() {
+	const cat = current_catalog();
+	if (!cat)
+		return out({ ok: false, error: 'catalogue not found' });
+	cat.ok = true;
+	out(cat);
+}
+
+// download AdGuard's registry and keep the fields we use; null when that fails
+function refresh_catalog() {
+	const tmp = '/tmp/xray-mosdns-adlist-catalog.json';
+	if (!download(REGISTRY, tmp))
+		return null;
+	const d = load(tmp, null);
+	fs.unlink(tmp);
+	if (type(d?.filters) != 'array' || type(d?.groups) != 'array' || !length(d.filters))
+		return null;
+	let cat = { source: REGISTRY, updated: time(), groups: [], filters: [] };
+	for (let grp in sort(d.groups, (a, b) => a.displayNumber - b.displayNumber))
+		push(cat.groups, { id: grp.groupId, name: grp.groupName });
+	for (let f in d.filters) {
+		if (!match(f.downloadUrl ?? '', /^https:\/\//))
+			continue;
+		let e = {
+			id: f.filterId, group: f.groupId, name: f.name,
+			description: f.description, homepage: f.homepage, url: f.downloadUrl,
+		};
+		// deprecated lists stay in the catalogue so a subscription to one can be flagged
+		if (f.deprecated)
+			e.deprecated = true;
+		push(cat.filters, e);
+	}
+	system([ 'mkdir', '-p', '/etc/xray-mosdns' ]);
+	fs.writefile(CATALOG, sprintf('%J', cat));
+	return cat;
+}
+
+// Bring subscriptions that came from the catalogue in line with it: name and
+// address follow the catalogue entry with the same id. A list that is
+// deprecated or gone is only flagged; removing it is the user's decision.
+// Returns { changed, flags: { <section>: 'deprecated' | 'gone' } }.
+function sync_catalog(cat) {
+	let by_id = {}, by_url = {};
+	for (let f in cat.filters) {
+		by_id[`${f.id}`] = f;
+		by_url[f.url] = f;
+	}
+	let res = { changed: 0, flags: {} };
+	let edits = [];
+	uci.foreach(CONF, 'adlist', (s) => {
+		let id = s.catalog_id;
+		// subscribed before ids were recorded: adopt the entry with the same address
+		if (id == null && s.url && by_url[s.url]) {
+			id = `${by_url[s.url].id}`;
+			push(edits, [ s['.name'], 'catalog_id', id ]);
+		}
+		if (id == null)
+			return;		// a custom list
+		const f = by_id[`${id}`];
+		if (!f) {
+			res.flags[s['.name']] = 'gone';
+			return;
+		}
+		if (f.deprecated)
+			res.flags[s['.name']] = 'deprecated';
+		if (s.url != f.url)
+			push(edits, [ s['.name'], 'url', f.url ]);
+		if (s.name != f.name)
+			push(edits, [ s['.name'], 'name', f.name ]);
+	});
+	for (let e in edits)
+		uci.set(CONF, e[0], e[1], e[2]);
+	if (length(edits)) {
+		uci.commit(CONF);
+		res.changed = length(edits);
+	}
+	return res;
+}
+
+// refresh the catalogue and re-sync; used by the page's button
+function cmd_catalog_sync() {
+	const cat = refresh_catalog();
+	if (!cat) {
+		out({ ok: false, error: 'could not download the catalogue' });
+		return 1;
+	}
+	const res = sync_catalog(cat);
+	const cfg = settings();
+	let state = load(state_path(cfg), null);
+	if (state?.lists) {
+		for (let id in keys(state.lists))
+			state.lists[id].catalog = res.flags[id] ?? null;
+		fs.writefile(state_path(cfg), sprintf('%J', state));
+	}
+	out({ ok: true, filters: length(filter(cat.filters, f => !f.deprecated)), changed: res.changed, flags: res.flags });
+	return 0;
+}
+
+// ---------------------------------------------------------------- update
 
 // block.txt / allow.txt are what mosdns loads; they are replaced in one
 // rename so a reload never sees half a file
@@ -220,6 +324,11 @@ function cmd_update() {
 	fs.writefile(LOCK, fs.readlink('/proc/self') ?? '0');
 	const cfg = settings();
 	system([ 'mkdir', '-p', cfg.dir ]);
+
+	// follow the catalogue first, so a moved list is fetched from its new address;
+	// when the registry cannot be reached the last known catalogue is used
+	const cat = refresh_catalog() ?? current_catalog();
+	const synced = cat ? sync_catalog(cat) : { changed: 0, flags: {} };
 
 	const all = lists();
 	let state = load(state_path(cfg), {});
@@ -250,6 +359,7 @@ function cmd_update() {
 		fs.unlink(raw);
 		fs.unlink(`${cfg.dir}/.${l.id}.block.tmp`);
 		fs.unlink(`${cfg.dir}/.${l.id}.allow.tmp`);
+		entry.catalog = synced.flags[l.id] ?? null;
 		lists_state[l.id] = entry;
 	}
 
@@ -296,42 +406,6 @@ function cmd_status() {
 	out({ ok: true, running: !!running(), dir: cfg.dir, lists: state.lists ?? {}, total: state.total ?? 0, finished: state.finished ?? null });
 }
 
-// ---------------------------------------------------------------- catalogue
-function cmd_catalog() {
-	const cat = load(CATALOG, null) ?? load(SHIPPED, null);
-	if (!cat)
-		return out({ ok: false, error: 'catalogue not found' });
-	cat.ok = true;
-	out(cat);
-}
-
-function cmd_catalog_update() {
-	const tmp = '/tmp/xray-mosdns-adlist-catalog.json';
-	if (!download(REGISTRY, tmp)) {
-		out({ ok: false, error: 'download failed' });
-		return 1;
-	}
-	const d = load(tmp, null);
-	fs.unlink(tmp);
-	if (!d?.filters || !d?.groups) {
-		out({ ok: false, error: 'unexpected catalogue format' });
-		return 1;
-	}
-	let cat = { source: REGISTRY, groups: [], filters: [] };
-	for (let grp in sort(d.groups, (a, b) => a.displayNumber - b.displayNumber))
-		push(cat.groups, { id: grp.groupId, name: grp.groupName });
-	for (let f in d.filters)
-		if (!f.deprecated && match(f.downloadUrl ?? '', /^https:\/\//))
-			push(cat.filters, {
-				id: f.filterId, group: f.groupId, name: f.name,
-				description: f.description, homepage: f.homepage, url: f.downloadUrl,
-			});
-	system([ 'mkdir', '-p', '/etc/xray-mosdns' ]);
-	fs.writefile(CATALOG, sprintf('%J', cat));
-	out({ ok: true, filters: length(cat.filters) });
-	return 0;
-}
-
 // ---------------------------------------------------------------- cron
 function cmd_cron_sync() {
 	const cfg = settings();
@@ -357,13 +431,13 @@ case 'start':          exit(cmd_start()); break;
 case 'ensure':         exit(cmd_ensure()); break;
 case 'status':         cmd_status(); break;
 case 'catalog':        cmd_catalog(); break;
-case 'catalog-update': exit(cmd_catalog_update()); break;
+case 'catalog-sync':   exit(cmd_catalog_sync()); break;
 case 'cron-sync':      exit(cmd_cron_sync()); break;
 case 'convert':
 	// adlist.uc convert <in> <block-out> <allow-out>: used by the tests
 	out(convert_file(ARGV[1], ARGV[2], ARGV[3]));
 	break;
 default:
-	warn('usage: adlist.uc update | start | ensure | status | catalog | catalog-update | cron-sync\n');
+	warn('usage: adlist.uc update | start | ensure | status | catalog | catalog-sync | cron-sync\n');
 	exit(1);
 }

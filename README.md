@@ -59,6 +59,7 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
   `adlist.uc` 把列表转换成 mosdns 的域名文件：`||example.com^` → 域名及子域名，hosts 行和纯域名 → 精确匹配，
   `@@` 例外单独存放；通配符、正则和带其他修饰符的规则会被跳过并计数。合并后的文件由 mosdns 自动重载，
   更新列表不需要重启。订阅通过规则表里的“广告（订阅列表）”一行（`adlist:all`）生效。
+  来自列表库的订阅按目录编号跟随列表库：每次更新前刷新目录，名称和地址随之同步，被弃用或移除的列表只做标记。
   默认规则里不再包含 `geosite:category-ads-all`；从旧版本升级且原来开着去广告的配置会保留那一行，不需要可以删掉
 - **按设备分流**：按 MAC 地址把某台设备的全部流量（或只有 UDP / TCP）送到指定节点或节点组，
   或者让它完全直连，先于规则表生效，适合游戏加速。每个不同的出口对应一个额外的 TProxy 入站，
@@ -214,6 +215,7 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
 | global | probe_url_backup | 备用探测地址（可选）：所有组的全部成员同时探测失败时自动换用 |
 | adblock | dir / auto_update / update_hour | 拦截列表的存放目录、是否每天自动更新、更新钟点 |
 | adlist | enabled / name / url | 一条订阅：AdGuard 规则、hosts 或纯域名格式的列表地址 |
+| adlist | catalog_id | 来自 AdGuard 列表库的订阅记录的目录编号；有它时 name 和 url 跟随目录 |
 | device | mac / network / outbound | 按设备分流：MAC 地址列表；tcp,udp / udp / tcp；main / direct / 节点 / 节点组 |
 | global | schema | 配置版本，由包维护，不要改 |
 | global | ipv6_enabled | 启用 IPv6 TProxy（实验性） |

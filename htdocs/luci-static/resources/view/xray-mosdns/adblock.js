@@ -23,20 +23,24 @@ function fmtCount(n) {
 	return String(n || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }
 
-function subscribedUrls() {
-	var urls = {};
-	(uci.sections(xm.CONF, 'adlist') || []).forEach(function(s) { urls[s.url] = true; });
-	return urls;
+/* a catalogue entry counts as subscribed by its id, or by address for older subscriptions */
+function subscribed() {
+	var ids = {}, urls = {};
+	(uci.sections(xm.CONF, 'adlist') || []).forEach(function(s) {
+		if (s.catalog_id != null) ids[String(s.catalog_id)] = true;
+		urls[s.url] = true;
+	});
+	return function(f) { return !!(ids[String(f.id)] || urls[f.url]); };
 }
 
 /* pick lists from AdGuard's catalogue; the picks are staged like any other edit */
 function catalogDialog(catalog) {
-	var have = subscribedUrls();
+	var isSubscribed = subscribed();
 	var boxes = [];
 	var body = [];
 
 	(catalog.groups || []).forEach(function(grp) {
-		var filters = (catalog.filters || []).filter(function(f) { return f.group === grp.id; });
+		var filters = (catalog.filters || []).filter(function(f) { return f.group === grp.id && !f.deprecated; });
 		filters.sort(function(a, b) { return a.name.toLowerCase() < b.name.toLowerCase() ? -1 : 1; });
 		if (!filters.length)
 			return;
@@ -46,7 +50,8 @@ function catalogDialog(catalog) {
 			body.push(E('div', { 'class': 'cbi-value-description', 'style': 'margin:0 0 .5em' }, label[1]));
 		filters.forEach(function(f) {
 			var cb = E('input', { 'type': 'checkbox', 'id': 'xm-adl-' + f.id });
-			if (have[f.url]) {
+			var has = isSubscribed(f);
+			if (has) {
 				cb.checked = true;
 				cb.disabled = true;
 			}
@@ -56,7 +61,7 @@ function catalogDialog(catalog) {
 			body.push(E('div', { 'style': 'margin:.15em 0' }, [
 				cb, ' ',
 				E('label', { 'for': 'xm-adl-' + f.id, 'title': f.description || '' }, f.name),
-				have[f.url] ? E('em', {}, ' ' + _('（已订阅）')) : '',
+				has ? E('em', {}, ' ' + _('（已订阅）')) : '',
 				f.homepage ? E('a', {
 					'href': f.homepage, 'target': '_blank', 'rel': 'noreferrer noopener',
 					'style': 'margin-left:.5em', 'title': _('主页')
@@ -76,6 +81,8 @@ function catalogDialog(catalog) {
 			uci.set(xm.CONF, sid, 'enabled', '1');
 			uci.set(xm.CONF, sid, 'name', b[1].name);
 			uci.set(xm.CONF, sid, 'url', b[1].url);
+			/* the link to the catalogue: name and address follow this entry from now on */
+			uci.set(xm.CONF, sid, 'catalog_id', String(b[1].id));
 		});
 		return uci.save().then(function() {
 			window.location.reload();
@@ -119,9 +126,16 @@ return view.extend({
 			if (st.skipped)
 				parts.push(_('不支持 %s').format(fmtCount(st.skipped)));
 			var node = E('span', { 'title': _('上次更新：%s').format(fmtTime(st.updated)) }, parts.join(' · '));
-			return st.error
-				? E('span', {}, [ node, ' ', xm.badge(_('上次更新失败'), 'warn') ])
-				: node;
+			var extra = [];
+			if (st.error)
+				extra.push(' ', xm.badge(_('上次更新失败'), 'warn'));
+			if (st.catalog === 'deprecated')
+				extra.push(' ', E('span', { 'title': _('AdGuard 已把这个列表标记为弃用，它可能不再更新。建议删除或换一个。') },
+					xm.badge(_('已弃用'), 'warn')));
+			else if (st.catalog === 'gone')
+				extra.push(' ', E('span', { 'title': _('这个列表已经不在 AdGuard 的列表库里了，地址可能随时失效。建议删除或换一个。') },
+					xm.badge(_('已从列表库移除'), 'bad')));
+			return extra.length ? E('span', {}, [ node ].concat(extra)) : node;
 		}
 
 		function renderStatus() {
@@ -143,6 +157,21 @@ return view.extend({
 			});
 		}
 
+		function syncCatalog() {
+			return xm.exec('adlist.uc', [ 'catalog-sync' ]).then(function(r) {
+				if (r.ok === false) {
+					ui.addNotification(null, E('p', {}, _('列表库下载失败，继续使用现有的目录。')), 'warning');
+					return;
+				}
+				var flagged = Object.keys(r.flags || {}).length;
+				ui.addNotification(null, E('p', {},
+					_('列表库已刷新，共 %d 个列表。').format(r.filters) +
+					(r.changed ? _('有订阅的名称或地址随列表库更新了。') : '') +
+					(flagged ? _('有 %d 个订阅的列表已被弃用或移除，见下方标记。').format(flagged) : '')), 'info');
+				window.setTimeout(function() { window.location.reload(); }, 1500);
+			});
+		}
+
 		function updateNow() {
 			return xm.exec('adlist.uc', [ 'start' ]).then(function(r) {
 				if (r.ok === false)
@@ -157,7 +186,7 @@ return view.extend({
 
 		/* ------------------------------------------------------------ subscriptions */
 		s = m.section(form.GridSection, 'adlist', _('订阅的列表'),
-			_('列表通过“分流”页里的“广告（订阅列表）”规则行生效：排在它前面的规则优先，所以把某个域名加到它前面的直连或代理规则里，就等于放行。新添加的列表在“保存并应用”后自动下载。'));
+			_('列表通过“分流”页里的“广告（订阅列表）”规则行生效：排在它前面的规则优先，所以把某个域名加到它前面的直连或代理规则里，就等于放行。新添加的列表在“保存并应用”后自动下载。从列表库添加的订阅会跟随列表库：每次更新前先刷新目录，名称和地址随之同步；列表被弃用或移除时只做标记，不会自动删除。'));
 		s.addremove = true;
 		s.anonymous = true;
 		s.sortable = true;
@@ -172,7 +201,8 @@ return view.extend({
 		o.default = '1';
 		o.rmempty = false;
 
-		o = s.option(form.Value, 'name', _('名称'));
+		o = s.option(form.Value, 'name', _('名称'),
+			_('来自列表库的订阅，名称和地址在每次更新时会被列表库里的值覆盖。'));
 		o.rmempty = false;
 
 		o = s.option(form.Value, 'url', _('地址'),
@@ -223,9 +253,14 @@ return view.extend({
 					'click': function() { catalogDialog(catalog); }
 				}, _('从 AdGuard 列表库添加…')),
 				E('button', {
-					'class': 'cbi-button cbi-button-action',
+					'class': 'cbi-button cbi-button-action', 'style': 'margin-right:.5em',
 					'click': ui.createHandlerFn(this, updateNow)
 				}, _('立即更新')),
+				E('button', {
+					'class': 'cbi-button cbi-button-action',
+					'title': _('重新下载 AdGuard 的列表目录，并让来自列表库的订阅跟随它'),
+					'click': ui.createHandlerFn(this, syncCatalog)
+				}, _('刷新列表库')),
 				summary
 			]);
 			var first = node.querySelector('.cbi-section');
