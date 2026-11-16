@@ -1,0 +1,74 @@
+config global 'global'
+	option enabled '1'
+	option main_target 'hk1'
+	option rule_mode 'chnroute'
+	list bypass_ips '203.0.113.0/24'
+	list bypass_ips 'not-an-ip'
+
+config dns 'dns'
+	option enabled '1'
+	list hosts 'v1.example.com 198.51.100.10'
+
+config node 'hk1'
+	option enabled '1'
+	option remarks 'HK "one"'
+	option type 'vless'
+	option address 'hk1.example.net'
+	option port '443'
+	option uuid '11111111-2222-3333-4444-555555555555'
+	option flow 'xtls-rprx-vision'
+	option tls '1'
+	option transport 'tcp'
+
+config node 'jp1'
+	option enabled '0'
+	option type 'trojan'
+	option address '198.51.100.20'
+	option port '8443'
+	option password 'p@ss"word'
+	option tls '1'
+	option tls_server_name 'jp.example.net'
+	option transport 'ws'
+	option path '/ws'
+
+config rule
+	option enabled '1'
+	option rule_type 'domain'
+	option value 'domain:corp.example.org,geosite:apple-cn'
+	option outbound 'direct'
+
+config rule
+	option enabled '1'
+	option rule_type 'domain'
+	option value 'geosite:netflix,full:api.example.com,tracker'
+	option outbound 'jp1'
+
+config rule
+	option enabled '1'
+	option rule_type 'domain'
+	option value 'domain:ads.example.com'
+	option outbound 'block'
+
+config rule
+	option enabled '1'
+	option rule_type 'ip'
+	option value '192.0.2.0/24,2001:db8::/32,geoip:telegram'
+	option outbound 'main'
+
+config rule
+	option enabled '1'
+	option rule_type 'ip'
+	option value '198.18.0.0/15'
+	option outbound 'direct'
+
+config rule
+	option enabled '1'
+	option rule_type 'port'
+	option value '22,3389'
+	option outbound 'direct'
+
+config rule
+	option enabled '0'
+	option rule_type 'domain'
+	option value 'domain:disabled.example'
+	option outbound 'block'

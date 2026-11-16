@@ -5,14 +5,14 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-xray-mosdns-x
-PKG_VERSION:=0.8.0
+PKG_VERSION:=0.9.0
 PKG_RELEASE:=1
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=zly
 
 LUCI_TITLE:=LuCI support for Xray + mosdns-x transparent proxy
 LUCI_DESCRIPTION:=Manage an Xray TProxy transparent proxy with mosdns-x DNS split, cache and ad blocking.
-LUCI_DEPENDS:=+luci-base +nftables +ip-full +resolveip +ucode
+LUCI_DEPENDS:=+luci-base +nftables +ip-full +resolveip +ucode +ucode-mod-fs +ucode-mod-uci +ucode-mod-ubus
 LUCI_PKGARCH:=all
 
 include $(TOPDIR)/feeds/luci/luci.mk

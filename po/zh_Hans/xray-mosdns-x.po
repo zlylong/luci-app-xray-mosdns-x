@@ -359,3 +359,15 @@ msgstr "本地统计 API 端口"
 
 msgid "Direct destination IPs/CIDRs"
 msgstr "直连目标 IP/CIDR"
+
+msgid "mosdns-x answers LAN clients directly. dnsmasq keeps DHCP and local host names and is not reconfigured."
+msgstr "mosdns-x 直接应答 LAN 客户端。dnsmasq 继续负责 DHCP 和本地主机名，其配置不会被改动。"
+
+msgid "Redirect LAN DNS to mosdns-x"
+msgstr "将 LAN DNS 重定向到 mosdns-x"
+
+msgid "Every port 53 query entering from the LAN (including clients with a hard-coded DNS server) is redirected to mosdns-x by nftables. Disable only if you point clients at mosdns-x yourself."
+msgstr "从 LAN 进入的所有 53 端口查询（包括写死 DNS 服务器的客户端）都由 nftables 重定向到 mosdns-x。仅当你自行把客户端指向 mosdns-x 时才关闭。"
+
+msgid "Port 53 on the LAN is redirected here. Avoid 5353 (mDNS)."
+msgstr "LAN 的 53 端口会被重定向到这里。不要用 5353（mDNS 占用）。"

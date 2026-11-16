@@ -38,6 +38,14 @@ return view.extend({
 		o.datatype = 'range(1,252)';
 		o.default = '100';
 
+		o = s.option(form.Flag, 'kernel_split', _('内核分流'),
+			_('由 nftables 按目的地址决定是否进入 Xray：直连流量留在内核转发（可硬件/软件加速），只有需要代理的流量才交给 Xray。关闭后所有流量都进入 Xray 再分流。'));
+		o.default = '1';
+
+		o = s.option(form.DynamicList, 'lan_ifaces', _('LAN 接口'),
+			_('只代理从这些接口进入的流量（逻辑接口名，默认 lan）。来自 WAN 的流量不会被劫持。'));
+		o.placeholder = 'lan';
+
 		o = s.option(form.Flag, 'ipv6_enabled', _('启用 IPv6 TProxy'),
 			_('实验性：需要节点支持 IPv6。'));
 		o.default = '0';

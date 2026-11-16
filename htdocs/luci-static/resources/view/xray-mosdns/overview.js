@@ -76,7 +76,7 @@ return view.extend({
 
 		var tproxy = st.tproxy_port || global.tproxy_port || '12345';
 		var socks = global.socks_port || '1070';
-		var mosdnsPort = dns.listen_port || '5353';
+		var mosdnsPort = dns.listen_port || '5335';
 		var api = global.api_port || '10085';
 		var mode = global.rule_mode || 'chnroute';
 		var main = st.main_target || global.main_target || 'direct';
@@ -114,13 +114,13 @@ return view.extend({
 				xm.link(live ? 'on' : 'off'),
 				stn('TProxy', ':' + (s.tproxy_port || tproxy), xrayOn),
 				xm.link(live ? 'on' : 'off'),
-				stn('Xray 分流', MODE_LABEL[mode] || mode, xrayOn),
+				stn(global.kernel_split === '0' ? 'Xray 分流' : '内核 + Xray 分流', MODE_LABEL[mode] || mode, xrayOn),
 				xm.link(live ? 'on' : 'off'),
 				stn('出口', targetText, xrayOn)
 			], live);
 
 			var dns = xm.lane('DNS', [
-				stn('dnsmasq', ':53 → 上游链', true),
+				stn('LAN DNS', dns.redirect === '0' ? '未重定向（手动指向）' : ':53 重定向', true),
 				xm.link(dnsOn && dnsEnabled ? 'on' : 'off'),
 				stn('mosdns-x', ':' + mosdnsPort, dnsEnabled && dnsOn),
 				xm.link(dnsOn && dnsEnabled ? 'on' : 'off'),

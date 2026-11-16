@@ -1,6 +1,6 @@
 'use strict';
 
-var THEME_VERSION = '0.8.0';
+var THEME_VERSION = '0.9.0';
 
 function themeLink() {
 	return E('link', {

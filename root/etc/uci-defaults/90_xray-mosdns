@@ -1,18 +1,18 @@
 #!/bin/sh
-# Ensure new options exist after upgrades (idempotent), and migrate the
-# old node_mode/node selection to the new "main_target" option.
+# Ensure new options exist after upgrades (idempotent), and migrate older
+# layouts: node_mode/node -> main_target, dnsmasq forwarding -> nft redirect.
 [ -f /etc/config/xray-mosdns ] || exit 0
 
 g() { uci -q get "xray-mosdns.$1" 2>/dev/null || true; }
 s() { uci -q set "xray-mosdns.$1=$2" 2>/dev/null || true; }
+# set only when the option does not exist yet
+d() { uci -q get "xray-mosdns.$1" >/dev/null 2>&1 || s "$1" "$2"; }
 
 uci -q get xray-mosdns.@dns[0] >/dev/null 2>&1 || {
 	uci batch <<-EOC
 	set xray-mosdns.dns=dns
 	set xray-mosdns.dns.enabled='1'
 	set xray-mosdns.dns.mosdns_bin='/usr/bin/mosdns'
-	set xray-mosdns.dns.listen_port='5353'
-	set xray-mosdns.dns.xray_dns_port='15353'
 	set xray-mosdns.dns.cache_size='8192'
 	set xray-mosdns.dns.cache_everything='1'
 	set xray-mosdns.dns.adblock='1'
@@ -21,42 +21,47 @@ uci -q get xray-mosdns.@dns[0] >/dev/null 2>&1 || {
 	EOC
 }
 
-for opt in allow_coexist socks_port api_port ipv6_enabled balancer_strategy geo_auto_update geo_update_hour failover_enabled; do
-	uci -q get "xray-mosdns.@global[0].$opt" >/dev/null 2>&1 || {
-		case "$opt" in
-			allow_coexist) s @global[0].allow_coexist '0' ;;
-			socks_port) s @global[0].socks_port '1070' ;;
-			api_port) s @global[0].api_port '10085' ;;
-			ipv6_enabled) s @global[0].ipv6_enabled '0' ;;
-			balancer_strategy) s @global[0].balancer_strategy 'leastLoad' ;;
-			geo_auto_update) s @global[0].geo_auto_update '0' ;;
-			geo_update_hour) s @global[0].geo_update_hour '4' ;;
-			failover_enabled) s @global[0].failover_enabled '0' ;;
-		esac
-	}
-done
+d '@global[0].allow_coexist' '0'
+d '@global[0].socks_port' '1070'
+d '@global[0].api_port' '10085'
+d '@global[0].ipv6_enabled' '0'
+d '@global[0].balancer_strategy' 'leastLoad'
+d '@global[0].geo_auto_update' '0'
+d '@global[0].geo_update_hour' '4'
+d '@global[0].failover_enabled' '0'
+d '@global[0].kernel_split' '1'
+d '@global[0].rule_mode' 'chnroute'
+d '@global[0].balance_enabled' '0'
+d '@dns[0].redirect' '1'
+
+# 0.9: mosdns listens on a wildcard address; 5353 would collide with mDNS
+port=$(g '@dns[0].listen_port')
+{ [ -z "$port" ] || [ "$port" = "5353" ]; } && s '@dns[0].listen_port' '5335'
 
 # migrate node selection -> main_target / balance_enabled
-if [ -z "$(g @global[0].main_target)" ]; then
-	case "$(g @global[0].node_mode)" in
+if [ -z "$(g '@global[0].main_target')" ]; then
+	case "$(g '@global[0].node_mode')" in
 		balance)
-			s @global[0].main_target 'balance'
-			s @global[0].balance_enabled '1'
+			s '@global[0].main_target' 'balance'
+			s '@global[0].balance_enabled' '1'
 			;;
 		*)
-			_node=$(g @global[0].node)
-			[ -n "$_node" ] && s @global[0].main_target "$_node"
+			_node=$(g '@global[0].node')
+			[ -n "$_node" ] && s '@global[0].main_target' "$_node"
 			;;
 	esac
-	[ -n "$(g @global[0].main_target)" ] || s @global[0].main_target 'direct'
+	[ -n "$(g '@global[0].main_target')" ] || s '@global[0].main_target' 'direct'
 fi
-uci -q get xray-mosdns.@global[0].rule_mode >/dev/null 2>&1 || s @global[0].rule_mode 'chnroute'
-uci -q get xray-mosdns.@global[0].balance_enabled >/dev/null 2>&1 || s @global[0].balance_enabled '0'
 
 # drop removed legacy options/lists
 for opt in node_mode node bypass_chn default_outbound proxy_domains direct_domains block_domains; do
-	uci -q get "xray-mosdns.@global[0].$opt" >/dev/null 2>&1 && uci -q delete "xray-mosdns.@global[0].$opt"
+	uci -q delete "xray-mosdns.@global[0].$opt"
 done
+uci -q delete 'xray-mosdns.@dns[0].xray_dns_port'
 
 uci commit xray-mosdns
+
+# <= 0.8 rewrote dnsmasq's upstream; put the user's own settings back
+[ -x /usr/share/xray-mosdns/dnsmasq.sh ] && /usr/share/xray-mosdns/dnsmasq.sh revert
+
 exit 0

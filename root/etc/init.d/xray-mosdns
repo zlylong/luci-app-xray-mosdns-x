@@ -1,5 +1,9 @@
 #!/bin/sh /etc/rc.common
 # luci-app-xray-mosdns-x - service control
+#
+# start is idempotent and doubles as reload: the configuration is
+# regenerated, the nftables ruleset is re-applied in one transaction, and
+# procd restarts only the daemon whose configuration file actually changed.
 START=96
 USE_PROCD=1
 
@@ -7,40 +11,62 @@ PLUGIN_DIR=/usr/share/xray-mosdns
 OUT=/var/etc/xray-mosdns
 
 get_opt() { uci -q get "xray-mosdns.$1" 2>/dev/null; }
-
-service_started() { uci -q get xray-mosdns.@global[0].enabled 2>/dev/null; }
+sum() { [ -f "$1" ] && md5sum "$1" 2>/dev/null | cut -d' ' -f1; }
 
 passwall_running() {
 	ps w 2>/dev/null | grep -v grep | grep -q '/tmp/etc/passwall' && return 0
 	return 1
 }
 
+teardown() {
+	"$PLUGIN_DIR/fw.sh" clear >/dev/null 2>&1 || true
+}
+
 start_service() {
-	[ "$(service_started)" = "1" ] || {
+	# configs written by <= 0.8 pointed dnsmasq at mosdns; undo that once
+	"$PLUGIN_DIR/dnsmasq.sh" revert || true
+
+	[ "$(get_opt '@global[0].enabled')" = "1" ] || {
+		teardown
 		echo "xray-mosdns is disabled (xray-mosdns.global.enabled=0)"
 		return 0
 	}
-	if passwall_running && [ "$(get_opt 'global.allow_coexist')" != "1" ]; then
+	if passwall_running && [ "$(get_opt '@global[0].allow_coexist')" != "1" ]; then
 		logger -t xray-mosdns "PassWall is running - refusing to start (set global.allow_coexist=1 to override)"
 		echo "ERROR: PassWall is running, stop it first" >&2
+		teardown
 		return 1
 	fi
 
-	XRAY_BIN=$(get_opt 'global.xray_bin'); [ -n "$XRAY_BIN" ] || XRAY_BIN=/usr/bin/xray
-	MOSDNS_BIN=$(get_opt 'dns.mosdns_bin'); [ -n "$MOSDNS_BIN" ] || MOSDNS_BIN=/usr/bin/mosdns
+	XRAY_BIN=$(get_opt '@global[0].xray_bin'); [ -n "$XRAY_BIN" ] || XRAY_BIN=/usr/bin/xray
+	MOSDNS_BIN=$(get_opt '@dns[0].mosdns_bin'); [ -n "$MOSDNS_BIN" ] || MOSDNS_BIN=/usr/bin/mosdns
 
 	mkdir -p "$OUT"
-	"$PLUGIN_DIR/gen-config.sh" "$OUT" || {
+	dns_before=$(sum "$OUT/mosdns.yaml")
+	if ! ucode "$PLUGIN_DIR/gen-config.uc" -o "$OUT"; then
 		logger -t xray-mosdns "config generation failed"
+		echo "ERROR: config generation failed (see logread -e xray-mosdns)" >&2
+		# files are replaced atomically, so a previous good set is still intact:
+		# keep running on it rather than dropping the proxy
+		[ -f "$OUT/xray.json" ] && [ -f "$OUT/nft.rules" ] || {
+			teardown
+			return 1
+		}
+		logger -t xray-mosdns "keeping the previous configuration"
+	fi
+
+	# addresses learned from DNS belong to the old rules once those change
+	flush=""
+	[ "$dns_before" = "$(sum "$OUT/mosdns.yaml")" ] || flush="flush-dns"
+	"$PLUGIN_DIR/fw.sh" apply $flush || {
+		teardown
 		return 1
 	}
-	"$PLUGIN_DIR/fw.sh" apply || return 1
 
-	if [ "$(get_opt 'dns.enabled')" = "1" ]; then
-		"$PLUGIN_DIR/dnsmasq.sh" apply || true
-
+	if [ "$(get_opt '@dns[0].enabled')" != "0" ]; then
 		procd_open_instance mosdns
 		procd_set_param command "$MOSDNS_BIN" start -c "$OUT/mosdns.yaml" -d "$OUT"
+		procd_set_param file "$OUT/mosdns.yaml"
 		procd_set_param respawn 3600 5 5
 		procd_set_param stdout 1
 		procd_set_param stderr 1
@@ -49,6 +75,7 @@ start_service() {
 
 	procd_open_instance xray
 	procd_set_param command "$XRAY_BIN" run -c "$OUT/xray.json"
+	procd_set_param file "$OUT/xray.json"
 	procd_set_param respawn 3600 5 5
 	procd_set_param stdout 1
 	procd_set_param stderr 1
@@ -56,15 +83,14 @@ start_service() {
 }
 
 stop_service() {
-	"$PLUGIN_DIR/fw.sh" clear >/dev/null 2>&1 || true
-	"$PLUGIN_DIR/dnsmasq.sh" revert || true
-}
-
-reload_service() {
-	stop
-	start
+	teardown
 }
 
 service_triggers() {
 	procd_add_reload_trigger "xray-mosdns"
+	# the LAN device name is baked into the ruleset
+	ifaces=$(get_opt '@global[0].lan_ifaces'); [ -n "$ifaces" ] || ifaces=lan
+	for i in $ifaces; do
+		procd_add_reload_interface_trigger "$i"
+	done
 }

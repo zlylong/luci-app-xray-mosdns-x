@@ -1,57 +1,83 @@
 # luci-app-xray-mosdns-x
 
 LuCI 管理界面：用 **Xray**（TProxy 透明代理）+ **mosdns-x**（DNS 分流/缓存/去广告）
-替代 PassWall 的插件。项目目前为 **v0.2.0 开发版**，默认 **不启用**：
+替代 PassWall、ChinaDNS 和 dnsmasq 解析功能的插件。当前为 **v0.9.0 开发版**，默认 **不启用**：
 安装后 `xray-mosdns.global.enabled` 仍为 `0`，不会改动现有代理/DNS 链路。
 
 ## 架构
 
-```
-客户端 ──► dnsmasq :53 ──► mosdns-x 127.0.0.1:5353
-                              ├─ 国内域名 ──► 阿里/腾讯 DoH（直连，可带 ECS）
-                              ├─ 广告域名  ──► NXDOMAIN (geosite:category-ads-all)
-                              └─ 其它域名  ──► SOCKS5 127.0.0.1:1070 (Xray) ──► VPS ──► 1.1.1.1
+所有后端都从同一份“分流计划”生成：每条规则归为 代理 / 直连 / 阻断 三类，分流模式决定
+默认类别。mosdns、nftables、Xray 读的是同一份计划，DNS 的判断和转发的判断不会各走各的。
 
-客户端 ──► nftables prerouting ──► TProxy :12345 ──► Xray tunnel inbound
-                              ├─ geosite:cn / geoip:cn ──► direct
-                              ├─ 自定义 proxy 域名      ──► node
-                              └─ 默认                  ──► node
+```
+DNS：
+LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
+                 ├─ 本地域名 / 反向解析 ──► dnsmasq 127.0.0.1:53（DHCP 主机名）
+                 ├─ 规则：阻断          ──► NXDOMAIN
+                 ├─ 规则：直连          ──► 国内上游 ──► 应答 IP 写入 direct4_dns
+                 ├─ 规则：代理          ──► SOCKS5 → Xray → 国外 DNS ──► 应答 IP 写入 proxy4_dns
+                 ├─ 广告域名            ──► NXDOMAIN
+                 └─ 分流模式内置规则（大陆白名单 / GFW / 全局 / 自定义）
+
+转发（nft prerouting，只处理从 LAN 接口进入的 TCP/UDP）：
+  已交给 Xray 的连接（conntrack 标记）──► TProxy
+  非新建连接                            ──► 内核直接转发
+  新连接按目的地址判定一次：
+    保留地址 / 节点地址 / bypass_ips   ──► 直连
+    direct4 / direct4_dns               ──► 直连
+    proxy4 / proxy4_dns                 ──► TProxy :12345 ──► Xray
+    chnroute4（大陆白名单模式）         ──► 直连
+    其余                                ──► 按模式默认（GFW 模式直连，其它模式 TProxy）
 ```
 
-- TCP/UDP 都走 nft `tproxy` + 策略路由（fwmark → table），不走 REDIRECT
+- **内核分流**：直连流量不进 Xray，留在内核转发路径上（可用 flow offload）；只有需要代理的
+  流量才 TProxy。`kernel_split=0` 可退回“全部进 Xray 再分流”
+- **DNS 接管不改 dnsmasq**：LAN 的 53 端口由 nft 重定向到 mosdns-x，写死 DNS 的客户端也会被接管；
+  mosdns 能看到真实客户端 IP。停止服务或删除 nft 表后立即回到 dnsmasq，没有需要还原的配置
+- **只处理 LAN 入口**：从 WAN 进入的流量、发往路由器自身的流量都不会被 TProxy
+- **连接级判定**：一个连接只在首包判定一次，之后集合内容变化不会打断已有连接
+- **节点域名不在生成配置时解析**：直接交给 Xray 在拨号时解析，开机 WAN 未就绪也能启动，
+  节点 IP 变化无需重启；节点域名在 mosdns 中固定走国内上游
+- **重载不断流**：`reload` 重新生成配置，nft 规则在单个事务内替换，procd 只重启配置文件
+  发生变化的进程；生成失败时保留上一份可用配置继续运行
 - 国外 DNS 通过 Xray 的内部 SOCKS inbound 经代理解析，避免 DNS 泄漏
 - `filter_proxy_ipv6` 会丢弃代理域名的 AAAA 应答，防止 IPv6 绕过代理
-- **多节点**：`node_mode=balance` 时所有 enabled 节点进入 Xray balancer
-  （leastLoad/roundRobin/random，leastLoad 带 burstObservatory 健康检查，支持 fallback 节点）
-- **规则管理**：`config rule` 段或 LuCI Rules 页按 域名/IP/端口/协议 分流到 proxy/direct/block
-- **IPv6**：`ipv6_enabled=1` 时同时下发 IPv6 nft tproxy 规则与 `ip -6 rule/route`
-- **节点流量**：Xray StatsService 按节点统计上下行（仅代理节点）
-- **节点列表**：表格只显示 启用/备注/地址/延迟，点“详情”弹窗编辑全部参数，支持单节点测速、全部测速
-- **订阅导入**：节点页“导入节点”弹窗粘贴 vless/vmess/trojan/ss/hysteria2 链接，批量生成（默认禁用）节点
-- **分流逻辑（PassWall 风格）**：分流总节点（直连/指定节点/负载均衡）→ 分流模式内置规则（大陆白名单/GFW/全局/自定义）→ 自定义规则（规则优先级最高，可指向总节点、指定节点、负载均衡、直连、阻断）
-- **规则页**：从 geosite.dat/geoip.dat 自动提取标签（本机 1562 个 geosite + 260 个 geoip），支持搜索、多选、chips 展示
-- **首页看板**：运行状态磁贴 + 连通性检测（阿里/谷歌/GitHub/YouTube，先经代理、未运行时直连）
-- **负载均衡说明**：平衡模式会把所有“启用”节点纳入 Xray balancer；leastLoad 每分钟健康检查一次，
-  自动选择当前延迟最低的可用节点（选路/故障切换，不是按连接数分摊），无可用节点时使用备用节点
-- **主备模型**：主节点 + 备节点；balancer 只包含主节点（单独 `fo-` 标签做健康检查），
-  主节点探测失败时通过 `fallbackTag` 自动切换到备节点（备节点未配置则回落到直连）
+- **多节点**：负载均衡（leastLoad/roundRobin/random，带 burstObservatory 健康检查与备用节点）、
+  主备模型（主节点探测失败时切到备节点）
+- **规则**：按 域名/IP/端口/协议 分流到 总节点/指定节点/负载均衡/主备/直连/阻断，按顺序匹配，
+  优先级高于分流模式；域名规则同时决定 DNS 上游，命中的用户规则不受去广告拦截
+- **GFW 模式**：只有 `geosite:gfw` 和规则指定的目标走代理，其余全部直连
 
 ## 目录结构
 
 ```
 ├── Makefile                                  OpenWrt 包定义
 ├── root/etc/config/xray-mosdns               UCI 默认配置（enabled=0）
-├── root/etc/init.d/xray-mosdns               procd 服务
+├── root/etc/init.d/xray-mosdns               procd 服务（start 幂等，兼作 reload）
 ├── root/usr/share/xray-mosdns/
-│   ├── gen-config.sh                         生成 xray.json / mosdns.yaml / nft.rules
-│   ├── fw.sh                                 nftables + 策略路由 apply/clear
-│   └── dnsmasq.sh                            dnsmasq 集成/还原（带备份）
-├── root/usr/libexec/xray-mosdns/
-│   ├── status.sh                             状态 JSON
-│   └── log.sh                                日志
-├── htdocs/luci-static/resources/view/xray-mosdns/
-│   ├── overview.js  settings.js  nodes.js  dns.js  log.js
-└── .gitea/workflows/build.yml                Gitea Actions CI
+│   ├── gen-config.uc                         生成器入口：xray.json / mosdns.yaml / nft.rules
+│   ├── fw.sh                                 nftables 加载 + 策略路由 apply/clear/status
+│   └── dnsmasq.sh                            仅用于还原 ≤0.8 版本改写过的 dnsmasq 配置
+├── root/usr/share/ucode/xray_mosdns/
+│   ├── config.uc                             UCI → 规范化配置 + 分流计划
+│   ├── xray.uc  mosdns.uc  nft.uc            三个后端，各自返回对象/文本
+│   ├── geoip.uc                              从 geoip.dat 提取大陆网段（带缓存）
+│   └── util.uc                               校验、YAML 输出等
+├── root/usr/libexec/xray-mosdns/             状态、流量、测速、更新、导入等辅助脚本
+├── htdocs/luci-static/resources/view/xray-mosdns/   LuCI 页面
+├── tests/                                    夹具配置 + 生成/断言脚本
+└── ci/gitea-actions-build.yml                Gitea Actions CI（暂未启用）
+```
+
+## 测试
+
+生成器可以脱离路由器测试（需要一个带 ucode/uci 的 OpenWrt rootfs，例如官方容器镜像）：
+
+```sh
+podman run --rm --network none -v "$PWD":/src:ro -v /tmp/xm-test:/out \
+    docker.io/openwrt/rootfs:x86-64-24.10.4 sh /src/tests/gen.sh /src /out
+python3 tests/check.py /tmp/xm-test          # 对三套夹具的输出做断言
+xray run -test -c /tmp/xm-test/chnroute/xray.json
 ```
 
 ## 依赖
@@ -60,9 +86,11 @@ LuCI 管理界面：用 **Xray**（TProxy 透明代理）+ **mosdns-x**（DNS �
 
 - `xray`（Xray-core ≥ 1.8，TProxy tunnel inbound）——**不作为包依赖**，可使用手工编译版本
   （手工 xray 与 feed 的 `xray-core` 包会争用 `/usr/bin/xray`，因此默认不声明依赖）
-- `mosdns` 或 `mosdns-x`（≥ v5 配置格式；推荐 pmkol/mosdns-x，带 `_new_empty_response` 等预设）
+- `mosdns-x`（pmkol/mosdns-x，mosdns v4 配置格式；需要其 `nftset` 插件和 `_new_empty_response` 等预设）
 - `nftables` + `kmod-nft-tproxy` + `ip-full`（nftables/ip-full 已声明为包依赖；
   `kmod-nft-tproxy` 需单独安装，避免 SDK/CI 触发内核编译）
+- `ucode` + `ucode-mod-uci` / `ucode-mod-fs` / `ucode-mod-ubus`（生成器；LuCI 本身已依赖）
+- `python3`（仅流量统计页和 geo 标签选择器使用，未声明为包依赖）
 - `/usr/share/v2ray/geosite.dat`、`geoip.dat`（Loyalsoldier / v2ray 数据）
 
 ## 代码仓库与 CI
@@ -109,9 +137,11 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
 3. 启用本插件：`uci set xray-mosdns.@global[0].enabled=1; uci set xray-mosdns.@global[0].node=<节点名>; uci commit xray-mosdns`
 4. 启动：`/etc/init.d/xray-mosdns start`
 5. 检查：`/usr/libexec/xray-mosdns/status.sh`、`/usr/share/xray-mosdns/fw.sh status`
-6. 验证 DNS：`nslookup www.baidu.com 127.0.0.1`、`nslookup www.google.com 127.0.0.1`
+6. 验证 DNS：`nslookup www.baidu.com 127.0.0.1#5335`、`nslookup www.google.com 127.0.0.1#5335`
+   （路由器本机的 53 端口仍是 dnsmasq，只有 LAN 客户端的查询被重定向）
+7. 查看集合：`nft list set inet xray-mosdns proxy4_dns`
 
-回滚：`/etc/init.d/xray-mosdns stop`（会还原 dnsmasq 配置、清空 nft/策略路由），
+回滚：`/etc/init.d/xray-mosdns stop`（删除 nft 表和策略路由，DNS 随即回到 dnsmasq），
 再启动 PassWall 即可。
 
 ## UCI 配置参考
@@ -127,8 +157,11 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
 | global | bypass_chn | 国内目的地直连（geosite:cn / geoip:cn） |
 | global | node | 选中的节点 section 名 |
 | global | socks_port | 内部 SOCKS 端口（给 mosdns 转发国外 DNS），默认 1070 |
-| dns | listen_port | mosdns 监听端口，默认 5353（dnsmasq 指向它） |
-| dns | xray_dns_port | 兼容字段，v0.2 使用 SOCKS 方式转发，暂未使用 |
+| global | kernel_split | 内核分流（默认 1）；0 = 所有流量进 Xray 再分流 |
+| global | lan_ifaces | 被代理的逻辑接口列表，默认 `lan` |
+| global | lan_devices | 直接指定设备名（如 `br-lan`），设置后不再查询 lan_ifaces |
+| dns | listen_port | mosdns 监听端口，默认 5335（不要用 5353，mDNS 占用） |
+| dns | redirect | nft 把 LAN 的 53 端口重定向到 mosdns（默认 1） |
 | dns | adblock | geosite:category-ads-all 拦截 |
 | dns | filter_proxy_ipv6 | 代理域名丢弃 AAAA |
 | dns | domestic_dns | 国内 DoH/DoT/明文上游列表 |
@@ -142,7 +175,15 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
 | global | api_port | Xray 本地统计 API 端口（默认 10085，用于节点流量） |
 | rule | rule_type/value/outbound | 自定义分流规则：domain/ip/port/network → proxy/direct/block |
 
-## 已知限制（v0.2）
+## 已知限制
+
+- 内核分流按目的 IP 判定：端口/协议规则、`geoip:` 标签规则只对进入 Xray 的流量生效。
+  例如大陆白名单模式下“22 端口走代理”对国内 IP 不生效（国内 IP 在内核已直连）
+- 多个域名共用同一 IP（CDN）且分属代理与直连时，以先写入集合的一方为准，直连集合优先
+- 客户端若绕过本机 DNS（DoH/DoT），其流量只能按 IP 集合和模式默认值判定
+- 路由器自身发出的流量不经过 TProxy（未挂 output 链）
+- `dns.enabled=0` 时无法填充集合，内核分流自动关闭
+- *_dns 集合元素 3 天过期；DNS 规则变化时集合会清空并随 mosdns 重启重新学习
 
 - IPv6 TProxy 为实验性功能，需要节点本身可达 IPv6；IPv6 分流规则与 IPv4 共用 geosite/geoip 规则
 - Xray 26.x 已移除 `allowInsecure`（跳过证书校验），插件不再生成该字段；需要绕过证书校验的场景请改用可信证书/域名
@@ -172,6 +213,10 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
 - [x] v0.8.0 UI 重设计：线路图式首页、统一的技图风格（等宽数据、方形端子、主题自适应）
 - [x] 节点流量统计（Xray StatsService）
 - [x] DNS 页面中文化、日志等级可选
+- [x] v0.9.0 数据面重构：ucode 生成器、单一分流计划、内核分流、nft 重定向接管 DNS、无断流重载
+- [ ] 路由器自身流量代理（output 链）
+- [ ] 去广告订阅列表 / 查询日志（替代 ADG）
+- [ ] 订阅 URL 自动更新、按设备访问控制
 - [ ] Gitea Actions 构建产物发布（未包含）
 
 ## 许可

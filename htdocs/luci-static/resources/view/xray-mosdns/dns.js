@@ -18,16 +18,20 @@ return view.extend({
 		s.addremove = false;
 
 		o = s.option(form.Flag, 'enabled', _('Enable mosdns-x'),
-			_('When enabled, dnsmasq is pointed at the local mosdns listener and restored on stop.'));
+			_('mosdns-x answers LAN clients directly. dnsmasq keeps DHCP and local host names and is not reconfigured.'));
+		o.default = '1';
+
+		o = s.option(form.Flag, 'redirect', _('Redirect LAN DNS to mosdns-x'),
+			_('Every port 53 query entering from the LAN (including clients with a hard-coded DNS server) is redirected to mosdns-x by nftables. Disable only if you point clients at mosdns-x yourself.'));
 		o.default = '1';
 
 		o = s.option(form.Value, 'mosdns_bin', _('mosdns binary'));
 		o.default = '/usr/bin/mosdns';
 
 		o = s.option(form.Value, 'listen_port', _('mosdns listen port'),
-			_('dnsmasq will forward to 127.0.0.1:<port>.'));
+			_('Port 53 on the LAN is redirected here. Avoid 5353 (mDNS).'));
 		o.datatype = 'port';
-		o.default = '5353';
+		o.default = '5335';
 
 		o = s.option(form.Value, 'cache_size', _('Cache entries'));
 		o.datatype = 'uinteger';
@@ -63,7 +67,7 @@ return view.extend({
 
 		return xm.page({
 			title: 'DNS',
-			lede: '客户端 DNS 由 mosdns-x 处理：国内域名走国内上游，其余通过内部 SOCKS 交给 Xray 代理解析；缓存与去广告也在这里。'
+			lede: 'LAN 的 53 端口查询由 nftables 重定向到 mosdns-x：分流规则与转发共用同一套规则，国内域名走国内上游，代理域名经内部 SOCKS 交给 Xray 解析并写入内核集合；本地主机名和反向解析仍交给 dnsmasq。'
 		}, [ m.render() ]);
 	}
 });

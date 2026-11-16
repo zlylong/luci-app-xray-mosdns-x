@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+"""Assertions over the configs produced by tests/gen.sh.
+
+usage: tests/check.py <outdir>
+"""
+import json
+import sys
+
+import yaml
+
+out = sys.argv[1] if len(sys.argv) > 1 else "/tmp/xm-test"
+failed = []
+
+
+def check(cond, msg):
+    if not cond:
+        failed.append(msg)
+
+
+def load(case):
+    x = json.load(open(f"{out}/{case}/xray.json"))
+    m = yaml.safe_load(open(f"{out}/{case}/mosdns.yaml"))
+    n = open(f"{out}/{case}/nft.rules").read()
+    return x, m, n
+
+
+def refs(node):
+    """every plugin tag a sequence body refers to"""
+    if isinstance(node, str):
+        yield node
+    elif isinstance(node, list):
+        for item in node:
+            yield from refs(item)
+    elif isinstance(node, dict):
+        for key in ("exec", "else_exec", "primary", "secondary"):
+            if key in node:
+                yield from refs(node[key])
+
+
+def matcher_refs(node):
+    if isinstance(node, list):
+        for item in node:
+            yield from matcher_refs(item)
+    elif isinstance(node, dict):
+        if "if" in node:
+            for tok in node["if"].replace("(", " ").replace(")", " ").replace("!", " ").split():
+                if tok not in ("&&", "||") and not tok.startswith("["):
+                    yield tok
+        for key in ("exec", "else_exec", "primary", "secondary"):
+            if key in node:
+                yield from matcher_refs(node[key])
+
+
+def check_mosdns_refs(case, m):
+    seen = set()
+    for p in m["plugins"]:
+        if p["type"] == "sequence":
+            for r in refs(p["args"]["exec"]):
+                check(r.startswith("_") or r in seen, f"{case}: sequence {p['tag']} uses undefined plugin {r}")
+            for r in matcher_refs(p["args"]["exec"]):
+                check(r in seen, f"{case}: sequence {p['tag']} uses undefined matcher {r}")
+        check(p["tag"] not in seen, f"{case}: duplicate plugin tag {p['tag']}")
+        seen.add(p["tag"])
+    check(m["servers"][0]["exec"] in seen, f"{case}: server exec undefined")
+
+
+def plugin(m, tag):
+    return next((p for p in m["plugins"] if p["tag"] == tag), None)
+
+
+def chain(n, name):
+    body = n.split(f"\tchain {name} {{\n", 1)[1].split("\t}", 1)[0]
+    return [line.strip() for line in body.splitlines() if line.strip()]
+
+
+# ------------------------------------------------------------------ chnroute
+x, m, n = load("chnroute")
+check_mosdns_refs("chnroute", m)
+rules = x["routing"]["rules"]
+check(rules[-1] == {"type": "field", "network": "tcp,udp", "outboundTag": "out-hk1"}, "chnroute: default must be the main node")
+check({"type": "field", "ip": ["geoip:cn"], "outboundTag": "direct"} in rules, "chnroute: geoip:cn direct rule missing")
+check(x["outbounds"][0]["settings"]["vnext"][0]["address"] == "hk1.example.net", "node hostname must be passed to Xray unresolved")
+check(x["outbounds"][1]["settings"]["servers"][0]["password"] == 'p@ss"word', "password with a quote must survive")
+main = plugin(m, "main_sequence")["args"]["exec"]
+by_if = {e["if"]: e["exec"] for e in main if isinstance(e, dict) and "if" in e}
+check(by_if["rule_0"] == ["local_seq", "add_direct", "_return"], "chnroute: direct rule must resolve locally and mark the direct set")
+check(by_if["rule_1"][-3:] == ["remote_seq", "add_proxy", "_return"], "chnroute: proxy rule must resolve remotely and mark the proxy set")
+check(by_if["rule_2"] == ["_new_nxdomain_response", "_return"], "chnroute: block rule must answer NXDOMAIN")
+order = [e["if"] for e in main if isinstance(e, dict) and "if" in e]
+check(order.index("rule_2") < order.index("query_is_ad_domain") < order.index("query_is_local_domain"), "chnroute: user rules, then ad filter, then built-ins")
+check(order.index("query_is_node") < order.index("rule_0"), "node hostnames must be resolved locally before any rule")
+check(plugin(m, "query_is_node")["args"]["domain"] == ["full:hk1.example.net"], "only hostname nodes need the node matcher")
+check(plugin(m, "rule_1")["args"]["domain"] == ["provider:geosite:netflix", "full:api.example.com", "keyword:tracker"], "domain syntax conversion")
+check(plugin(m, "local_seq")["args"]["exec"] == ["cache", "forward_local"], "cache must sit inside the sequence so nftset runs on hits")
+check("disabled.example" not in json.dumps(m), "disabled rule leaked into mosdns")
+check(m["servers"][0]["listeners"][0]["addr"] == ":5335", "redirect mode listens on the wildcard address")
+pre = chain(n, "prerouting")
+check(pre[0] == 'iifname != { "br-lan" } return', "traffic not entering from the LAN must be left alone")
+check(pre.index("ip daddr @direct4_dns return") < pre.index("ip daddr @proxy4_dns goto do_tproxy") < pre.index("ip daddr @chnroute4 return"), "chnroute: set order")
+check(pre[-1] == "goto do_tproxy", "chnroute: default is proxy")
+check("meta nfproto ipv6 return" in pre, "IPv6 must not be proxied when disabled")
+check("not-an-ip" not in n, "invalid bypass entry leaked into nft")
+check("add element inet xray-mosdns proxy4 { 192.0.2.0/24 }" in n, "literal IP rule must land in the proxy set")
+check("geoip:telegram" not in n, "geoip tags cannot go into nft")
+check("add element inet xray-mosdns direct4 { 198.18.0.0/15 }" in n, "literal direct IP rule must land in the direct set")
+check("114.114.0.0/16" in n and "8.8.8.0/24" not in n and "1.0.16.0/20" not in n, "chnroute4 must hold exactly the CN entry")
+check("198.51.100.20" in n.split("add element inet xray-mosdns bypass4 {", 1)[1].split("}")[0], "literal node address must be bypassed")
+check(chain(n, "dns_redirect") == ['iifname { "br-lan" } meta l4proto { tcp, udp } th dport 53 counter redirect to :5335'], "dns redirect rule")
+
+# ------------------------------------------------------------------ gfw
+x, m, n = load("gfw")
+check_mosdns_refs("gfw", m)
+rules = x["routing"]["rules"]
+check(rules[-1]["outboundTag"] == "direct", "gfw: everything not listed must be direct")
+check(rules[-2] == {"type": "field", "domain": ["geosite:gfw"], "outboundTag": "out-hk1"}, "gfw: listed domains go to the main node")
+check(x["inbounds"][0]["listen"] == "::", "ipv6: tproxy inbound must listen dual-stack")
+main = plugin(m, "main_sequence")["args"]["exec"]
+check(main[-2] == {"if": "query_is_gfw_domain", "exec": ["remote_seq", "add_proxy", "_return"]}, "gfw: listed domains resolve remotely and are marked")
+check(main[-1] == "local_seq", "gfw: other names resolve locally")
+check(plugin(m, "query_is_ad_domain") is None, "adblock off must not emit the matcher")
+check(plugin(m, "add_proxy")["args"].get("set_name6") == "proxy6_dns", "ipv6: nftset must also fill the v6 set")
+check(plugin(m, "query_is_node") is None, "an IP-literal node needs no node matcher")
+pre = chain(n, "prerouting")
+check(pre[-1] == "return", "gfw: kernel default is direct")
+check("ip6 daddr @proxy6_dns goto do_tproxy" in pre and "meta nfproto ipv6 return" not in pre, "ipv6 rules present")
+check("2001:db8:1::5" in n.split("add element inet xray-mosdns bypass6 {", 1)[1].split("}")[0], "v6 node address must be bypassed")
+check(len(chain(n, "do_tproxy")) == 3, "ipv6 tproxy rule present")
+check('"br-guest"' in pre[0], "lan_devices from the config are honoured")
+
+# ------------------------------------------------------------------ balance
+x, m, n = load("balance")
+check_mosdns_refs("balance", m)
+tags = [o["tag"] for o in x["outbounds"]]
+check(tags == ["out-c", "proxy-a", "proxy-b", "fo-a", "direct", "block"], f"balance: outbound tags {tags}")
+bal = {b["tag"]: b for b in x["routing"]["balancers"]}
+check(bal["balancer"]["fallbackTag"] == "out-c" and bal["failover"]["fallbackTag"] == "proxy-b", "balancer fallbacks")
+check(x["burstObservatory"]["subjectSelector"] == ["proxy-", "fo-", "out-"], "observatory selectors")
+check({"type": "field", "domain": ["geosite:openai"], "balancerTag": "failover"} in x["routing"]["rules"], "rule -> failover")
+check(x["routing"]["rules"][-1].get("balancerTag") == "balancer", "balance: default is the balancer")
+check(plugin(m, "add_proxy") is None, "kernel split off: no nftset plugins")
+check(plugin(m, "forward_lan") is None, "no redirect: nothing is forwarded to dnsmasq")
+check([l["addr"] for l in m["servers"][0]["listeners"]] == ["127.0.0.1:5335", "127.0.0.1:5335", "[::1]:5335", "[::1]:5335"], "no redirect: loopback listeners")
+pre = chain(n, "prerouting")
+check(not any("_dns" in r for r in pre) and pre[-1] == "goto do_tproxy", "kernel split off: everything goes to Xray")
+check(chain(n, "dns_redirect") == [], "no redirect rule when disabled")
+check(not any("dport 53" in r for r in pre), "port 53 is not exempted when the redirect is off")
+
+if failed:
+    print("\n".join("FAIL: " + f for f in failed))
+    sys.exit(1)
+print("all checks passed")

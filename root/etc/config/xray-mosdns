@@ -37,6 +37,10 @@ config global 'global'
 	option failover_enabled '0'
 	option failover_primary ''
 	option failover_standby ''
+	# decide proxy-vs-direct in nftables so direct traffic never enters Xray
+	option kernel_split '1'
+	# logical interfaces whose traffic is proxied (WAN-side traffic is never touched)
+	list lan_ifaces 'lan'
 	# also proxy/tproxy IPv6 traffic (experimental)
 	option ipv6_enabled '0'
 	# built-in split preset: chnroute | gfw | global | custom
@@ -51,10 +55,10 @@ config dns 'dns'
 	option enabled '1'
 	# mosdns-x / mosdns binary (manual build allowed)
 	option mosdns_bin '/usr/bin/mosdns'
-	# port mosdns listens on (dnsmasq is pointed here)
-	option listen_port '5353'
-	# Xray DNS-in inbound port; foreign queries are answered through the proxy
-	option xray_dns_port '15353'
+	# port mosdns listens on (avoid 5353, it belongs to mDNS)
+	option listen_port '5335'
+	# redirect every LAN port-53 query to mosdns in nftables (dnsmasq is not reconfigured)
+	option redirect '1'
 	# cache entries
 	option cache_size '8192'
 	# cache queries carrying EDNS (needed by most modern clients)
