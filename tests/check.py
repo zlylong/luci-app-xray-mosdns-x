@@ -137,6 +137,7 @@ check({"type": "field", "domain": ["geosite:openai", "domain:example.org"], "out
 check(plugin(m, "rule_0")["args"]["domain"] == ["provider:geosite:openai", "domain:example.org"], "list-valued domain rule reaches mosdns")
 check(x["inbounds"][0]["listen"] == "::", "ipv6: tproxy inbound must listen dual-stack")
 check(x["inbounds"][0]["settings"] == {"network": "tcp,udp", "followRedirect": True}, "tproxy inbound: both protocols, original destination")
+check(x["routing"]["domainStrategy"] == "AsIs" and "dns" not in x, "routing never resolves names itself: AsIs, no built-in DNS section")
 main = plugin(m, "main_sequence")["args"]["exec"]
 check(plugin(m, "rule_1")["args"]["domain"] == ["provider:geosite:gfw"], "legacy gfw mode becomes a rule row")
 check(main[-4] == {"if": "rule_1", "exec": ["remote_seq", "add_proxy", "_return"]}, "gfw: listed domains resolve remotely and are marked")

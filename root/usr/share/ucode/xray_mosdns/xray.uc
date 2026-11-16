@@ -213,7 +213,6 @@ export function build(cfg, plan, env) {
 
 	let conf = {
 		log: { loglevel: g.log_level },
-		dns: { queryStrategy: 'UseIPv4', servers: [ cfg.dns.bootstrap ] },
 		inbounds: [
 			tproxy_in,
 			...device_in,
@@ -234,7 +233,12 @@ export function build(cfg, plan, env) {
 	};
 
 	// ------------------------------------------------------------ groups
-	let routing = { domainStrategy: 'IPIfNonMatch' };
+	// AsIs: Xray never resolves a name to make a routing decision. A
+	// transparently proxied connection already carries its real destination
+	// address (which mosdns handed to the client) next to the sniffed name, so
+	// IP rules match that address. IPOnDemand would re-resolve the name with
+	// Xray's own DNS and route by an address the client never connected to.
+	let routing = { domainStrategy: 'AsIs' };
 	let balancers = [], probed = [];
 	for (let grp in plan.groups) {
 		if (!length(grp.members))
