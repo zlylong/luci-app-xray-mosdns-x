@@ -38,6 +38,9 @@
 				],
 				"/usr/libexec/xray-mosdns/adlist.uc": [
 					"exec"
+				],
+				"/usr/libexec/xray-mosdns/querylog.uc": [
+					"exec"
 				]
 			}
 		},

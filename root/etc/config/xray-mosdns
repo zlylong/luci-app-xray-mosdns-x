@@ -70,8 +70,16 @@ config dns 'dns'
 	option filter_direct_ipv6 '0'
 	# bootstrap resolver used to reach DoH/DoT upstreams (direct, mainland)
 	option bootstrap '223.5.5.5'
-	# foreign DNS server queried through the proxy
-	option remote_dns '1.1.1.1'
+	# foreign DNS servers, always queried through the proxy: an IP address
+	# (plain DNS over TCP) or a tcp:// tls:// https:// URL
+	list remote_dns '1.1.1.1'
+	list remote_dns '8.8.8.8'
+	# answer for blocked names: nxdomain | zero (0.0.0.0 and ::)
+	option block_mode 'nxdomain'
+	# raise answer TTLs below this many seconds (0 = leave them alone)
+	option min_ttl '0'
+	# log every query to /tmp/mosdns-x.log for the query log page
+	option query_log '0'
 	# domestic upstreams (DoH/DoT/plain) - one per line
 	list domestic_dns 'https://dns.alidns.com/dns-query'
 	list domestic_dns 'https://doh.pub/dns-query'

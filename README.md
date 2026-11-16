@@ -46,7 +46,9 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
   节点 IP 变化无需重启；节点域名在 mosdns 中固定走国内上游
 - **重载不断流**：`reload` 重新生成配置，nft 规则在单个事务内替换，procd 只重启配置文件
   发生变化的进程；生成失败时保留上一份可用配置继续运行
-- 国外 DNS 通过 Xray 的内部 SOCKS inbound 经代理解析，避免 DNS 泄漏
+- 国外 DNS 通过 Xray 的内部 SOCKS inbound 经代理解析；从这个 inbound 进来的流量固定走总节点，不受规则表和默认出口影响。
+  可以配置多个国外上游（IP 或 tcp/tls/https 地址）
+- AAAA 过滤同时作用于 HTTPS 记录（类型 65）查询，它同样能带出 IPv6 地址
 - AAAA 过滤分两个开关：`filter_proxy_ipv6`（代理域名，默认开，防止经 IPv6 绕过代理）和
   `filter_direct_ipv6`（直连域名，默认关，上联没有可用 IPv6 时打开）
 - **节点组**：把几个节点组合成一个出口，可以建任意多个，和节点一样能被选作总节点或规则出口。
@@ -103,6 +105,7 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
 │   ├── system.js                             系统：运行参数
 │   ├── components.js                         更新：Xray / mosdns-x / geo 数据、定时更新
 │   ├── adblock.js                            广告过滤：订阅拦截列表（AdGuard 列表库或自定义地址）
+│   ├── querylog.js                           查询日志：最近的 DNS 查询及其处理方式
 │   ├── geoview.js                            Geo 查询：域名/IP 反查数据集、查看和下载数据集内容
 │   └── logview.js                            日志
 ├── tests/                                    夹具配置 + 生成/断言脚本
@@ -205,6 +208,10 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-<版本>-r1.apk
 | dns | listen_port | mosdns 监听端口，默认 5335（不要用 5353，mDNS 占用） |
 | dns | redirect | nft 把 LAN 的 53 端口重定向到 mosdns（默认 1） |
 | dns | fallback | DNS 看门狗（默认 1）：mosdns 不应答时撤掉重定向，由 dnsmasq 接管 |
+| dns | remote_dns | 国外上游列表：IP（TCP 53）或 tcp:// tls:// https:// 地址，全部经代理 |
+| dns | block_mode | 拦截方式：nxdomain（默认）/ zero（返回 0.0.0.0 和 ::） |
+| dns | min_ttl | 最小 TTL，0 = 不改动（默认） |
+| dns | query_log | 记录每次查询，供“查询日志”页查看（默认 0） |
 | dns | filter_proxy_ipv6 | 代理域名不返回 AAAA（默认 1） |
 | dns | filter_direct_ipv6 | 直连域名不返回 AAAA（默认 0） |
 | dns | domestic_dns | 国内 DoH/DoT/明文上游列表 |
@@ -257,7 +264,8 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-<版本>-r1.apk
 
 ## 路线图
 
-- [ ] 查询日志与统计
+- [x] 查询日志
+- [ ] 查询统计（按客户端、按域名的排行）
 - [ ] 按设备的 DNS 策略
 - [ ] 订阅 URL 自动更新节点
 

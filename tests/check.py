@@ -84,7 +84,7 @@ check(x["outbounds"][1]["settings"]["servers"][0]["password"] == 'p@ss"word', "p
 main = plugin(m, "main_sequence")["args"]["exec"]
 by_if = {e["if"]: e["exec"] for e in main if isinstance(e, dict) and "if" in e}
 check(by_if["rule_0"] == ["local_seq", "add_direct", "_return"], "chnroute: direct rule must resolve locally and mark the direct set")
-check(by_if["rule_1"][0] == {"if": "query_is_aaaa", "exec": ["_new_empty_response", "_return"]}, "default: proxied names get no AAAA, direct names do")
+check(by_if["rule_1"][0] == {"if": "query_is_ipv6", "exec": ["_new_empty_response", "_return"]}, "default: proxied names get no AAAA, direct names do")
 check(by_if["rule_1"][-3:] == ["remote_seq", "add_proxy", "_return"], "chnroute: proxy rule must resolve remotely and mark the proxy set")
 check(by_if["rule_2"] == ["_new_nxdomain_response", "_return"], "chnroute: block rule must answer NXDOMAIN")
 order = [e["if"] for e in main if isinstance(e, dict) and "if" in e]
@@ -99,6 +99,8 @@ check(order.index("query_is_node") < order.index("rule_0"), "node hostnames must
 check(plugin(m, "query_is_node")["args"]["domain"] == ["full:hk1.example.net"], "only hostname nodes need the node matcher")
 check(plugin(m, "rule_1")["args"]["domain"] == ["provider:geosite:netflix", "full:api.example.com", "keyword:tracker"], "domain syntax conversion")
 check(plugin(m, "local_seq")["args"]["exec"] == ["cache", "forward_local"], "cache must sit inside the sequence so nftset runs on hits")
+check(plugin(m, "forward_remote")["args"]["upstream"] == [{"addr": "tcp://1.1.1.1:53", "socks5": "127.0.0.1:1070", "idle_timeout": 10, "enable_pipeline": True}], "default foreign upstream")
+check(m["log"].get("production") is False and plugin(m, "log_proxy") is None and plugin(m, "min_ttl") is None and plugin(m, "block_zero") is None, "defaults: no query log, no TTL floor, NXDOMAIN blocking")
 check("disabled.example" not in json.dumps(m), "disabled rule leaked into mosdns")
 check(m["servers"][0]["listeners"][0]["addr"] == ":5335", "redirect mode listens on the wildcard address")
 pre = chain(n, "prerouting")
@@ -138,11 +140,15 @@ check(plugin(m, "rule_0")["args"]["domain"] == ["provider:geosite:openai", "doma
 check(x["inbounds"][0]["listen"] == "::", "ipv6: tproxy inbound must listen dual-stack")
 check(x["inbounds"][0]["settings"] == {"network": "tcp,udp", "followRedirect": True}, "tproxy inbound: both protocols, original destination")
 check(x["routing"]["domainStrategy"] == "AsIs" and "dns" not in x, "routing never resolves names itself: AsIs, no built-in DNS section")
+# the internal SOCKS inbound must reach the proxy even though this config's default is direct
+socks_rule = {"type": "field", "inboundTag": ["socks-in"], "outboundTag": "hk1.node"}
+check(socks_rule in rules and rules.index(socks_rule) < rules.index({"type": "field", "port": "22,3389", "outboundTag": "direct"}), "gfw: mosdns' foreign upstream goes through the proxy, ahead of every rule")
+check(plugin(m, "query_is_ipv6")["args"] == {"qtype": [28, 65]}, "the IPv6 filter covers AAAA and HTTPS (type 65) queries")
 main = plugin(m, "main_sequence")["args"]["exec"]
 check(plugin(m, "rule_1")["args"]["domain"] == ["provider:geosite:gfw"], "legacy gfw mode becomes a rule row")
 check(main[-4] == {"if": "rule_1", "exec": ["remote_seq", "add_proxy", "_return"]}, "gfw: listed domains resolve remotely and are marked")
 check(main[-2:] == ["local_seq", "_return"], "gfw: other names resolve locally")
-no_aaaa = {"if": "query_is_aaaa", "exec": ["_new_empty_response", "_return"]}
+no_aaaa = {"if": "query_is_ipv6", "exec": ["_new_empty_response", "_return"]}
 check(main[-3] == no_aaaa, "gfw: direct AAAA filter on -> unclassified (direct) names get no AAAA")
 check(no_aaaa not in main[-4]["exec"], "gfw: proxy AAAA filter off -> proxied names keep AAAA")
 check("category-ads-all" not in json.dumps(m), "adblock off must not emit an ad rule")
@@ -209,7 +215,24 @@ prov = {p["tag"]: p for p in m["data_providers"]}
 check(prov.get("adblock") == {"tag": "adblock", "file": "/tmp/xm-adlists/block.txt", "auto_reload": True} and prov.get("adallow", {}).get("file") == "/tmp/xm-adlists/allow.txt", "adlist: merged files are data providers with auto reload")
 gmain = plugin(m, "main_sequence")["args"]["exec"]
 adrow = [e for e in gmain if isinstance(e, dict) and "query_is_ad_exception" in e.get("if", "")]
-check(len(adrow) == 1 and adrow[0]["exec"] == ["_new_nxdomain_response", "_return"] and adrow[0]["if"].endswith("&& (! query_is_ad_exception)"), "adlist: blocked unless one of the lists' own exceptions matches")
+check(len(adrow) == 1 and adrow[0]["exec"] == ["log_block", "block_zero", "_return"] and adrow[0]["if"].endswith("&& (! query_is_ad_exception)"), "adlist: blocked (0.0.0.0 mode, logged) unless one of the lists' own exceptions matches")
+# DNS options set in this fixture
+check(plugin(m, "block_zero")["args"] == {"ipv4": ["0.0.0.0"], "ipv6": ["::"]}, "block mode zero")
+check(plugin(m, "min_ttl")["args"] == {"minimal_ttl": 120} and plugin(m, "local_seq")["args"]["exec"] == ["cache", "forward_local", "min_ttl"] and plugin(m, "remote_seq")["args"]["exec"] == ["cache", "forward_remote", "min_ttl"] and plugin(m, "fallback_seq")["args"]["exec"][-1] == "min_ttl", "TTL floor sits behind the forwarder in every cached sequence")
+ups = plugin(m, "forward_remote")["args"]["upstream"]
+check([u["addr"] for u in ups] == ["tcp://8.8.8.8:53", "https://1.1.1.1/dns-query", "tls://dns.google"] and all(u["socks5"] == "127.0.0.1:1070" for u in ups), "several foreign upstreams, all through the proxy, junk dropped")
+check("bootstrap" in ups[2] and "bootstrap" not in ups[1] and ups[0].get("enable_pipeline") is True and "enable_pipeline" not in ups[1], "host-name upstream gets a bootstrap resolver; pipelining only for plain TCP")
+check(m["log"]["production"] is True and all(plugin(m, "log_" + k) == {"tag": "log_" + k, "type": "query_summary", "args": {"msg": k}} for k in ("lan", "block", "direct", "proxy", "fallback")), "query log: JSON log lines and one summary plugin per outcome")
+# every way through the main sequence passes a summary node: a branch either starts
+# with one, or comes after a top-level one (which wraps everything behind it)
+covered, ok_log = False, True
+for e in gmain:
+    if isinstance(e, str):
+        covered = covered or e.startswith("log_")
+    elif not covered and not e["exec"][0].startswith("log_"):
+        ok_log = False
+check(ok_log and covered, "query log: no branch of the main sequence escapes the summary nodes")
+check({"type": "field", "inboundTag": ["socks-in"], "balancerTag": "hk.group"} in x["routing"]["rules"], "internal SOCKS inbound follows the main target (a group here)")
 adtag = adrow[0]["if"].split(" ")[0] if adrow else "?"
 check(plugin(m, adtag)["args"]["domain"] == ["provider:adblock"] and plugin(m, "query_is_ad_exception")["args"]["domain"] == ["provider:adallow"], "adlist: matchers")
 check("adlist:" not in json.dumps(x), "adlist: the pseudo value never reaches Xray")

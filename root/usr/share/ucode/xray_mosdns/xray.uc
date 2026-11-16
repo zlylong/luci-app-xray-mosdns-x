@@ -149,6 +149,13 @@ export function build(cfg, plan, env) {
 	if (length(node_ips))
 		push(rules, { type: 'field', ip: node_ips, outboundTag: 'direct' });
 
+	// The internal SOCKS inbound exists so that mosdns (and the connectivity
+	// check) can reach things through the proxy. Without this rule its
+	// traffic would fall through the rule table like any other, and with a
+	// direct default the "foreign" DNS upstream would be queried directly.
+	if (plan.main_class == 'proxy')
+		push(rules, { type: 'field', inboundTag: [ 'socks-in' ], ...plan.target('main') });
+
 	// per-device targets come before every rule
 	for (let inb in plan.device_inbounds)
 		push(rules, { type: 'field', inboundTag: [ inb.tag ], ...plan.target(inb.target) });

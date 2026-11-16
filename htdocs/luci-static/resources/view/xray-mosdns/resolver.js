@@ -20,6 +20,7 @@ return view.extend({
 		s.tab('upstream', _('上游'));
 		s.tab('ipv6tab', _('IPv6'));
 		s.tab('cachetab', _('缓存'));
+		s.tab('logtab', _('拦截与日志'));
 
 		/* ------------------------------------------------------------ takeover */
 		o = s.taboption('general', form.Flag, 'enabled', _('启用 mosdns-x'),
@@ -52,10 +53,15 @@ return view.extend({
 		o = s.taboption('upstream', form.DynamicList, 'domestic_dns', _('国内上游'),
 			_('直连访问，支持 DoH、DoT 和明文，例如 https://dns.alidns.com/dns-query。'));
 
-		o = s.taboption('upstream', form.Value, 'remote_dns', _('国外上游'),
-			_('经代理访问，用于需要走代理的域名。'));
-		o.datatype = 'ipaddr';
-		o.default = '1.1.1.1';
+		o = s.taboption('upstream', form.DynamicList, 'remote_dns', _('国外上游'),
+			_('始终经代理访问，用于需要走代理的域名。填 IP 地址表示普通 DNS（TCP），也可以填 tcp://、tls://、https:// 开头的地址，例如 https://1.1.1.1/dns-query。填多个时同时查询，用最先返回的结果。'));
+		o.placeholder = '1.1.1.1';
+		o.validate = function(sid, v) {
+			if (!v)
+				return true;
+			return (/^(\d{1,3}\.){3}\d{1,3}$/.test(v) || /^[0-9a-fA-F:]*:[0-9a-fA-F:]*$/.test(v) ||
+				/^(tcp|tls|https|h3|quic):\/\/[^\s'"\\]+$/.test(v)) ? true : _('需要是 IP 地址，或 tcp/tls/https/h3/quic 开头的地址');
+		};
 
 		o = s.taboption('upstream', form.Value, 'bootstrap', _('引导解析器'),
 			_('用来解析 DoH/DoT 上游自身域名的明文 DNS，需为国内可直连的 IP。'));
@@ -67,7 +73,7 @@ return view.extend({
 
 		/* ------------------------------------------------------------ cache / filter */
 		o = s.taboption('ipv6tab', form.Flag, 'filter_proxy_ipv6', _('代理域名不返回 AAAA'),
-			_('走代理解析的域名只返回 IPv4 地址。未启用 IPv6 透明代理时保持开启，否则这些域名会通过 IPv6 绕过代理直接出去。'));
+			_('走代理解析的域名只返回 IPv4 地址：AAAA 查询和可以携带 IPv6 地址提示的 HTTPS 记录查询都返回空。未启用 IPv6 透明代理时保持开启，否则这些域名会通过 IPv6 绕过代理直接出去。'));
 		o.default = '1';
 
 		o = s.taboption('ipv6tab', form.Flag, 'filter_direct_ipv6', _('直连域名不返回 AAAA'),
@@ -81,6 +87,22 @@ return view.extend({
 		o = s.taboption('cachetab', form.Flag, 'cache_everything', _('缓存带 EDNS 的查询'),
 			_('多数现代客户端的查询都带 EDNS0，关闭后这些查询不会被缓存。'));
 		o.default = '1';
+
+		o = s.taboption('cachetab', form.Value, 'min_ttl', _('最小 TTL（秒）'),
+			_('把有效期短于这个值的应答抬高到这个值，减少客户端反复查询。0 表示不改动；一般填 60 到 300。'));
+		o.datatype = 'range(0,86400)';
+		o.placeholder = '0';
+
+		/* ------------------------------------------------------------ blocking / log */
+		o = s.taboption('logtab', form.ListValue, 'block_mode', _('拦截方式'),
+			_('被“阻断”规则和广告过滤拦下的域名怎么应答。返回 0.0.0.0 时应用会立刻连接失败；返回“域名不存在”时，个别应用会反复重试。'));
+		o.value('nxdomain', _('返回“域名不存在”'));
+		o.value('zero', _('返回 0.0.0.0'));
+		o.default = 'nxdomain';
+
+		o = s.taboption('logtab', form.Flag, 'query_log', _('记录查询'),
+			_('把每一次查询写进 /tmp/mosdns-x.log，供“查询日志”页查看。日志在内存里，超过 4 MB 时只保留最新的 4000 行，重启后清空。'));
+		o.default = '0';
 
 		return m.render();
 	}

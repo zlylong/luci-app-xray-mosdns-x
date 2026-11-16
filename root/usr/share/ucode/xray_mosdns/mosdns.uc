@@ -57,7 +57,17 @@ export function build(cfg, plan) {
 		plugin(tag, 'nftset', args);
 	}
 
-	const no_aaaa = { if: 'query_is_aaaa', exec: [ '_new_empty_response', '_return' ] };
+	// "no IPv6" means AAAA and also HTTPS/SVCB (type 65): browsers ask for
+	// that record too and it can carry IPv6 address hints
+	const no_aaaa = { if: 'query_is_ipv6', exec: [ '_new_empty_response', '_return' ] };
+
+	// with the query log on, every way a query can end starts with a
+	// query_summary node whose message names the outcome
+	function logged(kind, exec) {
+		return d.query_log ? [ `log_${kind}`, ...exec ] : exec;
+	}
+
+	const block = (d.block_mode == 'zero') ? [ 'block_zero', '_return' ] : [ '_new_nxdomain_response', '_return' ];
 
 	// answer through the proxy; `mark` records the addresses for the kernel
 	function via_proxy(mark) {
@@ -101,13 +111,25 @@ export function build(cfg, plan) {
 		upstream: map(d.domestic, addr => ({ addr, bootstrap: d.bootstrap, idle_timeout: 10, ...self })),
 	});
 	plugin('forward_remote', 'fast_forward', {
-		upstream: [ {
-			addr: `tcp://${d.remote_dns}:53`,
-			socks5: `127.0.0.1:${g.socks_port}`,
-			enable_pipeline: true,
-			idle_timeout: 10,
-		} ],
+		upstream: map(d.remote, function(addr) {
+			let u = { addr, socks5: `127.0.0.1:${g.socks_port}`, idle_timeout: 10 };
+			if (index(addr, 'tcp://') == 0)
+				u.enable_pipeline = true;
+			// a URL with a host name: its address is looked up once, domestically
+			const host = match(addr, /^[a-z0-9]+:\/\/([^\/]*)/)?.[1] ?? '';
+			if (index(host, '[') != 0 && match(host, /[A-Za-z]/))
+				u.bootstrap = d.bootstrap;
+			return u;
+		}),
 	});
+
+	if (d.block_mode == 'zero')
+		plugin('block_zero', 'blackhole', { ipv4: [ '0.0.0.0' ], ipv6: [ '::' ] });
+	if (d.min_ttl > 0)
+		plugin('min_ttl', 'ttl', { minimal_ttl: d.min_ttl });
+	if (d.query_log)
+		for (let kind in [ 'lan', 'block', 'direct', 'proxy', 'fallback' ])
+			plugin(`log_${kind}`, 'query_summary', { msg: kind });
 
 	// local names / reverse lookups stay with dnsmasq (DHCP leases, /etc/hosts)
 	const lan_forward = (d.redirect && d.dnsmasq_port != d.listen_port);
@@ -126,7 +148,7 @@ export function build(cfg, plan) {
 		plugin(tag, 'query_matcher', args);
 	}
 
-	qmatch('query_is_aaaa', { qtype: [ 28 ] });
+	qmatch('query_is_ipv6', { qtype: [ 28, 65 ] });
 	if (lan_forward) {
 		qmatch('query_is_ptr', { qtype: [ 12 ] });
 		qmatch('query_is_lan_name', {
@@ -147,8 +169,10 @@ export function build(cfg, plan) {
 	plugin('response_has_local_ip', 'response_matcher', { ip: [ 'provider:geoip:cn' ] });
 
 	// ------------------------------------------------------------ sequences
-	plugin('local_seq', 'sequence', { exec: [ 'cache', 'forward_local' ] });
-	plugin('remote_seq', 'sequence', { exec: [ 'cache', 'forward_remote' ] });
+	// the TTL floor sits behind the forwarder so the cache stores the raised value
+	const ttl = (d.min_ttl > 0) ? [ 'min_ttl' ] : [];
+	plugin('local_seq', 'sequence', { exec: [ 'cache', 'forward_local', ...ttl ] });
+	plugin('remote_seq', 'sequence', { exec: [ 'cache', 'forward_remote', ...ttl ] });
 	// ChinaDNS behaviour for unclassified names: trust the domestic answer
 	// only when it is a mainland address, otherwise use the proxied answer.
 	plugin('fallback_seq', 'sequence', { exec: [
@@ -164,6 +188,7 @@ export function build(cfg, plan) {
 			secondary: [ '_prefer_ipv4', 'forward_remote' ],
 			fast_fallback: 200,
 		},
+		...ttl,
 	] });
 
 	// ------------------------------------------------------------ main
@@ -171,9 +196,9 @@ export function build(cfg, plan) {
 	if (length(d.hosts))
 		push(main, 'hosts');
 	if (lan_forward)
-		push(main, { if: 'query_is_lan_name || query_is_ptr', exec: [ 'forward_lan', '_return' ] });
+		push(main, { if: 'query_is_lan_name || query_is_ptr', exec: logged('lan', [ 'forward_lan', '_return' ]) });
 	if (length(node_domains))
-		push(main, { if: 'query_is_node', exec: [ 'local_seq', '_return' ] });
+		push(main, { if: 'query_is_node', exec: logged('direct', [ 'local_seq', '_return' ]) });
 
 	// rules, in the same order Xray evaluates them
 	let i = 0;
@@ -194,19 +219,19 @@ export function build(cfg, plan) {
 		}
 		switch (r.class) {
 		case 'block':
-			push(main, { if: cond, exec: [ '_new_nxdomain_response', '_return' ] });
+			push(main, { if: cond, exec: logged('block', block) });
 			break;
 		case 'direct':
-			push(main, { if: cond, exec: via_local(true) });
+			push(main, { if: cond, exec: logged('direct', via_local(true)) });
 			break;
 		default:
-			push(main, { if: cond, exec: via_proxy(true) });
+			push(main, { if: cond, exec: logged('proxy', via_proxy(true)) });
 		}
 	}
 
 	// names no rule claimed follow the default
 	if (plan.default_class == 'direct') {
-		for (let e in via_local(false))
+		for (let e in logged('direct', via_local(false)))
 			push(main, e);
 	}
 	else if (plan.cn_ip_direct) {
@@ -214,12 +239,14 @@ export function build(cfg, plan) {
 		// The proxied side is already kept on IPv4 by the fallback itself; when
 		// direct names must not get AAAA either, the domestic answer cannot be
 		// used for AAAA at all, so such queries follow the proxy setting.
+		if (d.query_log)
+			push(main, 'log_fallback');
 		if (d.filter_direct_ipv6)
-			push(main, d.filter_proxy_ipv6 ? no_aaaa : { if: 'query_is_aaaa', exec: [ 'remote_seq', '_return' ] });
+			push(main, d.filter_proxy_ipv6 ? no_aaaa : { if: 'query_is_ipv6', exec: [ 'remote_seq', '_return' ] });
 		push(main, 'fallback_seq');
 	}
 	else {
-		for (let e in via_proxy(false))
+		for (let e in logged('proxy', via_proxy(false)))
 			push(main, e);
 	}
 
@@ -238,7 +265,8 @@ export function build(cfg, plan) {
 	}
 
 	return {
-		log: { level: 'info', file: '/tmp/mosdns-x.log' },
+		// production = one JSON object per line, which is what the query log reader parses
+		log: { level: 'info', file: '/tmp/mosdns-x.log', production: d.query_log },
 		data_providers: [
 			{ tag: 'geosite', file: '/usr/share/v2ray/geosite.dat', auto_reload: true },
 			{ tag: 'geoip', file: '/usr/share/v2ray/geoip.dat', auto_reload: true },

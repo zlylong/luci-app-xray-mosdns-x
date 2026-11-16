@@ -10,7 +10,15 @@
 # While dnsmasq is answering, the kernel sets are not being filled, so
 # domain rules only apply to addresses learned earlier; IP rules and the
 # default still work. That is the price of keeping the network usable.
+#
+# usage: dns-watchdog.sh [manage|log-only]
+#   log-only: do not touch the redirect (it is static, or there is none);
+#             only keep the mosdns log file from growing without bound
+MODE=${1:-manage}
 OUT=/var/etc/xray-mosdns
+LOG=/tmp/mosdns-x.log
+LOG_MAX=4194304		# bytes; trimmed back to the newest LOG_KEEP lines
+LOG_KEEP=4000
 ON="$OUT/nft-dns-on.rules"
 OFF="$OUT/nft-dns-off.rules"
 STAMP=/var/run/xray-mosdns-dns.stamp
@@ -33,8 +41,22 @@ active() {
 	nft list chain inet xray-mosdns dns_redirect 2>/dev/null | grep -q "redirect to"
 }
 
+# mosdns appends to its log (every query, with the query log on) and never
+# rotates it; /tmp is RAM
+trim_log() {
+	[ -f "$LOG" ] || return 0
+	[ "$(wc -c < "$LOG")" -gt "$LOG_MAX" ] || return 0
+	tail -n "$LOG_KEEP" "$LOG" > "$LOG.trim" 2>/dev/null && cat "$LOG.trim" > "$LOG"
+	rm -f "$LOG.trim"
+}
+
 fail=0
 while :; do
+	trim_log
+	if [ "$MODE" != "manage" ]; then
+		sleep "$INTERVAL"
+		continue
+	fi
 	if healthy; then
 		fail=0
 		if ! active; then

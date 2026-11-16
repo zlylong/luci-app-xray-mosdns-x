@@ -83,5 +83,13 @@
 			"type": "view",
 			"path": "xray-mosdns/adblock"
 		}
+	},
+	"admin/services/xray-mosdns/querylog": {
+		"title": "查询日志",
+		"order": 47,
+		"action": {
+			"type": "view",
+			"path": "xray-mosdns/querylog"
+		}
 	}
 }

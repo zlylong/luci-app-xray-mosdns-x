@@ -102,7 +102,12 @@ export function load(confdir) {
 			filter_proxy_ipv6: bool(d.filter_proxy_ipv6, true),
 			filter_direct_ipv6: bool(d.filter_direct_ipv6, false),
 			bootstrap: str(d.bootstrap, '223.5.5.5'),
-			remote_dns: str(d.remote_dns, '1.1.1.1'),
+			remote: [],
+			// answer for blocked names: nxdomain | zero (0.0.0.0 / ::)
+			block_mode: (str(d.block_mode, 'nxdomain') == 'zero') ? 'zero' : 'nxdomain',
+			// lower bound for answer TTLs, 0 = leave them alone
+			min_ttl: +str(d.min_ttl, '0'),
+			query_log: bool(d.query_log),
 			domestic: list(d.domestic_dns),
 			hosts: list(d.hosts),
 			local_domains: [],
@@ -128,8 +133,24 @@ export function load(confdir) {
 
 	if (!ipver(cfg.dns.bootstrap))
 		fail(`dns.bootstrap must be an IP address, got '${cfg.dns.bootstrap}'`);
-	if (!ipver(cfg.dns.remote_dns))
-		fail(`dns.remote_dns must be an IP address, got '${cfg.dns.remote_dns}'`);
+	if (!(cfg.dns.min_ttl >= 0 && cfg.dns.min_ttl <= 86400))
+		cfg.dns.min_ttl = 0;
+
+	// Foreign upstreams, all reached through the proxy. A bare address means
+	// plain DNS over TCP; a URL is passed on (tcp, tls, https, h3, quic).
+	for (let u in words(d.remote_dns ?? '1.1.1.1')) {
+		const v = ipver(u);
+		if (v == 4 && index(u, '/') < 0)
+			push(cfg.dns.remote, `tcp://${u}:53`);
+		else if (v == 6 && index(u, '/') < 0)
+			push(cfg.dns.remote, `tcp://[${u}]:53`);
+		else if (match(u, /^(tcp|tls|https|h3|quic):\/\/[^[:space:]'"]+$/) && index(u, '\\') < 0)
+			push(cfg.dns.remote, u);
+		else
+			note(`dns.remote_dns: ignoring '${u}' (use an IP address or a tcp/tls/https/h3/quic URL)`);
+	}
+	if (!length(cfg.dns.remote))
+		fail('dns.remote_dns has no usable upstream');
 	if (!length(cfg.dns.domestic))
 		cfg.dns.domestic = [ 'https://dns.alidns.com/dns-query', 'https://doh.pub/dns-query' ];
 	if (!length(cfg.global.lan_ifaces))
