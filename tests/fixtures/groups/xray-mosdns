@@ -8,6 +8,7 @@ config global 'global'
 
 config dns 'dns'
 	option enabled '1'
+	option fallback '0'
 
 config node 'a'
 	option enabled '1'
@@ -61,3 +62,37 @@ config rule
 	option rule_type 'ip'
 	list value '192.0.2.0/24'
 	option outbound 'b'
+
+# game console: only its UDP, through one node
+config device
+	option enabled '1'
+	option remarks 'console'
+	list mac 'AA:BB:CC:00:00:01'
+	option network 'udp'
+	option outbound 'b'
+
+# two machines that never use the proxy
+config device
+	option enabled '1'
+	list mac 'aa:bb:cc:00:00:02'
+	list mac 'aa:bb:cc:00:00:03'
+	list mac 'not-a-mac'
+	option outbound 'direct'
+
+# everything from this one through the group; shares nothing with the first
+config device
+	option enabled '1'
+	list mac 'aa:bb:cc:00:00:04'
+	option outbound 'main'
+
+# same target as the console: must reuse its inbound
+config device
+	option enabled '1'
+	list mac 'aa:bb:cc:00:00:05'
+	option network 'tcp'
+	option outbound 'b'
+
+config device
+	option enabled '0'
+	list mac 'aa:bb:cc:00:00:99'
+	option outbound 'a'

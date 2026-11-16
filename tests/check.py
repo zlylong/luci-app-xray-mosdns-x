@@ -114,7 +114,13 @@ check("198.18.0.0/15" in g1 and "114.114.0.0/16" in g1, "consecutive direct IP r
 check("8.8.8.0/24" not in n and "1.0.16.0/20" not in n, "only the CN entry is extracted from geoip.dat")
 check("add element inet xray-mosdns ipg4_2" not in n, "unused group slots stay empty")
 check("198.51.100.20" in n.split("add element inet xray-mosdns bypass4 {", 1)[1].split("}")[0], "literal node address must be bypassed")
-check(chain(n, "dns_redirect") == ['iifname { "br-lan" } meta l4proto { tcp, udp } th dport 53 counter redirect to :5335'], "dns redirect rule")
+# with the DNS watchdog (default) the redirect rule is not part of nft.rules: the watchdog installs it
+RULE = 'iifname { "br-lan" } meta l4proto { tcp, udp } th dport 53 counter redirect to :5335'
+check(chain(n, "dns_redirect") == [] and "flush chain inet xray-mosdns dns_redirect" not in n, "watchdog owns the redirect chain: nft.rules neither fills nor flushes it")
+on = open(f"{out}/chnroute/nft-dns-on.rules").read()
+check(on == "flush chain inet xray-mosdns dns_redirect\nadd rule inet xray-mosdns dns_redirect " + RULE + "\n", "watchdog 'on' rules")
+check(open(f"{out}/chnroute/nft-dns-off.rules").read() == "flush chain inet xray-mosdns dns_redirect\n", "watchdog 'off' rules")
+check('th dport 53 return comment "handled by dns_redirect"' in n, "port 53 stays out of the tproxy path either way")
 
 # ------------------------------------------------------------------ gfw
 x, m, n = load("gfw")
@@ -166,7 +172,7 @@ check(plugin(m, "forward_lan") is None, "no redirect: nothing is forwarded to dn
 check([l["addr"] for l in m["servers"][0]["listeners"]] == ["127.0.0.1:5335", "127.0.0.1:5335", "[::1]:5335", "[::1]:5335"], "no redirect: loopback listeners")
 pre = chain(n, "prerouting")
 check(not any("_dns" in r for r in pre) and pre[-1] == "goto do_tproxy", "kernel split off: everything goes to Xray")
-check(chain(n, "dns_redirect") == [], "no redirect rule when disabled")
+check(chain(n, "dns_redirect") == [] and "flush chain inet xray-mosdns dns_redirect" in n, "no redirect rule when disabled, and the chain is cleared")
 check(not any("dport 53" in r for r in pre), "port 53 is not exempted when the redirect is off")
 
 # ------------------------------------------------------------------ groups
@@ -179,6 +185,29 @@ check(x["burstObservatory"]["pingConfig"]["destination"] == "https://probe.examp
 check({"type": "field", "domain": ["geosite:netflix"], "outboundTag": "a.node"} in x["routing"]["rules"], "groups: a group without usable members resolves to its fallback")
 check({"type": "field", "ip": ["192.0.2.0/24"], "outboundTag": "b.node"} in x["routing"]["rules"], "groups: plain node target")
 check(x["routing"]["rules"][-1] == {"type": "field", "network": "tcp,udp", "balancerTag": "hk.group"}, "groups: main target is a group")
+check(chain(n, "dns_redirect") == ['iifname { "br-lan" } meta l4proto { tcp, udp } th dport 53 counter redirect to :5335'] and "flush chain inet xray-mosdns dns_redirect" in n, "watchdog off: the redirect rule is static in nft.rules")
+# per-device routing
+tin = {i["tag"]: i for i in x["inbounds"]}
+check(tin.get("dev-0", {}).get("port") == 12346 and tin.get("dev-1", {}).get("port") == 12347 and "dev-2" not in tin, "devices: one extra tproxy inbound per distinct proxy target")
+check(tin["dev-0"]["streamSettings"] == {"sockopt": {"tproxy": "tproxy"}} and tin["dev-0"]["protocol"] == "tunnel", "devices: inbounds are tproxy inbounds")
+r = x["routing"]["rules"]
+d0 = {"type": "field", "inboundTag": ["dev-0"], "outboundTag": "b.node"}
+d1 = {"type": "field", "inboundTag": ["dev-1"], "balancerTag": "hk.group"}
+first_user = r.index({"type": "field", "domain": ["geosite:netflix"], "outboundTag": "a.node"})
+check(d0 in r and d1 in r and r.index(d0) < r.index(d1) < first_user, "devices: their rules come before every routing rule")
+pre = chain(n, "prerouting")
+i_dev = [k for k, line in enumerate(pre) if line.startswith("ether saddr")]
+check([pre[k] for k in i_dev] == [
+    'ether saddr { aa:bb:cc:00:00:01 } meta l4proto udp goto dev_12346 comment "device %s"' % pre[i_dev[0]].split('device ')[1].rstrip('"'),
+    'ether saddr { aa:bb:cc:00:00:02, aa:bb:cc:00:00:03 } return comment "device %s: direct"' % pre[i_dev[1]].split('device ')[1].split(':')[0],
+    'ether saddr { aa:bb:cc:00:00:04 } goto dev_12347 comment "device %s"' % pre[i_dev[2]].split('device ')[1].rstrip('"'),
+    'ether saddr { aa:bb:cc:00:00:05 } meta l4proto tcp goto dev_12346 comment "device %s"' % pre[i_dev[3]].split('device ')[1].rstrip('"'),
+], "devices: MAC rules (lower-cased, invalid and disabled entries dropped, shared inbound reused)")
+check(max(i_dev) < next(k for k, line in enumerate(pre) if line.startswith("ct mark")), "devices: matched per packet, before the per-flow shortcut")
+check(i_dev[0] > next(k for k, line in enumerate(pre) if "dport 53" in line) if any("dport 53" in line for line in pre) else True, "devices: DNS is exempt first")
+dc = chain(n, "dev_12346")
+check(dc[:3] == ["fib daddr type != unicast return", "ip daddr @bypass4 return", "ip6 daddr @bypass6 return"] and "tproxy ip to :12346" in dc[3] and dc[4] == "return", "devices: chain keeps the usual exemptions, then its own port")
+check("th dport { 12345, 12346, 12347 } drop" in n, "devices: their ports are closed to direct access too")
 gj = json.load(open(f"{out}/groups/groups.json"))
 check(len(gj) == 1 and gj[0]["name"] == "hk" and gj[0]["remarks"] == "香港" and gj[0]["strategy"] == "ordered" and [mm["name"] for mm in gj[0]["members"]] == ["a", "b"], "groups.json: only the used group, in member order")
 

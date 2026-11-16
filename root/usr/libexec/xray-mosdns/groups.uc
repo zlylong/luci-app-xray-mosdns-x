@@ -21,7 +21,9 @@ import { cursor } from 'uci';
 
 const GROUPS = '/var/etc/xray-mosdns/groups.json';
 const PINS = '/var/run/xray-mosdns-pins.json';
+const PROBE_STATE = '/var/run/xray-mosdns-probe';
 const INTERVAL = 10;
+const SWITCH_COOLDOWN = 600;	// seconds between probe target switches
 
 function load(path, dflt) {
 	try {
@@ -39,6 +41,17 @@ if (!match(xray, /^[A-Za-z0-9_.\/-]+$/))
 	xray = '/usr/bin/xray';
 if (!match(port, /^[0-9]+$/))
 	port = '10085';
+
+const probe_backup = uci.get_first('xray-mosdns', 'global', 'probe_url_backup');
+
+function probe_interval() {
+	const m = match(uci.get_first('xray-mosdns', 'global', 'probe_interval') ?? '1m', /^([0-9]+)([smh])$/);
+	return m ? +m[1] * { s: 1, m: 60, h: 3600 }[m[2]] : 60;
+}
+
+function probe_target() {
+	return (probe_backup && trim(fs.readfile(PROBE_STATE) ?? '') == 'backup') ? 'backup' : 'primary';
+}
 
 const TAG = /^[A-Za-z0-9_]+\.(node|group)$/;
 
@@ -148,7 +161,7 @@ function cmd_list() {
 			fallback: grp.fallback,
 		});
 	}
-	print({ ok: true, groups: out }, '\n');
+	print({ ok: true, groups: out, probe: probe_target(), probe_backup: !!probe_backup }, '\n');
 }
 
 function cmd_pin(group, node) {
@@ -179,12 +192,56 @@ function cmd_pin(group, node) {
 	return 1;
 }
 
+// When every member of every group looks dead at the same moment, the nodes
+// are rarely all down: far more often the probe target itself cannot be
+// reached. With a backup target configured the watcher then switches to the
+// other one. That needs an Xray restart, which costs little here because all
+// group traffic is already on the fallback outbounds.
+function switch_probe() {
+	const to = (probe_target() == 'backup') ? 'primary' : 'backup';
+	if (to == 'backup')
+		fs.writefile(PROBE_STATE, 'backup\n');
+	else
+		fs.unlink(PROBE_STATE);
+	system([ 'logger', '-p', 'daemon.warn', '-t', 'xray-mosdns',
+		`no group member answers the probe: switching to the ${to} probe address` ]);
+	system([ '/etc/init.d/xray-mosdns', 'reload' ]);
+}
+
 function cmd_watch() {
+	// long enough for a freshly started Xray to have finished its first probes
+	const dead_limit = 3 * probe_interval() + 60;
+	let dead_since = null;
+	let last_switch = fs.stat(PROBE_STATE)?.mtime ?? 0;
+
 	while (true) {
 		const pins = load(PINS, {});
-		for (let grp in valid_groups())
+		let seen = 0, alive = 0;
+		for (let grp in valid_groups()) {
+			let state = null;
 			if (grp.strategy == 'ordered' || pins[grp.name])
-				enforce(grp, pins);
+				state = enforce(grp, pins);
+			else if (probe_backup)
+				state = balancer(grp.tag);
+			if (state) {
+				seen++;
+				if (length(state.selects))
+					alive++;
+			}
+		}
+
+		if (probe_backup) {
+			const now = time();
+			if (seen == 0 || alive > 0)
+				dead_since = null;
+			else if (dead_since == null)
+				dead_since = now;
+			else if (now - dead_since >= dead_limit && now - last_switch >= SWITCH_COOLDOWN) {
+				switch_probe();
+				last_switch = now;
+				dead_since = null;
+			}
+		}
 		system([ 'sleep', `${INTERVAL}` ]);
 	}
 }

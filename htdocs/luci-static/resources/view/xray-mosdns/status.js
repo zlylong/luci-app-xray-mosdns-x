@@ -59,7 +59,10 @@ return view.extend({
 					? _('未接管')
 					: (dns.redirect === '0'
 						? _('mosdns-x 监听 :%s，未重定向').format(dns.listen_port || '5335')
-						: _('53 端口重定向到 mosdns-x :%s').format(dns.listen_port || '5335')) ]
+						: (!enabled || st.dns_redirect
+							? _('53 端口重定向到 mosdns-x :%s').format(dns.listen_port || '5335')
+							: E('span', {}, [ xm.badge(_('已回退'), 'warn'), ' ',
+								_('mosdns-x 没有应答，当前由 dnsmasq 解析') ]))) ]
 			];
 			statusBox.replaceChildren(xm.infoTable(rows));
 		}
@@ -143,8 +146,13 @@ return view.extend({
 			});
 		}
 
+		var probeNote = E('div', { 'class': 'cbi-section-descr' });
+
 		function renderGroups(data) {
 			var groups = (data && data.groups) || [];
+			probeNote.replaceChildren.apply(probeNote, (data && data.probe === 'backup')
+				? [ xm.badge(_('备用探测地址'), 'warn'), ' ', _('主探测地址上所有成员都没有应答，当前改用备用地址探测。') ]
+				: []);
 			groupSection.style.display = groups.length ? '' : 'none';
 			groupBody.replaceChildren.apply(groupBody, groups.map(function(grp) {
 				var current;
@@ -217,6 +225,7 @@ return view.extend({
 				_('透明代理与 DNS 分流。节点、分流规则和 DNS 上游各有一页；这里只看运行状态。')),
 			xm.section(_('运行状态'), [ statusBox, controls ]),
 			(groupSection.appendChild(xm.section(_('节点组'), [
+				probeNote,
 				E('table', { 'class': 'table' }, [
 					E('thead', {}, E('tr', { 'class': 'tr table-titles' }, [
 						E('th', { 'class': 'th' }, _('组')),

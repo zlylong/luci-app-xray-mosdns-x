@@ -60,6 +60,9 @@ export function load(confdir) {
 			// health probe used by node groups
 			probe_url: str(g.probe_url, 'https://www.gstatic.com/generate_204'),
 			probe_interval: str(g.probe_interval, '1m'),
+			// used instead when the group watcher finds every member "dead" at once,
+			// which usually means the probe target is the thing that is unreachable
+			probe_url_backup: str(g.probe_url_backup, null),
 			ipv6: bool(g.ipv6_enabled),
 			// what happens to traffic no rule claims: proxy | direct
 			default_action: str(g.default_action, null),
@@ -75,6 +78,8 @@ export function load(confdir) {
 			listen_port: port(d.listen_port, 5335, 'dns.listen_port'),
 			// hijack every LAN port-53 query to mosdns (dnsmasq config is left alone)
 			redirect: bool(d.redirect, true),
+			// hand LAN DNS back to dnsmasq while mosdns is not answering
+			fallback: bool(d.fallback, true),
 			cache_size: +str(d.cache_size, '8192'),
 			cache_everything: bool(d.cache_everything, true),
 			// answer AAAA queries with an empty response, per kind of domain
@@ -90,6 +95,7 @@ export function load(confdir) {
 		nodes: [],
 		groups: [],
 		rules: [],
+		devices: [],
 		// configs older than 0.9.2: a node's "enabled" flag meant "balancer
 		// member", and disabled nodes could still be used as a target
 		legacy_nodes: (+str(g.schema, '1') < 2),
@@ -196,6 +202,28 @@ export function load(confdir) {
 			type: str(s.rule_type, 'domain'),
 			raw: join(',', values),
 			values,
+			outbound: str(s.outbound, 'main'),
+		});
+	}
+
+	// per-device routing, keyed by MAC address
+	for (let s in sections(all, 'device')) {
+		if (!bool(s.enabled, true))
+			continue;
+		let macs = [];
+		for (let m in words(s.mac)) {
+			if (match(m, /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/))
+				push(macs, lc(m));
+			else
+				note(`device ${s['.name']}: ignoring invalid MAC address '${m}'`);
+		}
+		if (!length(macs))
+			continue;
+		let network = str(s.network, 'tcp,udp');
+		if (!(network in [ 'tcp,udp', 'tcp', 'udp' ]))
+			network = 'tcp,udp';
+		push(cfg.devices, {
+			name: s['.name'], macs, network,
 			outbound: str(s.outbound, 'main'),
 		});
 	}
@@ -354,6 +382,35 @@ export function plan(cfg) {
 			? p.main_class
 			: claim(r.outbound, `rule ${r.name}`);
 		push(p.rules, { ...r, class: cls });
+	}
+
+	// Devices are decided before any rule: everything a device sends (or only
+	// its TCP / UDP) goes to one target. Each distinct proxy target gets its
+	// own tproxy inbound, which is how Xray can tell these packets apart: it
+	// can match on the inbound a packet arrived on, not on a MAC address.
+	p.devices = [];
+	p.device_inbounds = [];		// { tag, port, target }
+	let reserved = [ g.tproxy_port, g.socks_port, g.api_port, cfg.dns.listen_port ];
+	let next_port = g.tproxy_port;
+	for (let dev in cfg.devices) {
+		const target = (dev.outbound in [ 'main', 'proxy' ]) ? p.main : dev.outbound;
+		if (target == 'block')
+			fail(`device ${dev.name}: "block" is not a device target`);
+		const cls = claim(target, `device ${dev.name}`);
+		let inbound = null;
+		if (cls == 'proxy') {
+			inbound = filter(p.device_inbounds, i => i.target == target)[0];
+			if (!inbound) {
+				next_port++;
+				while (next_port in reserved)
+					next_port++;
+				if (next_port > 65535)
+					fail('no free port left for device inbounds');
+				inbound = { tag: `dev-${length(p.device_inbounds)}`, port: next_port, target };
+				push(p.device_inbounds, inbound);
+			}
+		}
+		push(p.devices, { ...dev, class: cls, inbound });
 	}
 
 	// What happens to traffic no rule claims. With a direct main target

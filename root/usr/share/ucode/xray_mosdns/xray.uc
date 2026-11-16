@@ -140,6 +140,10 @@ export function build(cfg, plan, env) {
 	if (length(node_ips))
 		push(rules, { type: 'field', ip: node_ips, outboundTag: 'direct' });
 
+	// per-device targets come before every rule
+	for (let inb in plan.device_inbounds)
+		push(rules, { type: 'field', inboundTag: [ inb.tag ], ...plan.target(inb.target) });
+
 	// rules in list order; presets such as "mainland direct" are ordinary rules
 	for (let r in plan.rules) {
 		let rule = { type: 'field' };
@@ -183,11 +187,18 @@ export function build(cfg, plan, env) {
 		socks_in.sniffing = sniffing;
 	}
 
+	// one extra tproxy inbound per device target; nftables steers the devices' packets to it
+	let device_in = map(plan.device_inbounds, function(inb) {
+		let o = { ...tproxy_in, tag: inb.tag, port: inb.port };
+		return o;
+	});
+
 	let conf = {
 		log: { loglevel: g.log_level },
 		dns: { queryStrategy: 'UseIPv4', servers: [ cfg.dns.bootstrap ] },
 		inbounds: [
 			tproxy_in,
+			...device_in,
 			socks_in,
 			{
 				tag: 'api', listen: '127.0.0.1', port: g.api_port,

@@ -3,6 +3,7 @@
 'require form';
 'require uci';
 'require ui';
+'require network';
 'require xray-mosdns.common as xm';
 
 var RULE_TYPES = {
@@ -79,7 +80,8 @@ return view.extend({
 	load: function() {
 		return Promise.all([
 			uci.load(xm.CONF),
-			xm.exec('geoview.uc', [ 'tags' ])
+			xm.exec('geoview.uc', [ 'tags' ]),
+			L.resolveDefault(network.getHostHints(), null)
 		]);
 	},
 
@@ -160,6 +162,66 @@ return view.extend({
 
 		o = s.option(form.ListValue, 'outbound', _('出口'));
 		xm.addNodeChoices(o, { main: true, direct: 'direct', block: true, groups: true });
+		o.default = 'main';
+		o.textvalue = function(sid) {
+			return xm.targetLabel(uci.get(xm.CONF, sid, 'outbound') || 'main');
+		};
+
+		/* ------------------------------------------------------------ devices */
+		var NETWORKS = {
+			'tcp,udp': _('全部（TCP + UDP）'),
+			'udp': _('仅 UDP'),
+			'tcp': _('仅 TCP')
+		};
+		var macHints = {};
+		(res[2] ? res[2].getMACHints() : []).forEach(function(h) {
+			macHints[h[0].toLowerCase()] = h[1];
+		});
+		function macLabel(mac) {
+			var hint = macHints[String(mac).toLowerCase()];
+			return hint ? '%s (%s)'.format(mac, hint) : mac;
+		}
+
+		s = m.section(form.GridSection, 'device', _('按设备分流'),
+			_('让某台设备的流量整体走指定出口，先于上面所有规则生效，适合给游戏机或某台电脑做 UDP/TCP 加速，或者让某台设备完全不走代理。设备按 MAC 地址识别；手机默认使用随机 MAC，需要先对这个 Wi-Fi 关闭“私有地址”。只选 UDP 或 TCP 时，其余流量仍按规则处理。'));
+		s.addremove = true;
+		s.anonymous = true;
+		s.sortable = true;
+		s.nodescriptions = true;
+		s.addbtntitle = _('添加设备');
+		s.modaltitle = function(sid) {
+			return _('设备') + ' » ' + (uci.get(xm.CONF, sid, 'remarks') || _('新设备'));
+		};
+
+		o = s.option(form.Flag, 'enabled', _('启用'));
+		o.editable = true;
+		o.default = '1';
+		o.rmempty = false;
+
+		o = s.option(form.Value, 'remarks', _('备注'));
+		o.placeholder = _('客厅的游戏机');
+
+		o = s.option(form.DynamicList, 'mac', _('MAC 地址'),
+			_('可以从已知设备里选，也可以手动输入。一条里填多个地址表示这些设备用同一个出口。'));
+		o.datatype = 'macaddr';
+		o.rmempty = false;
+		Object.keys(macHints).sort().forEach(function(mac) {
+			o.value(mac.toUpperCase(), macLabel(mac.toUpperCase()));
+		});
+		o.textvalue = function(sid) {
+			var macs = L.toArray(uci.get(xm.CONF, sid, 'mac'));
+			return macs.length ? macs.map(macLabel).join('、') : null;
+		};
+
+		o = s.option(form.ListValue, 'network', _('流量'));
+		Object.keys(NETWORKS).forEach(function(k) { o.value(k, NETWORKS[k]); });
+		o.default = 'tcp,udp';
+		o.textvalue = function(sid) {
+			return NETWORKS[uci.get(xm.CONF, sid, 'network') || 'tcp,udp'];
+		};
+
+		o = s.option(form.ListValue, 'outbound', _('出口'));
+		xm.addNodeChoices(o, { main: true, direct: 'direct', groups: true });
 		o.default = 'main';
 		o.textvalue = function(sid) {
 			return xm.targetLabel(uci.get(xm.CONF, sid, 'outbound') || 'main');

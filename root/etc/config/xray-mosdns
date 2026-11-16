@@ -30,6 +30,8 @@ config global 'global'
 	# health probe used by node groups
 	option probe_url 'https://www.gstatic.com/generate_204'
 	option probe_interval '1m'
+	# optional: switched to automatically when every group member fails the probe at once
+	#option probe_url_backup 'https://cp.cloudflare.com/generate_204'
 	# decide proxy-vs-direct in nftables so direct traffic never enters Xray
 	option kernel_split '1'
 	# logical interfaces whose traffic is proxied, e.g. lan, a guest network, a VPN
@@ -53,6 +55,8 @@ config dns 'dns'
 	option listen_port '5335'
 	# redirect every LAN port-53 query to mosdns in nftables (dnsmasq is not reconfigured)
 	option redirect '1'
+	# watchdog: while mosdns is not answering, remove the redirect so dnsmasq serves the LAN
+	option fallback '1'
 	# cache entries
 	option cache_size '8192'
 	# cache queries carrying EDNS (needed by most modern clients)
@@ -140,3 +144,12 @@ config rule 'builtin_gfw'
 	option rule_type 'domain'
 	list value 'geosite:gfw'
 	option outbound 'main'
+
+# 按设备分流：先于所有规则生效，按 MAC 地址识别设备
+# network:  tcp,udp（全部）| udp | tcp     outbound: main | direct | <node section> | <group section>
+#config device
+#	option enabled '1'
+#	option remarks '游戏机'
+#	list mac 'AA:BB:CC:DD:EE:FF'
+#	option network 'udp'
+#	option outbound 'node_a'

@@ -58,6 +58,11 @@ apply_fw() {
 			exit 1
 		}
 	fi
+	# per-device chains that the current ruleset no longer uses
+	for c in $(nft list table $TABLE 2>/dev/null | sed -n 's/^[[:space:]]*chain \(dev_[0-9]*\) {.*/\1/p'); do
+		grep -q "^add chain $TABLE $c\$" "$OUT/nft.rules" || nft delete chain $TABLE "$c" 2>/dev/null || true
+	done
+
 	if [ "$1" = "flush-dns" ] && [ -f "$OUT/nft-flush-dns.rules" ]; then
 		nft -f "$OUT/nft-flush-dns.rules" 2>/dev/null || true
 	fi

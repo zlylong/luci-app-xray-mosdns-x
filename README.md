@@ -34,6 +34,9 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
   流量才 TProxy。`kernel_split=0` 可退回“全部进 Xray 再分流”
 - **DNS 接管不改 dnsmasq**：LAN 的 53 端口由 nft 重定向到 mosdns-x，写死 DNS 的客户端也会被接管；
   mosdns 能看到真实客户端 IP。停止服务或删除 nft 表后立即回到 dnsmasq，没有需要还原的配置
+- **DNS 看门狗**：53 端口的重定向规则只在 mosdns-x 有应答时才存在。看门狗每 5 秒探测一次，
+  连续两次无应答就撤掉规则让 dnsmasq 接管，恢复后自动装回；启动时也是等 mosdns-x 能应答了才接管，
+  所以启动和重载期间不会出现解析空窗
 - **只处理选中的入口接口**：默认是 LAN，可以在“系统 → 接口”里加上 VPN 等接口；
   从其他接口（包括 WAN）进入的流量、发往路由器自身的流量都不会被 TProxy
 - **连接级判定**：一个连接只在首包判定一次，之后集合内容变化不会打断已有连接
@@ -49,6 +52,11 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
   “按顺序”由一个看护进程（`groups.uc watch`）每 10 秒检查一次：当前成员可用就保持不动，
   不可用时切到列表里最靠前的可用成员。默认不会因为前面的成员恢复而切回，
   需要切回可以打开组的“恢复后切回”；概览页显示每个组当前的出口，并可临时锁定到某个成员
+- **按设备分流**：按 MAC 地址把某台设备的全部流量（或只有 UDP / TCP）送到指定节点或节点组，
+  或者让它完全直连，先于规则表生效，适合游戏加速。每个不同的出口对应一个额外的 TProxy 入站，
+  nft 按源 MAC 把包送到对应端口，Xray 再按入站选出口
+- **备用探测地址**：所有节点组的全部成员同时探测失败并持续约 3 个探测间隔加 1 分钟时，
+  看护进程换用另一个探测地址并重启 Xray，两次切换至少间隔 10 分钟
 - **节点的“启用”**就是字面意思：未启用的节点不生成出站、不能被选用，和是否属于某个组无关
 - **没有“分流模式”**：只有一张规则表和一个默认出口。“国内直连”“GFW 列表”“去广告”都是表里
   看得见的普通规则行，可以开关、修改、拖动排序；“大陆白名单 / GFW 列表 / 全局”是一键预设，
@@ -73,7 +81,8 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
 │   └── util.uc                               校验、YAML 输出等
 ├── root/usr/libexec/xray-mosdns/             状态、流量、测速、更新、导入等辅助脚本
 │   ├── groups.uc                             节点组：查询当前出口、锁定、看护进程
-│   └── geoview.uc                            geo 数据查询：tags / lookup / list / dump
+│   ├── geoview.uc                            geo 数据查询：tags / lookup / list / dump
+│   └── dns-watchdog.sh                       DNS 看门狗：mosdns 不应答时把 LAN 解析交还 dnsmasq
 ├── htdocs/luci-static/resources/view/xray-mosdns/   LuCI 页面（原生表单组件，无自定义主题）
 │   ├── status.js                             概览：运行状态、启停、连通性、节点流量
 │   ├── nodelist.js                           节点：列表、导入、测速、节点组
@@ -181,6 +190,7 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
 | global | lan_devices | 直接指定设备名（如 `br-lan`），设置后不再查询 lan_ifaces |
 | dns | listen_port | mosdns 监听端口，默认 5335（不要用 5353，mDNS 占用） |
 | dns | redirect | nft 把 LAN 的 53 端口重定向到 mosdns（默认 1） |
+| dns | fallback | DNS 看门狗（默认 1）：mosdns 不应答时撤掉重定向，由 dnsmasq 接管 |
 | dns | filter_proxy_ipv6 | 代理域名不返回 AAAA（默认 1） |
 | dns | filter_direct_ipv6 | 直连域名不返回 AAAA（默认 0） |
 | dns | domestic_dns | 国内 DoH/DoT/明文上游列表 |
@@ -189,6 +199,8 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
 | group | remarks / strategy / member / fallback | 节点组：名称；fastest / ordered / roundrobin / random；成员列表（ordered 时即挑选顺序）；全部不可用时的出口 |
 | group | failback | 仅 ordered：0（默认）切换后只有当前成员不可用才再切；1 前面的成员恢复后立即切回 |
 | global | probe_url / probe_interval | 节点组的探测地址与间隔，默认 gstatic generate_204 / 1m |
+| global | probe_url_backup | 备用探测地址（可选）：所有组的全部成员同时探测失败时自动换用 |
+| device | mac / network / outbound | 按设备分流：MAC 地址列表；tcp,udp / udp / tcp；main / direct / 节点 / 节点组 |
 | global | schema | 配置版本，由包维护，不要改 |
 | global | ipv6_enabled | 启用 IPv6 TProxy（实验性） |
 | node | type/address/port/uuid/... | vless / vmess / trojan / shadowsocks / hysteria2 节点 |
@@ -203,6 +215,9 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
 - 内核里域名规则解析出的地址先于 IP 规则判定，IP 规则之间保持表中的顺序（最多 8 组连续同类规则）；
   进入 Xray 的流量再按完整的规则顺序判定一次
 - 预置行可以被拖到自己的规则前面从而盖住它们，顺序由你负责
+- 按设备分流只改变流量的出口，不改变 DNS：该设备查询域名时仍按规则表和默认出口选上游。
+  使用随机 MAC 的手机需要先对这个 Wi-Fi 关闭“私有地址”；经过三层转发（隔了一个路由器）的设备
+  看不到原始 MAC，无法识别
 - “按顺序”的切换延迟约等于探测间隔加看护周期（默认 1 分钟 + 10 秒）；看护进程退出时组会停在
   最后锁定的成员上，由 procd 拉起后恢复
 - “按顺序”组记住的当前成员保存在 Xray 进程里：Xray 重启（改配置、更新、重启路由器）后，
@@ -211,6 +226,8 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
 - 多个域名共用同一 IP（CDN）且分属代理与直连时，以先写入集合的一方为准，直连集合优先
 - 客户端若绕过本机 DNS（DoH/DoT），其流量只能按 IP 集合和模式默认值判定
 - 路由器自身发出的流量不经过 TProxy（未挂 output 链）
+- DNS 回退到 dnsmasq 期间，内核集合不再更新：域名规则只对之前学到的地址有效，新解析的代理域名
+  可能拿到被污染的地址。回退是为了保住国内访问，不是完整的降级方案
 - `dns.enabled=0` 时无法填充集合，内核分流自动关闭
 - *_dns 集合元素 3 天过期；DNS 规则变化时集合会清空并随 mosdns 重启重新学习
 
@@ -246,7 +263,9 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
 - [x] v0.9.0 前端重做：改用 LuCI 原生组件，10 个页面合并为 5 个
 - [x] v0.9.1 取消分流模式：默认出口 + 可见的预置规则行 + 一键预设；去广告并入规则表
 - [x] v0.9.2 节点组：取代单一的负载均衡和主备，支持多组、多级按顺序切换、查看与锁定当前出口
+- [x] 按设备（MAC）分流、DNS 看门狗、备用探测地址、Geo 查询
 - [ ] 路由器自身流量代理（output 链）
+- [ ] 按设备的 DNS 策略
 - [ ] 去广告订阅列表 / 查询日志（替代 ADG）
 - [ ] 订阅 URL 自动更新、按设备访问控制
 - [ ] Gitea Actions 构建产物发布（未包含）

@@ -26,6 +26,8 @@ printf '"enabled":%s,' "$enabled"
 printf '"xray_running":%s,' "$xray_running"
 printf '"mosdns_running":%s,' "$mosdns_running"
 printf '"dns_enabled":%s,' "$dns_enabled"
+# is LAN port 53 currently redirected to mosdns (false = dnsmasq is answering)
+printf '"dns_redirect":%s,' "$(nft list chain inet xray-mosdns dns_redirect 2>/dev/null | grep -q "redirect to" && echo true || echo false)"
 printf '"tproxy_port":%s,' "$tproxy_port"
 printf '"main_target":"%s",' "$(esc "$main")"
 printf '"node":"%s",' "$(esc "$node")"

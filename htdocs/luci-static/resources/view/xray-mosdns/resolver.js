@@ -33,6 +33,12 @@ return view.extend({
 		o.rmempty = false;
 		o.depends('enabled', '1');
 
+		o = s.taboption('general', form.Flag, 'fallback', _('故障时交给 dnsmasq'),
+			_('看门狗每 5 秒探测一次 mosdns-x：连续两次没有应答就撤掉重定向，让 dnsmasq 接管 LAN 的解析，恢复应答后自动切回。回退期间域名规则不再学到新地址，分流只按 IP 规则和默认出口生效。关闭后，mosdns-x 故障时 LAN 上的解析会全部超时。'));
+		o.default = '1';
+		o.rmempty = false;
+		o.depends({ enabled: '1', redirect: '1' });
+
 		o = s.taboption('general', form.Value, 'listen_port', _('监听端口'),
 			_('不要用 5353，那是 mDNS 的端口。'));
 		o.datatype = 'port';

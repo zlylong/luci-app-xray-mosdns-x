@@ -47,12 +47,32 @@ function quoted(devs) {
 	return join(', ', map(devs, d => `"${d}"`));
 }
 
+function redirect_rule(d, lan) {
+	return `iifname { ${lan} } meta l4proto { tcp, udp } th dport 53 counter redirect to :${d.listen_port}`;
+}
+
 export function build(cfg, plan, env) {
 	const g = cfg.global, d = cfg.dns;
 	const T = `inet ${TABLE}`;
 	const mark = g.fwmark;
 	const lan = quoted(env.lan_devices);
 	let out = [];
+
+	// one chain per device inbound: same exemptions as everyone else, then its own port
+	let dev_chains = [];
+	for (let inb in plan.device_inbounds) {
+		let c = [
+			'fib daddr type != unicast return',
+			'ip daddr @bypass4 return',
+			'ip6 daddr @bypass6 return',
+			`meta nfproto ipv4 meta l4proto { tcp, udp } meta mark set ${mark} tproxy ip to :${inb.port} counter accept`,
+		];
+		if (g.ipv6)
+			push(c, `meta nfproto ipv6 meta l4proto { tcp, udp } meta mark set ${mark} tproxy ip6 to :${inb.port} counter accept`);
+		else
+			push(c, 'return');
+		push(dev_chains, [ `dev_${inb.port}`, c ]);
+	}
 
 	// ------------------------------------------------------------ set contents
 	let bypass = split_family([ ...g.bypass_ips, ...env.node_ips.v4, ...env.node_ips.v6 ]);
@@ -114,8 +134,21 @@ export function build(cfg, plan, env) {
 	push(out, `add chain ${T} do_tproxy`);
 	push(out, `add chain ${T} dns_redirect { type nat hook prerouting priority dstnat - 5; policy accept; }`);
 	push(out, `add chain ${T} input_guard { type filter hook input priority filter - 5; policy accept; }`);
+	// With the DNS watchdog the redirect chain belongs to it: it is declared
+	// here but neither flushed nor filled, so re-applying this file can never
+	// point LAN DNS at a mosdns that is not answering.
+	const watched = (d.enabled && d.redirect && d.fallback);
 	for (let c in [ 'prerouting', 'do_tproxy', 'dns_redirect', 'input_guard' ])
-		push(out, `flush chain ${T} ${c}`);
+		if (!(watched && c == 'dns_redirect'))
+			push(out, `flush chain ${T} ${c}`);
+
+	// Device chains come and go with the configuration. A chain cannot be
+	// deleted while prerouting still jumps to it, so prerouting is flushed
+	// first (above) and stale dev_* chains are removed by fw.sh after loading.
+	for (let dc in dev_chains) {
+		push(out, `add chain ${T} ${dc[0]}`);
+		push(out, `flush chain ${T} ${dc[0]}`);
+	}
 
 	for (let name in keys(static_sets)) {
 		const s = static_sets[name];
@@ -135,6 +168,17 @@ export function build(cfg, plan, env) {
 	push(pre, 'meta l4proto != { tcp, udp } return');
 	if (d.enabled && d.redirect)
 		push(pre, 'meta l4proto { tcp, udp } th dport 53 return comment "handled by dns_redirect"');
+	// Per-device targets. Matched on every packet, ahead of the per-flow logic
+	// below: a device's UDP has to reach the same Xray inbound for the whole
+	// exchange, and a MAC match is stateless, so no flow memory is needed.
+	const l4 = { 'tcp,udp': '', tcp: 'meta l4proto tcp ', udp: 'meta l4proto udp ' };
+	for (let dev in plan.devices) {
+		const src = `ether saddr { ${join(', ', dev.macs)} } ${l4[dev.network]}`;
+		push(pre, (dev.class == 'direct')
+			? `${src}return comment "device ${dev.name}: direct"`
+			: `${src}goto dev_${dev.inbound.port} comment "device ${dev.name}"`);
+	}
+
 	push(pre, `ct mark & ${mark} == ${mark} goto do_tproxy`);
 	push(pre, 'ct state != new return');
 	push(pre, 'fib daddr type != unicast return');
@@ -175,15 +219,16 @@ export function build(cfg, plan, env) {
 	let redir = [];
 	let guard = [
 		// the tproxy listener is only ever reached through the tproxy rule
-		`iifname != "lo" fib daddr type local meta l4proto { tcp, udp } th dport ${g.tproxy_port} drop`,
+		`iifname != "lo" fib daddr type local meta l4proto { tcp, udp } th dport { ${join(', ', [ g.tproxy_port, ...map(plan.device_inbounds, i => i.port) ])} } drop`,
 	];
 	if (d.enabled && d.redirect) {
-		push(redir, `iifname { ${lan} } meta l4proto { tcp, udp } th dport 53 counter redirect to :${d.listen_port}`);
+		if (!watched)
+			push(redir, redirect_rule(d, lan));
 		push(guard, `iifname != { "lo", ${lan} } meta l4proto { tcp, udp } th dport ${d.listen_port} drop`);
 	}
 
 	push(out, `table ${T} {`);
-	for (let c in [ [ 'prerouting', pre ], [ 'do_tproxy', tp ], [ 'dns_redirect', redir ], [ 'input_guard', guard ] ]) {
+	for (let c in [ [ 'prerouting', pre ], [ 'do_tproxy', tp ], ...dev_chains, [ 'dns_redirect', redir ], [ 'input_guard', guard ] ]) {
 		push(out, `\tchain ${c[0]} {`);
 		for (let r in c[1])
 			push(out, `\t\t${r}`);
@@ -192,6 +237,15 @@ export function build(cfg, plan, env) {
 	push(out, '}');
 
 	return join('\n', out) + '\n';
+};
+
+// the two states of the redirect chain, for the DNS watchdog
+export function dns_redirect(cfg, env) {
+	const T = `inet ${TABLE}`;
+	return {
+		on: `flush chain ${T} dns_redirect\nadd rule ${T} dns_redirect ${redirect_rule(cfg.dns, quoted(env.lan_devices))}\n`,
+		off: `flush chain ${T} dns_redirect\n`,
+	};
 };
 
 // applied after nft.rules whenever the DNS rules (mosdns.yaml) changed

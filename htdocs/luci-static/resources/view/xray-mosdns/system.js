@@ -50,6 +50,10 @@ return view.extend({
 			_('节点组用它判断成员是否可用，需要是经代理可达、返回很小的地址。'));
 		o.placeholder = 'https://www.gstatic.com/generate_204';
 
+		o = s.taboption('proxy', form.Value, 'probe_url_backup', _('备用探测地址'),
+			_('可留空。所有节点组的全部成员同时探测失败并持续一段时间（约 3 个探测间隔加 1 分钟）时，多半是探测地址本身不可达，这时自动换用备用地址；切换需要重启 Xray，两次切换至少间隔 10 分钟。重启路由器后回到主地址。'));
+		o.placeholder = 'https://cp.cloudflare.com/generate_204';
+
 		o = s.taboption('proxy', form.Value, 'probe_interval', _('节点组探测间隔'),
 			_('例如 30s、1m、5m。间隔越短切换越快，探测流量也越多。'));
 		o.placeholder = '1m';
