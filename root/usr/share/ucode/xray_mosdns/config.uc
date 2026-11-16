@@ -46,11 +46,27 @@ export function load(confdir) {
 	if (!match(route_table, /^[0-9]{1,10}$/))
 		fail(`invalid route_table '${route_table}'`);
 
+	// proxy the router's own connections too: off | tcp | tcp,udp
+	let proxy_router = str(g.proxy_router, '0');
+	if (proxy_router == '1')
+		proxy_router = 'tcp';
+	if (!(proxy_router in [ 'tcp', 'tcp,udp' ]))
+		proxy_router = null;
+	// socket mark carried by everything Xray and mosdns send themselves, so
+	// the router-traffic rules can tell their packets from everyone else's
+	let self_mark = str(g.self_mark, '0xff');
+	if (!match(self_mark, /^(0x[0-9a-fA-F]{1,8}|[0-9]{1,10})$/) || +self_mark == 0)
+		fail(`invalid self_mark '${self_mark}'`);
+	if (+self_mark == +fwmark)
+		fail('self_mark must differ from fwmark');
+
 	let cfg = {
 		global: {
 			enabled: bool(g.enabled),
 			tproxy_port: port(g.tproxy_port, 12345, 'tproxy_port'),
 			fwmark,
+			proxy_router,
+			self_mark,
 			route_table,
 			log_level: str(g.log_level, 'warning'),
 			sniffing: bool(g.sniffing, true),

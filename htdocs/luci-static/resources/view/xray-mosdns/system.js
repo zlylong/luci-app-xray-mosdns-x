@@ -28,6 +28,13 @@ return view.extend({
 		o.default = 'lan';
 		o.rmempty = false;
 
+		o = s.taboption('proxy', form.ListValue, 'proxy_router', _('代理路由器自身的流量'),
+			_('路由器自己发起的连接（下载 geo 数据和组件更新、软件包安装、DDNS 等）也按分流规则走代理，路由器自己的域名解析同时改由 mosdns-x 负责。注意：默认出口是代理时，路由器上的 VPN 客户端、内网穿透等连接也会被送进代理，需要把它们的服务器地址加到“不代理的目标”；UDP 一般不需要开。'));
+		o.value('0', _('关闭'));
+		o.value('tcp', _('仅 TCP'));
+		o.value('tcp,udp', _('TCP + UDP'));
+		o.default = '0';
+
 		o = s.taboption('proxy', form.Flag, 'kernel_split', _('内核分流'),
 			_('由 nftables 按目的地址决定是否进入 Xray：直连流量留在内核转发，只有需要代理的流量才交给 Xray。关闭后所有流量都进入 Xray 再分流。'));
 		o.default = '1';
@@ -84,6 +91,10 @@ return view.extend({
 
 		o = s.taboption('ports', form.Value, 'fwmark', _('防火墙标记'));
 		o.default = '0x1';
+
+		o = s.taboption('ports', form.Value, 'self_mark', _('自身流量标记'),
+			_('Xray 和 mosdns-x 自己发出的包带这个标记，代理路由器自身流量时靠它避免回环。不能和防火墙标记相同。'));
+		o.default = '0xff';
 
 		o = s.taboption('ports', form.Value, 'route_table', _('策略路由表'));
 		o.datatype = 'range(1,252)';

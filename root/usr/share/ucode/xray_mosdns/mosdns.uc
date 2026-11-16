@@ -89,8 +89,12 @@ export function build(cfg, plan) {
 	if (length(d.hosts))
 		plugin('hosts', 'hosts', { hosts: d.hosts });
 
+	// Router traffic proxied: mosdns' own direct queries carry the self mark,
+	// so they are neither proxied nor (for 127.0.0.1:53) redirected back here.
+	const self = g.proxy_router ? { so_mark: +g.self_mark } : {};
+
 	plugin('forward_local', 'fast_forward', {
-		upstream: map(d.domestic, addr => ({ addr, bootstrap: d.bootstrap, idle_timeout: 10 })),
+		upstream: map(d.domestic, addr => ({ addr, bootstrap: d.bootstrap, idle_timeout: 10, ...self })),
 	});
 	plugin('forward_remote', 'fast_forward', {
 		upstream: [ {
@@ -105,7 +109,7 @@ export function build(cfg, plan) {
 	const lan_forward = (d.redirect && d.dnsmasq_port != d.listen_port);
 	if (lan_forward)
 		plugin('forward_lan', 'fast_forward', {
-			upstream: [ { addr: `udp://127.0.0.1:${d.dnsmasq_port}` } ],
+			upstream: [ { addr: `udp://127.0.0.1:${d.dnsmasq_port}`, ...self } ],
 		});
 
 	if (split) {

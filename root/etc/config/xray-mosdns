@@ -32,6 +32,10 @@ config global 'global'
 	option probe_interval '1m'
 	# optional: switched to automatically when every group member fails the probe at once
 	#option probe_url_backup 'https://cp.cloudflare.com/generate_204'
+	# proxy the router's own connections as well: 0 | tcp | tcp,udp
+	option proxy_router '0'
+	# socket mark on everything Xray and mosdns send themselves (loop prevention)
+	option self_mark '0xff'
 	# decide proxy-vs-direct in nftables so direct traffic never enters Xray
 	option kernel_split '1'
 	# logical interfaces whose traffic is proxied, e.g. lan, a guest network, a VPN

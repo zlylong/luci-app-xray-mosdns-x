@@ -117,9 +117,12 @@ check("198.51.100.20" in n.split("add element inet xray-mosdns bypass4 {", 1)[1]
 # with the DNS watchdog (default) the redirect rule is not part of nft.rules: the watchdog installs it
 RULE = 'iifname { "br-lan" } meta l4proto { tcp, udp } th dport 53 counter redirect to :5335'
 check(chain(n, "dns_redirect") == [] and "flush chain inet xray-mosdns dns_redirect" not in n, "watchdog owns the redirect chain: nft.rules neither fills nor flushes it")
+check(chain(n, "output") == [] and chain(n, "out_mark") == [] and "sockopt" not in json.dumps(x["outbounds"][-2]) and "so_mark" not in json.dumps(m), "router traffic off (default): no output rules, no socket marks")
+check(not any('iifname "lo"' in r for r in chain(n, "prerouting")), "router traffic off: nothing is accepted from lo")
+FLUSH = "flush chain inet xray-mosdns dns_redirect\nflush chain inet xray-mosdns dns_redirect_out\n"
 on = open(f"{out}/chnroute/nft-dns-on.rules").read()
-check(on == "flush chain inet xray-mosdns dns_redirect\nadd rule inet xray-mosdns dns_redirect " + RULE + "\n", "watchdog 'on' rules")
-check(open(f"{out}/chnroute/nft-dns-off.rules").read() == "flush chain inet xray-mosdns dns_redirect\n", "watchdog 'off' rules")
+check(on == FLUSH + "add rule inet xray-mosdns dns_redirect " + RULE + "\n", "watchdog 'on' rules")
+check(open(f"{out}/chnroute/nft-dns-off.rules").read() == FLUSH, "watchdog 'off' rules")
 check('th dport 53 return comment "handled by dns_redirect"' in n, "port 53 stays out of the tproxy path either way")
 
 # ------------------------------------------------------------------ gfw
@@ -132,6 +135,7 @@ check({"type": "field", "port": "22,3389", "outboundTag": "direct"} in rules, "l
 check({"type": "field", "domain": ["geosite:openai", "domain:example.org"], "outboundTag": "hk1.node"} in rules, "list-valued domain rule")
 check(plugin(m, "rule_0")["args"]["domain"] == ["provider:geosite:openai", "domain:example.org"], "list-valued domain rule reaches mosdns")
 check(x["inbounds"][0]["listen"] == "::", "ipv6: tproxy inbound must listen dual-stack")
+check(x["inbounds"][0]["settings"] == {"network": "tcp,udp", "followRedirect": True}, "tproxy inbound: both protocols, original destination")
 main = plugin(m, "main_sequence")["args"]["exec"]
 check(plugin(m, "rule_1")["args"]["domain"] == ["provider:geosite:gfw"], "legacy gfw mode becomes a rule row")
 check(main[-4] == {"if": "rule_1", "exec": ["remote_seq", "add_proxy", "_return"]}, "gfw: listed domains resolve remotely and are marked")
@@ -186,6 +190,18 @@ check({"type": "field", "domain": ["geosite:netflix"], "outboundTag": "a.node"} 
 check({"type": "field", "ip": ["192.0.2.0/24"], "outboundTag": "b.node"} in x["routing"]["rules"], "groups: plain node target")
 check(x["routing"]["rules"][-1] == {"type": "field", "network": "tcp,udp", "balancerTag": "hk.group"}, "groups: main target is a group")
 check(chain(n, "dns_redirect") == ['iifname { "br-lan" } meta l4proto { tcp, udp } th dport 53 counter redirect to :5335'] and "flush chain inet xray-mosdns dns_redirect" in n, "watchdog off: the redirect rule is static in nft.rules")
+# router's own traffic (proxy_router = tcp, watchdog off in this fixture)
+oc = chain(n, "output")
+check(oc[0] == 'meta mark 0xff return comment "sent by Xray or mosdns"' and oc[1] == "meta l4proto != tcp return", "router: own packets of Xray/mosdns are skipped first, then only TCP is considered")
+check("meta l4proto { tcp, udp } th dport 53 return" in oc and oc.index("ct mark & 0x1 == 0x1 goto out_mark") < oc.index("ct state != new return") < oc.index("ip daddr @bypass4 return"), "router: DNS exempt, then per-flow shortcut, then classification")
+check(oc[-1] == "goto out_mark" and "ip daddr @proxy4_dns goto out_mark" in oc, "router: same classification as the LAN, with a marking verdict")
+check(chain(n, "out_mark") == ["ct mark set ct mark | 0x1", "meta mark set 0x1"], "router: marking chain")
+check(chain(n, "prerouting")[0] == 'iifname "lo" meta mark 0x1 goto do_tproxy comment "router traffic, marked in output"', "router: re-routed packets enter the tproxy path from lo")
+check(chain(n, "dns_redirect_out") == ["meta mark != 0xff fib daddr type local meta l4proto { tcp, udp } th dport 53 counter redirect to :5335"], "router: its own lookups go to mosdns, except the ones mosdns sends to dnsmasq")
+check(all(o.get("streamSettings", {}).get("sockopt", {}).get("mark") == 255 for o in x["outbounds"] if o["tag"] != "block"), "router: every Xray outbound carries the self mark")
+fl = plugin(m, "forward_local")["args"]["upstream"]
+check(all(u.get("so_mark") == 255 for u in fl) and plugin(m, "forward_lan")["args"]["upstream"][0].get("so_mark") == 255, "router: mosdns' direct and dnsmasq queries carry the self mark")
+
 # per-device routing
 tin = {i["tag"]: i for i in x["inbounds"]}
 check(tin.get("dev-0", {}).get("port") == 12346 and tin.get("dev-1", {}).get("port") == 12347 and "dev-2" not in tin, "devices: one extra tproxy inbound per distinct proxy target")

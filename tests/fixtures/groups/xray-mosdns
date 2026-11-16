@@ -5,6 +5,7 @@ config global 'global'
 	option default_action 'proxy'
 	option probe_url 'https://probe.example/204'
 	option probe_interval '30s'
+	option proxy_router 'tcp'
 
 config dns 'dns'
 	option enabled '1'

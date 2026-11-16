@@ -47,6 +47,18 @@ function quoted(devs) {
 	return join(', ', map(devs, d => `"${d}"`));
 }
 
+// The router resolves through mosdns too when its traffic is proxied:
+// otherwise names it looks up would never reach the kernel sets, and blocked
+// names would come back poisoned. Queries mosdns itself sends to dnsmasq
+// carry the self mark and are left alone.
+function router_dns(cfg) {
+	return !!cfg.global.proxy_router && cfg.dns.enabled && cfg.dns.redirect;
+}
+
+function router_redirect_rule(cfg) {
+	return `meta mark != ${cfg.global.self_mark} fib daddr type local meta l4proto { tcp, udp } th dport 53 counter redirect to :${cfg.dns.listen_port}`;
+}
+
 function redirect_rule(d, lan) {
 	return `iifname { ${lan} } meta l4proto { tcp, udp } th dport 53 counter redirect to :${d.listen_port}`;
 }
@@ -134,12 +146,17 @@ export function build(cfg, plan, env) {
 	push(out, `add chain ${T} do_tproxy`);
 	push(out, `add chain ${T} dns_redirect { type nat hook prerouting priority dstnat - 5; policy accept; }`);
 	push(out, `add chain ${T} input_guard { type filter hook input priority filter - 5; policy accept; }`);
+	// the router's own connections: marked here, re-routed to lo by the policy
+	// rule, and picked up by prerouting like everything else
+	push(out, `add chain ${T} output { type route hook output priority mangle; policy accept; }`);
+	push(out, `add chain ${T} out_mark`);
+	push(out, `add chain ${T} dns_redirect_out { type nat hook output priority dstnat - 5; policy accept; }`);
 	// With the DNS watchdog the redirect chain belongs to it: it is declared
 	// here but neither flushed nor filled, so re-applying this file can never
 	// point LAN DNS at a mosdns that is not answering.
 	const watched = (d.enabled && d.redirect && d.fallback);
-	for (let c in [ 'prerouting', 'do_tproxy', 'dns_redirect', 'input_guard' ])
-		if (!(watched && c == 'dns_redirect'))
+	for (let c in [ 'prerouting', 'do_tproxy', 'dns_redirect', 'input_guard', 'output', 'out_mark', 'dns_redirect_out' ])
+		if (!(watched && (c == 'dns_redirect' || c == 'dns_redirect_out')))
 			push(out, `flush chain ${T} ${c}`);
 
 	// Device chains come and go with the configuration. A chain cannot be
@@ -163,7 +180,43 @@ export function build(cfg, plan, env) {
 	}
 
 	// ------------------------------------------------------------ rules
+	// The decision for a new flow, by destination address. Used for traffic
+	// entering from the LAN and, with a different "proxy" verdict, for the
+	// router's own connections.
+	function classify(proxy) {
+		let r = [
+			'fib daddr type != unicast return',
+			'ip daddr @bypass4 return',
+			'ip6 daddr @bypass6 return',
+		];
+		if (!g.ipv6)
+			push(r, 'meta nfproto ipv6 return');
+		if (!g.kernel_split) {
+			push(r, proxy);
+			return r;
+		}
+		// addresses mosdns resolved for a domain rule are the most specific
+		// information available, so they are tested before the IP rules
+		push(r, 'ip daddr @direct4_dns return');
+		push(r, `ip daddr @proxy4_dns ${proxy}`);
+		if (g.ipv6) {
+			push(r, 'ip6 daddr @direct6_dns return');
+			push(r, `ip6 daddr @proxy6_dns ${proxy}`);
+		}
+		for (let i = 0; i < length(groups); i++) {
+			const verdict = (groups[i].kind == 'direct') ? 'return' : proxy;
+			if (length(groups[i].v4))
+				push(r, `ip daddr @ipg4_${i} ${verdict}`);
+			if (g.ipv6 && length(groups[i].v6))
+				push(r, `ip6 daddr @ipg6_${i} ${verdict}`);
+		}
+		push(r, (plan.default_class == 'direct') ? 'return' : proxy);
+		return r;
+	}
+
 	let pre = [];
+	if (g.proxy_router)
+		push(pre, `iifname "lo" meta mark ${mark} goto do_tproxy comment "router traffic, marked in output"`);
 	push(pre, `iifname != { ${lan} } return`);
 	push(pre, 'meta l4proto != { tcp, udp } return');
 	if (d.enabled && d.redirect)
@@ -181,33 +234,7 @@ export function build(cfg, plan, env) {
 
 	push(pre, `ct mark & ${mark} == ${mark} goto do_tproxy`);
 	push(pre, 'ct state != new return');
-	push(pre, 'fib daddr type != unicast return');
-	push(pre, 'ip daddr @bypass4 return');
-	push(pre, 'ip6 daddr @bypass6 return');
-	if (!g.ipv6)
-		push(pre, 'meta nfproto ipv6 return');
-
-	if (g.kernel_split) {
-		// addresses mosdns resolved for a domain rule are the most specific
-		// information available, so they are tested before the IP rules
-		push(pre, 'ip daddr @direct4_dns return');
-		push(pre, 'ip daddr @proxy4_dns goto do_tproxy');
-		if (g.ipv6) {
-			push(pre, 'ip6 daddr @direct6_dns return');
-			push(pre, 'ip6 daddr @proxy6_dns goto do_tproxy');
-		}
-		for (let i = 0; i < length(groups); i++) {
-			const verdict = (groups[i].kind == 'direct') ? 'return' : 'goto do_tproxy';
-			if (length(groups[i].v4))
-				push(pre, `ip daddr @ipg4_${i} ${verdict}`);
-			if (g.ipv6 && length(groups[i].v6))
-				push(pre, `ip6 daddr @ipg6_${i} ${verdict}`);
-		}
-		push(pre, (plan.default_class == 'direct') ? 'return' : 'goto do_tproxy');
-	}
-	else {
-		push(pre, 'goto do_tproxy');
-	}
+	push(pre, ...classify('goto do_tproxy'));
 
 	let tp = [
 		`ct mark set ct mark | ${mark}`,
@@ -215,6 +242,27 @@ export function build(cfg, plan, env) {
 	];
 	if (g.ipv6)
 		push(tp, `meta nfproto ipv6 meta l4proto { tcp, udp } meta mark set ${mark} tproxy ip6 to :${g.tproxy_port} counter accept comment "xray-mosdns-v6"`);
+
+	// ------------------------------------------------------------ router traffic
+	let outc = [], outm = [], redir_out = [];
+	if (g.proxy_router) {
+		const protos = (g.proxy_router == 'tcp') ? 'tcp' : '{ tcp, udp }';
+		outc = [
+			`meta mark ${g.self_mark} return comment "sent by Xray or mosdns"`,
+			`meta l4proto != ${protos} return`,
+			// the router's lookups go to mosdns through dns_redirect_out, or stay with dnsmasq
+			'meta l4proto { tcp, udp } th dport 53 return',
+			`ct mark & ${mark} == ${mark} goto out_mark`,
+			'ct state != new return',
+			...classify('goto out_mark'),
+		];
+		outm = [
+			`ct mark set ct mark | ${mark}`,
+			`meta mark set ${mark}`,
+		];
+		if (router_dns(cfg) && !watched)
+			push(redir_out, router_redirect_rule(cfg));
+	}
 
 	let redir = [];
 	let guard = [
@@ -228,7 +276,8 @@ export function build(cfg, plan, env) {
 	}
 
 	push(out, `table ${T} {`);
-	for (let c in [ [ 'prerouting', pre ], [ 'do_tproxy', tp ], ...dev_chains, [ 'dns_redirect', redir ], [ 'input_guard', guard ] ]) {
+	for (let c in [ [ 'prerouting', pre ], [ 'do_tproxy', tp ], ...dev_chains, [ 'dns_redirect', redir ], [ 'input_guard', guard ],
+	                [ 'output', outc ], [ 'out_mark', outm ], [ 'dns_redirect_out', redir_out ] ]) {
 		push(out, `\tchain ${c[0]} {`);
 		for (let r in c[1])
 			push(out, `\t\t${r}`);
@@ -242,10 +291,11 @@ export function build(cfg, plan, env) {
 // the two states of the redirect chain, for the DNS watchdog
 export function dns_redirect(cfg, env) {
 	const T = `inet ${TABLE}`;
-	return {
-		on: `flush chain ${T} dns_redirect\nadd rule ${T} dns_redirect ${redirect_rule(cfg.dns, quoted(env.lan_devices))}\n`,
-		off: `flush chain ${T} dns_redirect\n`,
-	};
+	const flush = `flush chain ${T} dns_redirect\nflush chain ${T} dns_redirect_out\n`;
+	let on = flush + `add rule ${T} dns_redirect ${redirect_rule(cfg.dns, quoted(env.lan_devices))}\n`;
+	if (router_dns(cfg))
+		on += `add rule ${T} dns_redirect_out ${router_redirect_rule(cfg)}\n`;
+	return { on, off: flush };
 };
 
 // applied after nft.rules whenever the DNS rules (mosdns.yaml) changed

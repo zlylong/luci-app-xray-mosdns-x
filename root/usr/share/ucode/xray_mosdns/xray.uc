@@ -129,6 +129,15 @@ export function build(cfg, plan, env) {
 	for (let name in plan.needed)
 		push(outbounds, outbound(plan.by_name[name], plan.tag(name)));
 	push(outbounds, { tag: 'direct', protocol: 'freedom' });
+
+	// With router traffic proxied, whatever Xray itself sends has to be
+	// recognisable or it would be fed straight back into Xray.
+	if (g.proxy_router) {
+		for (let o in outbounds) {
+			o.streamSettings ??= {};
+			o.streamSettings.sockopt = { ...(o.streamSettings.sockopt ?? {}), mark: +g.self_mark };
+		}
+	}
 	push(outbounds, { tag: 'block', protocol: 'blackhole' });
 
 	// ------------------------------------------------------------ rules
@@ -172,7 +181,11 @@ export function build(cfg, plan, env) {
 		port: g.tproxy_port,
 		protocol: 'tunnel',
 		listen: g.ipv6 ? '::' : '0.0.0.0',
-		settings: { allowedNetwork: 'tcp,udp' },
+		// followRedirect: use the packet's original destination. Without it the
+		// inbound forwards everything to its own (empty) target address.
+		// "network" is the key Xray reads; an unknown key is ignored silently and
+		// leaves the inbound TCP only
+		settings: { network: 'tcp,udp', followRedirect: true },
 		streamSettings: { sockopt: { tproxy: 'tproxy' } },
 	};
 	let socks_in = {

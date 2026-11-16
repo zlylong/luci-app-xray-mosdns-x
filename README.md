@@ -52,6 +52,9 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
   “按顺序”由一个看护进程（`groups.uc watch`）每 10 秒检查一次：当前成员可用就保持不动，
   不可用时切到列表里最靠前的可用成员。默认不会因为前面的成员恢复而切回，
   需要切回可以打开组的“恢复后切回”；概览页显示每个组当前的出口，并可临时锁定到某个成员
+- **路由器自身流量**（可选）：output 链里按同一套分类给路由器发起的连接打标记，策略路由把它们
+  绕回 lo，再由 prerouting 送进 TProxy。Xray 和 mosdns 自己发的包带 `self_mark`，不会被再次送回；
+  路由器自己的 53 端口查询同时重定向到 mosdns，同样受 DNS 看门狗管理
 - **按设备分流**：按 MAC 地址把某台设备的全部流量（或只有 UDP / TCP）送到指定节点或节点组，
   或者让它完全直连，先于规则表生效，适合游戏加速。每个不同的出口对应一个额外的 TProxy 入站，
   nft 按源 MAC 把包送到对应端口，Xray 再按入站选出口
@@ -185,6 +188,8 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
 | global | bypass_chn | 国内目的地直连（geosite:cn / geoip:cn） |
 | global | node | 选中的节点 section 名 |
 | global | socks_port | 内部 SOCKS 端口（给 mosdns 转发国外 DNS），默认 1070 |
+| global | proxy_router | 代理路由器自身的流量：0（默认）/ tcp / tcp,udp |
+| global | self_mark | Xray 和 mosdns 自身流量的标记，默认 0xff |
 | global | kernel_split | 内核分流（默认 1）；0 = 所有流量进 Xray 再分流 |
 | global | lan_ifaces | 被代理的逻辑接口列表，默认 `lan`；可以加 VPN 等接口，界面里从系统接口中选择 |
 | global | lan_devices | 直接指定设备名（如 `br-lan`），设置后不再查询 lan_ifaces |
@@ -225,7 +230,8 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
 - 轮询和随机会让同一网站看到多个出口 IP，可能触发登录验证；节点组的锁定是临时的，重启后恢复自动
 - 多个域名共用同一 IP（CDN）且分属代理与直连时，以先写入集合的一方为准，直连集合优先
 - 客户端若绕过本机 DNS（DoH/DoT），其流量只能按 IP 集合和模式默认值判定
-- 路由器自身发出的流量不经过 TProxy（未挂 output 链）
+- 开启“代理路由器自身的流量”且默认出口为代理时，路由器上的 VPN 客户端、内网穿透等连接也会进代理，
+  需要把它们的服务器地址加进“不代理的目标”
 - DNS 回退到 dnsmasq 期间，内核集合不再更新：域名规则只对之前学到的地址有效，新解析的代理域名
   可能拿到被污染的地址。回退是为了保住国内访问，不是完整的降级方案
 - `dns.enabled=0` 时无法填充集合，内核分流自动关闭
@@ -264,7 +270,7 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
 - [x] v0.9.1 取消分流模式：默认出口 + 可见的预置规则行 + 一键预设；去广告并入规则表
 - [x] v0.9.2 节点组：取代单一的负载均衡和主备，支持多组、多级按顺序切换、查看与锁定当前出口
 - [x] 按设备（MAC）分流、DNS 看门狗、备用探测地址、Geo 查询
-- [ ] 路由器自身流量代理（output 链）
+- [x] 路由器自身流量代理（output 链）
 - [ ] 按设备的 DNS 策略
 - [ ] 去广告订阅列表 / 查询日志（替代 ADG）
 - [ ] 订阅 URL 自动更新、按设备访问控制
