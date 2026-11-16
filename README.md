@@ -130,43 +130,40 @@ xray run -test -c /tmp/xm-test/chnroute/xray.json
   `kmod-nft-tproxy` 需单独安装，避免 SDK/CI 触发内核编译）
 - `ucode` + `ucode-mod-uci` / `ucode-mod-fs` / `ucode-mod-ubus`（生成器；LuCI 本身已依赖）
 - `python3`（仅概览页的节点流量和节点测速使用，未声明为包依赖）
+- `curl`（组件更新、连通性检测、经代理下载拦截列表；未声明为包依赖）
 - `/usr/share/v2ray/geosite.dat`、`geoip.dat`（Loyalsoldier / v2ray 数据）
 
 ## 代码仓库与 CI
 
 - 仓库：<https://github.com/zlylong/luci-app-xray-mosdns-x>
-- CI：构建 VM 每 2 分钟轮询 Gitea master 分支，有新提交则编译，
-  并通过 Gitea Commit Status 回写结果（`build (build vm)` = pending/success/failure），
-- Gitea Actions 流水线在 `.gitea/workflows/build.yml`，由实例上的运行器执行，任务在官方镜像 `immortalwrt/sdk:x86-64-openwrt-25.12.2` 里跑，不再下载 SDK。
-  推送 `v<版本号>` 标签（须与 Makefile 的 `PKG_VERSION` 一致）会在编译后自动创建发布并附上安装包，
-  发布说明取自带注释标签的内容，带连字符的标签（如 `v1.0.0-rc1`）发布为预发布版本此前在运行器容器里
-  OpenWrt SDK 的 fakeroot 打包卡死过，所以任务设了 45 分钟超时
+- Gitea Actions（`.gitea/workflows/build.yml`）：每次推送都在官方镜像
+  `immortalwrt/sdk:x86-64-openwrt-25.12.2` 里编译，产物作为构建产物上传
+- 发版：推送 `v<版本号>` 标签（须与 Makefile 的 `PKG_VERSION` 一致），编译后自动创建发布并附上安装包和校验和。
+  发布说明取自带注释标签的内容；带连字符的标签（如 `v1.0.0-rc1`）发布为预发布版本
 
 ## 编译
 
-### 方式一：OpenWrt/ImmortalWrt SDK（推荐，CI 使用）
+用 ImmortalWrt SDK，和 CI 相同：
 
 ```sh
 curl -LO https://downloads.immortalwrt.org/releases/25.12.2/targets/x86/64/immortalwrt-sdk-25.12.2-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst
 tar --zstd -xf immortalwrt-sdk-25.12.2-*.tar.zst
 cp -r luci-app-xray-mosdns-x immortalwrt-sdk-*/package/
 cd immortalwrt-sdk-*
-./scripts/feeds update -a && ./scripts/feeds install -a
+./scripts/feeds update -a && ./scripts/feeds install luci
+make defconfig
 make package/luci-app-xray-mosdns-x/compile V=s
-# 产物: bin/packages/x86_64/luci/luci-app-xray-mosdns-x-0.1.0-r1.apk
+# 产物: bin/packages/x86_64/base/luci-app-xray-mosdns-x-<版本>-r1.apk
 ```
 
-### 方式二：本仓库自带脚本（在构建 VM 上）
-
-```sh
-scripts/build-in-vm.sh   # 下载 SDK、安装 feeds、编译并收集产物
-```
+`scripts/build-in-vm.sh` 把这些步骤包成了一个脚本（下载 SDK、安装 feeds、编译并收集产物）。
 
 ## 安装（不启用）
 
+从发布页下载安装包：
+
 ```sh
-apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
-# 或 opkg install ...
+apk add --allow-untrusted luci-app-xray-mosdns-x-<版本>-r1.apk
 ```
 
 安装后插件处于未启用状态：`uci get xray-mosdns.@global[0].enabled` → `0`。
@@ -258,37 +255,11 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
 
 ## 路线图
 
-- [x] 多节点 + 负载均衡 / 故障切换（Xray balancer + burstObservatory）
-- [x] 规则管理 UI（域名/IP/端口分流可视化）
-- [x] IPv6 TProxy（实验性）
-- [x] 流量统计（复用 nlbwmon）
-- [x] 订阅导入（vless/vmess/trojan/ss 链接）
-- [x] Hysteria2 节点（协议 + 导入 + 生成配置）
-- [x] 节点表格化：地址/延迟列、测速、详情弹窗、导入合并进节点页
-- [x] PassWall 式分流模式（大陆白名单 / GFW 列表 / 全局 / 自定义）
-- [x] 规则页 geo 标签搜索/多选（含 geosite/geoip 自动提取）
-- [x] 备用节点可选全部节点（修复只能选“直连”的问题）
-- [x] 分流总节点 / 负载均衡 / 规则 三级结构（PassWall 风格）
-- [x] 节点页合并负载均衡设置，设置页移除旧版域名列表
-- [x] 在线更新（Xray / mosdns-x / geo 数据，带备份）+ 远端版本对比
-- [x] geo 数据定时更新（每日 cron，对比 release 版本，一致则跳过）
-- [x] 分流规则可排序（↑/↓，序号即为匹配顺序）
-- [x] 主备模型（主节点 + 备节点自动切换）
-- [x] 更新页修正 mosdns-x 版本识别与远端版本对比
-- [x] v0.8.0 UI 重设计：线路图式首页、统一的技图风格（等宽数据、方形端子、主题自适应）
-- [x] 节点流量统计（Xray StatsService）
-- [x] DNS 页面中文化、日志等级可选
-- [x] v0.9.0 数据面重构：ucode 生成器、单一分流计划、内核分流、nft 重定向接管 DNS、无断流重载
-- [x] v0.9.0 前端重做：改用 LuCI 原生组件，10 个页面合并为 5 个
-- [x] v0.9.1 取消分流模式：默认出口 + 可见的预置规则行 + 一键预设；去广告并入规则表
-- [x] v0.9.2 节点组：取代单一的负载均衡和主备，支持多组、多级按顺序切换、查看与锁定当前出口
-- [x] 按设备（MAC）分流、DNS 看门狗、备用探测地址、Geo 查询
-- [x] 路由器自身流量代理（output 链）
+- [ ] 查询日志与统计
 - [ ] 按设备的 DNS 策略
-- [x] 去广告订阅列表（AdGuard 列表库）
-- [ ] 查询日志与统计（替代 ADG）
-- [ ] 订阅 URL 自动更新、按设备访问控制
-- [ ] Gitea Actions 构建产物发布（未包含）
+- [ ] 订阅 URL 自动更新节点
+
+已完成的内容见各版本的发布说明。
 
 ## 许可
 

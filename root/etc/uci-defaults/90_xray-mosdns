@@ -1,24 +1,13 @@
 #!/bin/sh
-# Ensure new options exist after upgrades (idempotent), and migrate older
-# layouts: node_mode/node -> main_target, dnsmasq forwarding -> nft redirect.
+# Bring an existing configuration up to the current layout (idempotent).
+# Covers upgrades from 0.8: split mode and ad switch -> rule rows, balancer
+# and failover -> node groups, dnsmasq forwarding -> nft redirect.
 [ -f /etc/config/xray-mosdns ] || exit 0
 
 g() { uci -q get "xray-mosdns.$1" 2>/dev/null || true; }
 s() { uci -q set "xray-mosdns.$1=$2" 2>/dev/null || true; }
 # set only when the option does not exist yet
 d() { uci -q get "xray-mosdns.$1" >/dev/null 2>&1 || s "$1" "$2"; }
-
-uci -q get xray-mosdns.@dns[0] >/dev/null 2>&1 || {
-	uci batch <<-EOC
-	set xray-mosdns.dns=dns
-	set xray-mosdns.dns.enabled='1'
-	set xray-mosdns.dns.mosdns_bin='/usr/bin/mosdns'
-	set xray-mosdns.dns.cache_size='8192'
-	set xray-mosdns.dns.cache_everything='1'
-	set xray-mosdns.dns.filter_proxy_ipv6='1'
-	set xray-mosdns.dns.bootstrap='223.5.5.5'
-	EOC
-}
 
 d '@global[0].socks_port' '1070'
 d '@global[0].api_port' '10085'
@@ -31,21 +20,6 @@ d '@dns[0].redirect' '1'
 # 0.9: mosdns listens on a wildcard address; 5353 would collide with mDNS
 port=$(g '@dns[0].listen_port')
 { [ -z "$port" ] || [ "$port" = "5353" ]; } && s '@dns[0].listen_port' '5335'
-
-# migrate node selection -> main_target / balance_enabled
-if [ -z "$(g '@global[0].main_target')" ]; then
-	case "$(g '@global[0].node_mode')" in
-		balance)
-			s '@global[0].main_target' 'balance'
-			s '@global[0].balance_enabled' '1'
-			;;
-		*)
-			_node=$(g '@global[0].node')
-			[ -n "$_node" ] && s '@global[0].main_target' "$_node"
-			;;
-	esac
-	[ -n "$(g '@global[0].main_target')" ] || s '@global[0].main_target' 'direct'
-fi
 
 # 0.9.2: the split "mode" and the ad-block switch become ordinary rule rows
 # (appended after the user's own rules, which is where they used to apply)
@@ -159,7 +133,7 @@ uci -q get xray-mosdns.builtin_adlist >/dev/null 2>&1 || {
 }
 
 # drop removed legacy options/lists
-for opt in node_mode node bypass_chn default_outbound proxy_domains direct_domains block_domains allow_coexist; do
+for opt in allow_coexist proxy_mode; do
 	uci -q delete "xray-mosdns.@global[0].$opt"
 done
 uci -q delete 'xray-mosdns.@dns[0].xray_dns_port'

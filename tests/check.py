@@ -238,6 +238,15 @@ check("th dport { 12345, 12346, 12347 } drop" in n, "devices: their ports are cl
 gj = json.load(open(f"{out}/groups/groups.json"))
 check(len(gj) == 1 and gj[0]["name"] == "hk" and gj[0]["remarks"] == "香港" and gj[0]["strategy"] == "ordered" and [mm["name"] for mm in gj[0]["members"]] == ["a", "b"], "groups.json: only the used group, in member order")
 
+# ------------------------------------------------------------------ blocklist conversion
+block = open(f"{out}/adlist/block.txt").read().split()
+allow = open(f"{out}/adlist/allow.txt").read().split()
+check(block == ["domain:ads.example.com", "domain:tracker.example.net", "full:exact.example.org", "full:hosts.example.com",
+                "full:other.example.com", "full:v6hosts.example.com", "full:plain.example.org", "full:plain2.example.org",
+                "domain:noanchor.example.com"], f"adlist: block rules {block}")
+check(allow == ["domain:good.example.com", "domain:good2.example.com"], f"adlist: exceptions {allow}")
+check(json.load(open(f"{out}/adlist/stats.json")) == {"rules": 9, "allow": 2, "skipped": 5}, "adlist: counts (wildcard, regex, other modifiers, localhost and junk are skipped)")
+
 if failed:
     print("\n".join("FAIL: " + f for f in failed))
     sys.exit(1)

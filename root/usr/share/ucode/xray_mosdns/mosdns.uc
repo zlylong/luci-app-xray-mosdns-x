@@ -10,8 +10,7 @@
 'use strict';
 
 import { note } from 'xray_mosdns.util';
-
-const TABLE = 'xray-mosdns';
+import { TABLE } from 'xray_mosdns.nft';
 
 // Xray domain syntax -> mosdns domain syntax
 function domain_entries(rule, cfg) {

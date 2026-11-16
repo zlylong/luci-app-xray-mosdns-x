@@ -3,8 +3,7 @@
 		"description": "Grant access to Xray + mosdns-x configuration, status, traffic and import",
 		"read": {
 			"uci": [
-				"xray-mosdns",
-				"dhcp"
+				"xray-mosdns"
 			],
 			"file": {
 				"/usr/libexec/xray-mosdns/status.sh": [
@@ -18,15 +17,6 @@
 				],
 				"/usr/libexec/xray-mosdns/import-links.sh": [
 					"exec"
-				],
-				"/var/etc/xray-mosdns/xray.json": [
-					"read"
-				],
-				"/var/etc/xray-mosdns/mosdns.yaml": [
-					"read"
-				],
-				"/var/etc/xray-mosdns/nft.rules": [
-					"read"
 				],
 				"/usr/libexec/xray-mosdns/latency.sh": [
 					"exec"

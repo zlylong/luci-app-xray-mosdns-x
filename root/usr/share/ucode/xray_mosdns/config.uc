@@ -135,13 +135,8 @@ export function load(confdir) {
 	if (!length(cfg.global.lan_ifaces))
 		cfg.global.lan_ifaces = [ 'lan' ];
 
-	// legacy selection (pre-0.5 configs)
-	if (cfg.global.main_target == null) {
-		if (str(g.node_mode, '') == 'balance' || bool(g.balance_enabled))
-			cfg.global.main_target = 'balance';
-		else
-			cfg.global.main_target = str(g.node, 'direct');
-	}
+	if (cfg.global.main_target == null)
+		cfg.global.main_target = 'direct';
 
 	for (let s in sections(all, 'node')) {
 		push(cfg.nodes, {

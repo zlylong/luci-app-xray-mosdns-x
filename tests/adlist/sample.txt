@@ -1,0 +1,18 @@
+! comment
+# another
+[Adblock Plus]
+||ads.example.com^
+||Tracker.Example.NET^$important
+||mod.example.com^$dnstype=A
+||wild-*.example.com^
+/^ad[0-9]+\./
+@@||good.example.com^
+@@||good2.example.com^$important
+|exact.example.org^
+0.0.0.0 hosts.example.com other.example.com # trailing
+127.0.0.1 localhost
+:: v6hosts.example.com
+plain.example.org
+plain2.example.org # note
+not a domain
+||noanchor.example.com

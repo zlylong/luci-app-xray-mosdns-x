@@ -145,7 +145,7 @@ export function scan(path, cb) {
 };
 
 // returns { v4: [...], v6: [...] } or null when the file / country is missing
-export function country(path, code) {
+function country(path, code) {
 	code = uc(code);
 	let res = null;
 	scan(path, (cc, load) => {

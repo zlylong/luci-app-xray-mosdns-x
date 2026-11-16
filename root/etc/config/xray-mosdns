@@ -5,8 +5,6 @@
 config global 'global'
 	# master switch (0 = installed but inactive)
 	option enabled '0'
-	# transparent proxy mode: tproxy (nft tproxy + policy routing)
-	option proxy_mode 'tproxy'
 	# port that Xray tproxy inbound listens on
 	option tproxy_port '12345'
 	# fwmark used by the tproxy policy routing (keep unique on this router)

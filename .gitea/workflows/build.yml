@@ -66,7 +66,6 @@ jobs:
         run: |
           mkdir -p out
           find "$SDK/bin" -name 'luci-app-xray-mosdns-x*' -exec cp -v {} out/ \;
-          find "$SDK/bin" -name 'luci-i18n-xray-mosdns-x*' -exec cp -v {} out/ \;
           ls -la out/
           # an empty directory means the build produced nothing
           ls out/luci-app-xray-mosdns-x* >/dev/null

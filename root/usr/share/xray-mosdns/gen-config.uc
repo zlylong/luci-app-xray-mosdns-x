@@ -31,11 +31,7 @@ for (let i = 0; i < length(ARGV); i++) {
 	case '-l': push(opt.lan, ARGV[++i]); break;
 	case '-n': opt.resolve = false; break;
 	default:
-		// keep the old "gen-config.sh <outdir>" calling convention working
-		if (i == 0 && index(ARGV[i], '-') != 0)
-			opt.out = ARGV[i];
-		else
-			fail(`unknown argument '${ARGV[i]}'`);
+		fail(`unknown argument '${ARGV[i]}'`);
 	}
 }
 
