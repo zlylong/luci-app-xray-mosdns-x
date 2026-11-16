@@ -137,7 +137,9 @@ xray run -test -c /tmp/xm-test/chnroute/xray.json
 - 仓库：<https://github.com/zlylong/luci-app-xray-mosdns-x>
 - CI：构建 VM 每 2 分钟轮询 Gitea master 分支，有新提交则编译，
   并通过 Gitea Commit Status 回写结果（`build (build vm)` = pending/success/failure），
-- Gitea Actions 流水线在 `.gitea/workflows/build.yml`，由实例上的运行器执行，任务在官方镜像 `immortalwrt/sdk:x86-64-openwrt-25.12.2` 里跑，不再下载 SDK。此前在运行器容器里
+- Gitea Actions 流水线在 `.gitea/workflows/build.yml`，由实例上的运行器执行，任务在官方镜像 `immortalwrt/sdk:x86-64-openwrt-25.12.2` 里跑，不再下载 SDK。
+  推送 `v<版本号>` 标签（须与 Makefile 的 `PKG_VERSION` 一致）会在编译后自动创建发布并附上安装包，
+  发布说明取自带注释标签的内容，带连字符的标签（如 `v1.0.0-rc1`）发布为预发布版本此前在运行器容器里
   OpenWrt SDK 的 fakeroot 打包卡死过，所以任务设了 45 分钟超时
 
 ## 编译

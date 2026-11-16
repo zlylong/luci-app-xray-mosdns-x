@@ -3,6 +3,8 @@ name: build-package
 on:
   push:
     branches: [ main, master ]
+    # a version tag builds the package and publishes it as a release
+    tags: [ 'v*' ]
   pull_request:
   workflow_dispatch:
 
@@ -74,3 +76,64 @@ jobs:
         with:
           name: luci-app-xray-mosdns-x
           path: out/
+
+      # Only for version tags: create the release for the tag and attach the
+      # packages. The release text is the annotated tag's message; a tag with
+      # a hyphen (v1.2.3-rc1) is published as a pre-release.
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION=$(sed -n 's/^PKG_VERSION:=//p' Makefile)
+          if [ "$TAG" != "v$VERSION" ] && [ "${TAG%%-*}" != "v$VERSION" ]; then
+            echo "tag $TAG does not match PKG_VERSION $VERSION in the Makefile" >&2
+            exit 1
+          fi
+          API="$GITHUB_SERVER_URL/api/v1/repos/$GITHUB_REPOSITORY"
+          ( cd out && sha256sum *.apk > SHA256SUMS && cat SHA256SUMS )
+
+          RELEASE_ID=$(TAG="$TAG" API="$API" python3 - <<'PY'
+          import json, os, urllib.request, urllib.error
+
+          api, tag, token = os.environ["API"], os.environ["TAG"], os.environ["TOKEN"]
+
+          def call(method, path, data=None):
+              req = urllib.request.Request(api + path, method=method,
+                  data=json.dumps(data).encode() if data is not None else None,
+                  headers={"Authorization": "token " + token, "Content-Type": "application/json"})
+              try:
+                  with urllib.request.urlopen(req, timeout=60) as r:
+                      raw = r.read()
+                      return json.loads(raw) if raw.strip() else {}
+              except urllib.error.HTTPError as e:
+                  if e.code == 404:
+                      return None
+                  raise SystemExit("%s %s -> HTTP %d: %s" % (method, path, e.code, e.read().decode()[:300]))
+
+          # an annotated tag carries the release notes
+          info = call("GET", "/tags/" + tag) or {}
+          notes = (info.get("message") or "").strip()
+          sums = open("out/SHA256SUMS").read().strip()
+          body = (notes + "\n\n" if notes else "") + "```\n" + sums + "\n```\n"
+
+          rel = call("GET", "/releases/tags/" + tag)
+          if rel is None:
+              rel = call("POST", "/releases", {
+                  "tag_name": tag, "name": tag, "body": body,
+                  "prerelease": "-" in tag, "draft": False,
+              })
+          else:
+              # re-running the job for the same tag: replace the old files
+              for a in rel.get("assets") or []:
+                  call("DELETE", "/releases/%d/assets/%d" % (rel["id"], a["id"]))
+          print(rel["id"])
+          PY
+          )
+          echo "release id: $RELEASE_ID"
+          for f in out/*.apk out/SHA256SUMS; do
+            curl -fsS -X POST -H "Authorization: token $TOKEN" \
+              -F "attachment=@$f" "$API/releases/$RELEASE_ID/assets?name=$(basename "$f")" >/dev/null
+            echo "uploaded $(basename "$f")"
+          done
