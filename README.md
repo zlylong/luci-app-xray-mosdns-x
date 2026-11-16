@@ -104,7 +104,7 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
 │   ├── geoview.js                            Geo 查询：域名/IP 反查数据集、查看和下载数据集内容
 │   └── logview.js                            日志
 ├── tests/                                    夹具配置 + 生成/断言脚本
-└── ci/gitea-actions-build.yml                Gitea Actions CI（暂未启用）
+└── .gitea/workflows/build.yml                Gitea Actions：推送后用 SDK 编译并上传产物
 ```
 
 ## 测试
@@ -137,8 +137,8 @@ xray run -test -c /tmp/xm-test/chnroute/xray.json
 - 仓库：<https://github.com/zlylong/luci-app-xray-mosdns-x>
 - CI：构建 VM 每 2 分钟轮询 Gitea master 分支，有新提交则编译，
   并通过 Gitea Commit Status 回写结果（`build (build vm)` = pending/success/failure），
-- Gitea Actions 版流水线保留在 `ci/gitea-actions-build.yml`（暂未启用：容器内
-  OpenWrt SDK 的 fakeroot 会卡死，需换支持 fakeroot 的 runner 或宿主模式）
+- Gitea Actions 流水线在 `.gitea/workflows/build.yml`，由实例上的运行器执行。此前在运行器容器里
+  OpenWrt SDK 的 fakeroot 打包卡死过，所以任务设了 45 分钟超时
 
 ## 编译
 
