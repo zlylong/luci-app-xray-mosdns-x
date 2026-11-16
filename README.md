@@ -42,7 +42,8 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
 - **重载不断流**：`reload` 重新生成配置，nft 规则在单个事务内替换，procd 只重启配置文件
   发生变化的进程；生成失败时保留上一份可用配置继续运行
 - 国外 DNS 通过 Xray 的内部 SOCKS inbound 经代理解析，避免 DNS 泄漏
-- `filter_proxy_ipv6` 会丢弃代理域名的 AAAA 应答，防止 IPv6 绕过代理
+- AAAA 过滤分两个开关：`filter_proxy_ipv6`（代理域名，默认开，防止经 IPv6 绕过代理）和
+  `filter_direct_ipv6`（直连域名，默认关，上联没有可用 IPv6 时打开）
 - **节点组**：把几个节点组合成一个出口，可以建任意多个，和节点一样能被选作总节点或规则出口。
   策略有 最快 / 按顺序 / 轮询 / 随机；成员由 Xray 的 burstObservatory 探测，全部不可用时走组的兜底出口。
   “按顺序”由一个看护进程（`groups.uc watch`）每 10 秒检查一次：当前成员可用就保持不动，
@@ -180,7 +181,8 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
 | global | lan_devices | 直接指定设备名（如 `br-lan`），设置后不再查询 lan_ifaces |
 | dns | listen_port | mosdns 监听端口，默认 5335（不要用 5353，mDNS 占用） |
 | dns | redirect | nft 把 LAN 的 53 端口重定向到 mosdns（默认 1） |
-| dns | filter_proxy_ipv6 | 代理域名丢弃 AAAA |
+| dns | filter_proxy_ipv6 | 代理域名不返回 AAAA（默认 1） |
+| dns | filter_direct_ipv6 | 直连域名不返回 AAAA（默认 0） |
 | dns | domestic_dns | 国内 DoH/DoT/明文上游列表 |
 | dns | hosts | 静态域名映射（节点域名/VPS 域名解析用） |
 | global | default_action | 没有命中任何规则的流量：proxy（走总节点）/ direct |

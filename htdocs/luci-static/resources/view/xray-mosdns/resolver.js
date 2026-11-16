@@ -18,6 +18,7 @@ return view.extend({
 		s = m.section(form.NamedSection, 'dns', 'dns');
 		s.tab('general', _('接管'));
 		s.tab('upstream', _('上游'));
+		s.tab('ipv6tab', _('IPv6'));
 		s.tab('cachetab', _('缓存'));
 
 		/* ------------------------------------------------------------ takeover */
@@ -59,9 +60,13 @@ return view.extend({
 			_('格式为“域名 IP”，例如 v1.example.com 203.0.113.10。'));
 
 		/* ------------------------------------------------------------ cache / filter */
-		o = s.taboption('cachetab', form.Flag, 'filter_proxy_ipv6', _('丢弃代理域名的 AAAA 记录'),
-			_('未启用 IPv6 透明代理时保持开启，否则这些域名会通过 IPv6 绕过代理。'));
+		o = s.taboption('ipv6tab', form.Flag, 'filter_proxy_ipv6', _('代理域名不返回 AAAA'),
+			_('走代理解析的域名只返回 IPv4 地址。未启用 IPv6 透明代理时保持开启，否则这些域名会通过 IPv6 绕过代理直接出去。'));
 		o.default = '1';
+
+		o = s.taboption('ipv6tab', form.Flag, 'filter_direct_ipv6', _('直连域名不返回 AAAA'),
+			_('走国内上游解析的域名只返回 IPv4 地址。宽带没有 IPv6，或 IPv6 线路质量差、想让直连流量都走 IPv4 时开启。'));
+		o.default = '0';
 
 		o = s.taboption('cachetab', form.Value, 'cache_size', _('缓存条数'));
 		o.datatype = 'uinteger';

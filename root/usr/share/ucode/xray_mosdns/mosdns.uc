@@ -53,11 +53,13 @@ export function build(cfg, plan) {
 		plugin(tag, 'nftset', args);
 	}
 
+	const no_aaaa = { if: 'query_is_aaaa', exec: [ '_new_empty_response', '_return' ] };
+
 	// answer through the proxy; `mark` records the addresses for the kernel
 	function via_proxy(mark) {
 		let e = [];
 		if (d.filter_proxy_ipv6)
-			push(e, { if: 'query_is_aaaa', exec: [ '_new_empty_response', '_return' ] });
+			push(e, no_aaaa);
 		push(e, 'remote_seq');
 		if (mark && split)
 			push(e, 'add_proxy');
@@ -66,7 +68,10 @@ export function build(cfg, plan) {
 	}
 
 	function via_local(mark) {
-		let e = [ 'local_seq' ];
+		let e = [];
+		if (d.filter_direct_ipv6)
+			push(e, no_aaaa);
+		push(e, 'local_seq');
 		if (mark && split)
 			push(e, 'add_direct');
 		push(e, '_return');
@@ -186,9 +191,16 @@ export function build(cfg, plan) {
 
 	// names no rule claimed follow the default
 	if (plan.default_class == 'direct') {
-		push(main, 'local_seq');
+		for (let e in via_local(false))
+			push(main, e);
 	}
 	else if (plan.cn_ip_direct) {
+		// Unclassified names may turn out direct (mainland answer) or proxied.
+		// The proxied side is already kept on IPv4 by the fallback itself; when
+		// direct names must not get AAAA either, the domestic answer cannot be
+		// used for AAAA at all, so such queries follow the proxy setting.
+		if (d.filter_direct_ipv6)
+			push(main, d.filter_proxy_ipv6 ? no_aaaa : { if: 'query_is_aaaa', exec: [ 'remote_seq', '_return' ] });
 		push(main, 'fallback_seq');
 	}
 	else {

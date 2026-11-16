@@ -84,6 +84,7 @@ check(x["outbounds"][1]["settings"]["servers"][0]["password"] == 'p@ss"word', "p
 main = plugin(m, "main_sequence")["args"]["exec"]
 by_if = {e["if"]: e["exec"] for e in main if isinstance(e, dict) and "if" in e}
 check(by_if["rule_0"] == ["local_seq", "add_direct", "_return"], "chnroute: direct rule must resolve locally and mark the direct set")
+check(by_if["rule_1"][0] == {"if": "query_is_aaaa", "exec": ["_new_empty_response", "_return"]}, "default: proxied names get no AAAA, direct names do")
 check(by_if["rule_1"][-3:] == ["remote_seq", "add_proxy", "_return"], "chnroute: proxy rule must resolve remotely and mark the proxy set")
 check(by_if["rule_2"] == ["_new_nxdomain_response", "_return"], "chnroute: block rule must answer NXDOMAIN")
 order = [e["if"] for e in main if isinstance(e, dict) and "if" in e]
@@ -127,8 +128,11 @@ check(plugin(m, "rule_0")["args"]["domain"] == ["provider:geosite:openai", "doma
 check(x["inbounds"][0]["listen"] == "::", "ipv6: tproxy inbound must listen dual-stack")
 main = plugin(m, "main_sequence")["args"]["exec"]
 check(plugin(m, "rule_1")["args"]["domain"] == ["provider:geosite:gfw"], "legacy gfw mode becomes a rule row")
-check(main[-2] == {"if": "rule_1", "exec": ["remote_seq", "add_proxy", "_return"]}, "gfw: listed domains resolve remotely and are marked")
-check(main[-1] == "local_seq", "gfw: other names resolve locally")
+check(main[-4] == {"if": "rule_1", "exec": ["remote_seq", "add_proxy", "_return"]}, "gfw: listed domains resolve remotely and are marked")
+check(main[-2:] == ["local_seq", "_return"], "gfw: other names resolve locally")
+no_aaaa = {"if": "query_is_aaaa", "exec": ["_new_empty_response", "_return"]}
+check(main[-3] == no_aaaa, "gfw: direct AAAA filter on -> unclassified (direct) names get no AAAA")
+check(no_aaaa not in main[-4]["exec"], "gfw: proxy AAAA filter off -> proxied names keep AAAA")
 check("category-ads-all" not in json.dumps(m), "adblock off must not emit an ad rule")
 check(plugin(m, "add_proxy")["args"].get("set_name6") == "proxy6_dns", "ipv6: nftset must also fill the v6 set")
 check(plugin(m, "query_is_node") is None, "an IP-literal node needs no node matcher")

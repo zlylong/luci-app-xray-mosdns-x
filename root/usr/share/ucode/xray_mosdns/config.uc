@@ -77,7 +77,9 @@ export function load(confdir) {
 			redirect: bool(d.redirect, true),
 			cache_size: +str(d.cache_size, '8192'),
 			cache_everything: bool(d.cache_everything, true),
+			// answer AAAA queries with an empty response, per kind of domain
 			filter_proxy_ipv6: bool(d.filter_proxy_ipv6, true),
+			filter_direct_ipv6: bool(d.filter_direct_ipv6, false),
 			bootstrap: str(d.bootstrap, '223.5.5.5'),
 			remote_dns: str(d.remote_dns, '1.1.1.1'),
 			domestic: list(d.domestic_dns),

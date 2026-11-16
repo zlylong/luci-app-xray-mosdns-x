@@ -6,7 +6,12 @@
 
 var SCRIPT = '/usr/libexec/xray-mosdns/geoview.uc';
 var PREVIEW = 100;	/* lines shown in the page; the rest is offered as a download */
-var MAX_TAGS = 300;	/* dataset names shown at once */
+var MAX_TAGS = 300;	/* search results shown at once */
+var EXAMPLES = 5;	/* names of each kind shown before anything is typed */
+var PREFERRED = {
+	geosite: [ 'cn', 'google', 'netflix', 'telegram', 'category-ads-all' ],
+	geoip: [ 'cn', 'us', 'jp', 'telegram', 'private' ]
+};
 
 function kindLabel(kind) {
 	return kind === 'geoip' ? 'geoip' : 'geosite';
@@ -81,19 +86,42 @@ return view.extend({
 		}
 
 		/* ------------------------------------------------------------ dataset names */
+		function tagSpan(e) {
+			return E('span', { 'style': 'display:inline-block;margin:0 1em .4em 0;white-space:nowrap' },
+				tagLink(e.kind, e.tag));
+		}
+
 		function renderTags(text) {
 			text = (text || '').trim().toLowerCase().replace(/^geo(site|ip):/, '');
-			var found = all.filter(function(e) { return !text || e.tag.indexOf(text) >= 0; });
-			tagCount.textContent = text
-				? _('名称包含“%s”的数据集有 %d 个%s').format(text, found.length,
-					found.length > MAX_TAGS ? _('，显示前 %d 个，继续输入可以缩小范围。').format(MAX_TAGS) : '。')
-				: _('共 %d 个数据集（geosite %d 个，geoip %d 个）%s').format(all.length,
-					(tags.geosite || []).length, (tags.geoip || []).length,
-					all.length > MAX_TAGS ? _('，显示前 %d 个，输入名称来查找。').format(MAX_TAGS) : '。');
-			tagList.replaceChildren.apply(tagList, found.slice(0, MAX_TAGS).map(function(e) {
-				return E('span', { 'style': 'display:inline-block;margin:0 1em .4em 0;white-space:nowrap' },
-					tagLink(e.kind, e.tag));
-			}));
+
+			/* nothing typed yet: a few names of each kind are enough to show what to look for */
+			if (!text) {
+				/* well-known names first; whatever the file has fills the rest */
+				var sample = function(kind) {
+					var have = all.filter(function(e) { return e.kind === kind; });
+					var picked = [];
+					PREFERRED[kind].forEach(function(t) {
+						var hit = have.filter(function(e) { return e.tag === t; })[0];
+						if (hit) picked.push(hit);
+					});
+					have.forEach(function(e) {
+						if (picked.indexOf(e) < 0) picked.push(e);
+					});
+					return picked.slice(0, EXAMPLES);
+				};
+				tagCount.textContent = _('共 %d 个数据集（geosite %d 个，geoip %d 个）。下面各列出 %d 个作为示例，输入名称来查找其余的。')
+					.format(all.length, (tags.geosite || []).length, (tags.geoip || []).length, EXAMPLES);
+				tagList.replaceChildren(
+					E('div', {}, sample('geosite').map(tagSpan)),
+					E('div', {}, sample('geoip').map(tagSpan))
+				);
+				return;
+			}
+
+			var found = all.filter(function(e) { return e.tag.indexOf(text) >= 0; });
+			tagCount.textContent = _('名称包含“%s”的数据集有 %d 个%s').format(text, found.length,
+				found.length > MAX_TAGS ? _('，显示前 %d 个，继续输入可以缩小范围。').format(MAX_TAGS) : '。');
+			tagList.replaceChildren.apply(tagList, found.slice(0, MAX_TAGS).map(tagSpan));
 		}
 
 		var tagInput = E('input', {

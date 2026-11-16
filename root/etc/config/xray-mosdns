@@ -57,8 +57,11 @@ config dns 'dns'
 	option cache_size '8192'
 	# cache queries carrying EDNS (needed by most modern clients)
 	option cache_everything '1'
-	# drop AAAA answers for proxied domains (prevents IPv6 bypass)
+	# answer AAAA queries with an empty response:
+	#   for proxied domains (keeps them from bypassing the proxy over IPv6)
 	option filter_proxy_ipv6 '1'
+	#   for direct domains (when the uplink has no usable IPv6)
+	option filter_direct_ipv6 '0'
 	# bootstrap resolver used to reach DoH/DoT upstreams (direct, mainland)
 	option bootstrap '223.5.5.5'
 	# foreign DNS server queried through the proxy
