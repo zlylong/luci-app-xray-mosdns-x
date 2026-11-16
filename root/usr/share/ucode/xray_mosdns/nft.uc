@@ -52,7 +52,7 @@ function quoted(devs) {
 // names would come back poisoned. Queries mosdns itself sends to dnsmasq
 // carry the self mark and are left alone.
 function router_dns(cfg) {
-	return !!cfg.global.proxy_router && cfg.dns.enabled && cfg.dns.redirect;
+	return !!cfg.global.proxy_router && cfg.dns.redirect;
 }
 
 function router_redirect_rule(cfg) {
@@ -154,7 +154,7 @@ export function build(cfg, plan, env) {
 	// With the DNS watchdog the redirect chain belongs to it: it is declared
 	// here but neither flushed nor filled, so re-applying this file can never
 	// point LAN DNS at a mosdns that is not answering.
-	const watched = (d.enabled && d.redirect && d.fallback);
+	const watched = (d.redirect && d.fallback);
 	for (let c in [ 'prerouting', 'do_tproxy', 'dns_redirect', 'input_guard', 'output', 'out_mark', 'dns_redirect_out' ])
 		if (!(watched && (c == 'dns_redirect' || c == 'dns_redirect_out')))
 			push(out, `flush chain ${T} ${c}`);
@@ -219,7 +219,7 @@ export function build(cfg, plan, env) {
 		push(pre, `iifname "lo" meta mark ${mark} goto do_tproxy comment "router traffic, marked in output"`);
 	push(pre, `iifname != { ${lan} } return`);
 	push(pre, 'meta l4proto != { tcp, udp } return');
-	if (d.enabled && d.redirect)
+	if (d.redirect)
 		push(pre, 'meta l4proto { tcp, udp } th dport 53 return comment "handled by dns_redirect"');
 	// Per-device targets. Matched on every packet, ahead of the per-flow logic
 	// below: a device's UDP has to reach the same Xray inbound for the whole
@@ -269,7 +269,7 @@ export function build(cfg, plan, env) {
 		// the tproxy listener is only ever reached through the tproxy rule
 		`iifname != "lo" fib daddr type local meta l4proto { tcp, udp } th dport { ${join(', ', [ g.tproxy_port, ...map(plan.device_inbounds, i => i.port) ])} } drop`,
 	];
-	if (d.enabled && d.redirect) {
+	if (d.redirect) {
 		if (!watched)
 			push(redir, redirect_rule(d, lan));
 		push(guard, `iifname != { "lo", ${lan} } meta l4proto { tcp, udp } th dport ${d.listen_port} drop`);

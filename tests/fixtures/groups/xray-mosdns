@@ -8,7 +8,6 @@ config global 'global'
 	option proxy_router 'tcp'
 
 config dns 'dns'
-	option enabled '1'
 	option fallback '0'
 	list remote_dns '8.8.8.8'
 	list remote_dns 'https://1.1.1.1/dns-query'

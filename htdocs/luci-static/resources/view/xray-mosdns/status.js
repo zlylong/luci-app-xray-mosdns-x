@@ -44,9 +44,7 @@ return view.extend({
 			var rows = [
 				[ _('服务'), enabled ? xm.badge(_('已启用'), 'ok') : xm.badge(_('未启用')) ],
 				[ 'Xray', running(st.xray_running == 1, enabled) ],
-				[ 'mosdns-x', dns.enabled === '0'
-					? xm.badge(_('已关闭'))
-					: running(st.mosdns_running == 1, enabled) ],
+				[ 'mosdns-x', running(st.mosdns_running == 1, enabled) ],
 				[ _('防火墙规则'), fwOk
 					? xm.badge(_('已加载'), 'ok')
 					: (enabled ? xm.badge(_('未加载'), 'bad') : xm.badge(_('未加载'))) ],
@@ -55,14 +53,12 @@ return view.extend({
 				[ _('分流位置'), global.kernel_split === '0'
 					? _('全部进入 Xray 后分流')
 					: _('内核分流（直连流量不进 Xray）') ],
-				[ _('LAN DNS'), dns.enabled === '0'
-					? _('未接管')
-					: (dns.redirect === '0'
-						? _('mosdns-x 监听 :%s，未重定向').format(dns.listen_port || '5335')
-						: (!enabled || st.dns_redirect
-							? _('53 端口重定向到 mosdns-x :%s').format(dns.listen_port || '5335')
-							: E('span', {}, [ xm.badge(_('已回退'), 'warn'), ' ',
-								_('mosdns-x 没有应答，当前由 dnsmasq 解析') ]))) ]
+				[ _('LAN DNS'), dns.redirect === '0'
+					? _('mosdns-x 监听 :%s，未重定向').format(dns.listen_port || '5335')
+					: (!enabled || st.dns_redirect
+						? _('53 端口重定向到 mosdns-x :%s').format(dns.listen_port || '5335')
+						: E('span', {}, [ xm.badge(_('已回退'), 'warn'), ' ',
+							_('mosdns-x 没有应答，当前由 dnsmasq 解析') ])) ]
 			];
 			statusBox.replaceChildren(xm.infoTable(rows));
 		}

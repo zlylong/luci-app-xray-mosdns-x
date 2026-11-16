@@ -137,6 +137,8 @@ for opt in allow_coexist proxy_mode; do
 	uci -q delete "xray-mosdns.@global[0].$opt"
 done
 uci -q delete 'xray-mosdns.@dns[0].xray_dns_port'
+# mosdns-x has no switch of its own any more: it follows the service
+uci -q delete 'xray-mosdns.@dns[0].enabled'
 
 uci commit xray-mosdns
 

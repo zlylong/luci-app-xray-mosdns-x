@@ -90,7 +90,6 @@ export function load(confdir) {
 			bypass_ips: ip_list(g.bypass_ips, 'bypass_ips'),
 		},
 		dns: {
-			enabled: bool(d.enabled, true),
 			listen_port: port(d.listen_port, 5335, 'dns.listen_port'),
 			// hijack every LAN port-53 query to mosdns (dnsmasq config is left alone)
 			redirect: bool(d.redirect, true),
@@ -124,12 +123,6 @@ export function load(confdir) {
 
 	if (!match(cfg.global.probe_interval, /^[0-9]+[smh]$/))
 		fail(`invalid probe_interval '${cfg.global.probe_interval}' (use e.g. 30s, 1m)`);
-
-	// the kernel sets are filled from DNS answers; without mosdns only Xray can classify
-	if (!cfg.dns.enabled && cfg.global.kernel_split) {
-		note('dns is disabled: kernel split turned off, Xray classifies all traffic');
-		cfg.global.kernel_split = false;
-	}
 
 	if (!ipver(cfg.dns.bootstrap))
 		fail(`dns.bootstrap must be an IP address, got '${cfg.dns.bootstrap}'`);

@@ -50,7 +50,6 @@ config global 'global'
 	list bypass_ips ''
 
 config dns 'dns'
-	option enabled '1'
 	# mosdns-x / mosdns binary (manual build allowed)
 	option mosdns_bin '/usr/bin/mosdns'
 	# port mosdns listens on (avoid 5353, it belongs to mDNS)

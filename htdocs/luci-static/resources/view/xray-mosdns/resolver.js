@@ -13,7 +13,7 @@ return view.extend({
 		var m, s, o;
 
 		m = new form.Map(xm.CONF, 'DNS',
-			_('LAN 的 DNS 查询由 mosdns-x 应答。哪些域名走国内上游、哪些经代理解析、哪些被拦截（包括广告），都由“分流”页的规则决定；本地主机名和反向解析仍交给 dnsmasq。'));
+			_('mosdns-x 随插件的总开关一起启停。LAN 的 DNS 查询由它应答。哪些域名走国内上游、哪些经代理解析、哪些被拦截（包括广告），都由“分流”页的规则决定；本地主机名和反向解析仍交给 dnsmasq。'));
 
 		s = m.section(form.NamedSection, 'dns', 'dns');
 		s.tab('general', _('接管'));
@@ -23,28 +23,21 @@ return view.extend({
 		s.tab('logtab', _('拦截与日志'));
 
 		/* ------------------------------------------------------------ takeover */
-		o = s.taboption('general', form.Flag, 'enabled', _('启用 mosdns-x'),
-			_('关闭后不启动 mosdns-x，内核分流也随之关闭（集合靠 DNS 应答填充）。'));
-		o.default = '1';
-		o.rmempty = false;
-
 		o = s.taboption('general', form.Flag, 'redirect', _('重定向 LAN 的 53 端口'),
 			_('从 LAN 进入的所有 DNS 查询（包括写死 DNS 服务器的客户端）都交给 mosdns-x。dnsmasq 的配置不会被改动；仅当你自行把客户端指向 mosdns-x 时才关闭。'));
 		o.default = '1';
 		o.rmempty = false;
-		o.depends('enabled', '1');
 
 		o = s.taboption('general', form.Flag, 'fallback', _('故障时交给 dnsmasq'),
 			_('看门狗每 5 秒探测一次 mosdns-x：连续两次没有应答就撤掉重定向，让 dnsmasq 接管 LAN 的解析，恢复应答后自动切回。回退期间域名规则不再学到新地址，分流只按 IP 规则和默认出口生效。关闭后，mosdns-x 故障时 LAN 上的解析会全部超时。'));
 		o.default = '1';
 		o.rmempty = false;
-		o.depends({ enabled: '1', redirect: '1' });
+		o.depends('redirect', '1');
 
 		o = s.taboption('general', form.Value, 'listen_port', _('监听端口'),
 			_('不要用 5353，那是 mDNS 的端口。'));
 		o.datatype = 'port';
 		o.default = '5335';
-		o.depends('enabled', '1');
 
 		o = s.taboption('general', form.Value, 'mosdns_bin', _('mosdns-x 程序路径'));
 		o.default = '/usr/bin/mosdns';

@@ -253,7 +253,6 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-<版本>-r1.apk
   需要把它们的服务器地址加进“不代理的目标”
 - DNS 回退到 dnsmasq 期间，内核集合不再更新：域名规则只对之前学到的地址有效，新解析的代理域名
   可能拿到被污染的地址。回退是为了保住国内访问，不是完整的降级方案
-- `dns.enabled=0` 时无法填充集合，内核分流自动关闭
 - *_dns 集合元素 3 天过期；DNS 规则变化时集合会清空并随 mosdns 重启重新学习
 
 - IPv6 TProxy 为实验性功能，需要节点本身可达 IPv6；IPv6 分流规则与 IPv4 共用 geosite/geoip 规则
