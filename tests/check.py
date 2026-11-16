@@ -119,6 +119,7 @@ RULE = 'iifname { "br-lan" } meta l4proto { tcp, udp } th dport 53 counter redir
 check(chain(n, "dns_redirect") == [] and "flush chain inet xray-mosdns dns_redirect" not in n, "watchdog owns the redirect chain: nft.rules neither fills nor flushes it")
 check(chain(n, "output") == [] and chain(n, "out_mark") == [] and "sockopt" not in json.dumps(x["outbounds"][-2]) and "so_mark" not in json.dumps(m), "router traffic off (default): no output rules, no socket marks")
 check(not any('iifname "lo"' in r for r in chain(n, "prerouting")), "router traffic off: nothing is accepted from lo")
+check(not any(p["tag"] in ("adblock", "adallow") for p in m["data_providers"]) and plugin(m, "query_is_ad_exception") is None, "no subscription: no blocklist providers")
 FLUSH = "flush chain inet xray-mosdns dns_redirect\nflush chain inet xray-mosdns dns_redirect_out\n"
 on = open(f"{out}/chnroute/nft-dns-on.rules").read()
 check(on == FLUSH + "add rule inet xray-mosdns dns_redirect " + RULE + "\n", "watchdog 'on' rules")
@@ -201,6 +202,16 @@ check(chain(n, "dns_redirect_out") == ["meta mark != 0xff fib daddr type local m
 check(all(o.get("streamSettings", {}).get("sockopt", {}).get("mark") == 255 for o in x["outbounds"] if o["tag"] != "block"), "router: every Xray outbound carries the self mark")
 fl = plugin(m, "forward_local")["args"]["upstream"]
 check(all(u.get("so_mark") == 255 for u in fl) and plugin(m, "forward_lan")["args"]["upstream"][0].get("so_mark") == 255, "router: mosdns' direct and dnsmasq queries carry the self mark")
+
+# blocklist subscriptions
+prov = {p["tag"]: p for p in m["data_providers"]}
+check(prov.get("adblock") == {"tag": "adblock", "file": "/tmp/xm-adlists/block.txt", "auto_reload": True} and prov.get("adallow", {}).get("file") == "/tmp/xm-adlists/allow.txt", "adlist: merged files are data providers with auto reload")
+gmain = plugin(m, "main_sequence")["args"]["exec"]
+adrow = [e for e in gmain if isinstance(e, dict) and "query_is_ad_exception" in e.get("if", "")]
+check(len(adrow) == 1 and adrow[0]["exec"] == ["_new_nxdomain_response", "_return"] and adrow[0]["if"].endswith("&& (! query_is_ad_exception)"), "adlist: blocked unless one of the lists' own exceptions matches")
+adtag = adrow[0]["if"].split(" ")[0] if adrow else "?"
+check(plugin(m, adtag)["args"]["domain"] == ["provider:adblock"] and plugin(m, "query_is_ad_exception")["args"]["domain"] == ["provider:adallow"], "adlist: matchers")
+check("adlist:" not in json.dumps(x), "adlist: the pseudo value never reaches Xray")
 
 # per-device routing
 tin = {i["tag"]: i for i in x["inbounds"]}

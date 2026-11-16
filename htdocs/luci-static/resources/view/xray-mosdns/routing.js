@@ -23,7 +23,7 @@ function ruleValues(sid) {
 /* Rows every install starts with. They are ordinary rules: the presets
    below only switch them on or off and set the default. */
 var BUILTIN = {
-	builtin_ads:       { remarks: _('广告'),       rule_type: 'domain', value: 'geosite:category-ads-all', outbound: 'block' },
+	builtin_adlist:    { remarks: _('广告（订阅列表）'), rule_type: 'domain', value: 'adlist:all',          outbound: 'block' },
 	builtin_cn_domain: { remarks: _('国内域名'),   rule_type: 'domain', value: 'geosite:cn',               outbound: 'direct' },
 	builtin_cn_ip:     { remarks: _('国内 IP'),    rule_type: 'ip',     value: 'geoip:cn',                 outbound: 'direct' },
 	builtin_noncn:     { remarks: _('非国内域名'), rule_type: 'domain', value: 'geosite:geolocation-!cn',  outbound: 'main' },
@@ -147,7 +147,7 @@ return view.extend({
 		};
 
 		o = s.option(form.DynamicList, 'value', _('匹配值'),
-			_('域名：geosite:google、domain:example.com、full:a.example.com、keyword:abc。' +
+			_('域名：geosite:google、domain:example.com、full:a.example.com、keyword:abc，adlist:all 表示“广告过滤”页里订阅的全部列表。' +
 			  'IP：192.0.2.0/24、geoip:telegram。端口：443、1000-2000。协议：tcp 或 udp。'));
 		o.modalonly = true;
 		o.rmempty = false;

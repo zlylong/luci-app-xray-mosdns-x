@@ -75,5 +75,13 @@
 			"type": "view",
 			"path": "xray-mosdns/geoview"
 		}
+	},
+	"admin/services/xray-mosdns/adblock": {
+		"title": "广告过滤",
+		"order": 45,
+		"action": {
+			"type": "view",
+			"path": "xray-mosdns/adblock"
+		}
 	}
 }

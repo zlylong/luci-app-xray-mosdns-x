@@ -140,6 +140,15 @@ env.geoip = function(tag) {
 	return geoip_seen[tag];
 };
 
+// mosdns refuses to start when a data provider's file is missing, and the
+// first download may not have happened yet
+if (cfg.adblock.lists > 0) {
+	system([ 'mkdir', '-p', cfg.adblock.dir ]);
+	for (let f in [ 'block.txt', 'allow.txt' ])
+		if (!fs.access(`${cfg.adblock.dir}/${f}`))
+			fs.writefile(`${cfg.adblock.dir}/${f}`, '');
+}
+
 function write(name, data) {
 	const tmp = `${opt.out}/.${name}.tmp`;
 	if (fs.writefile(tmp, data) == null || !fs.rename(tmp, `${opt.out}/${name}`))

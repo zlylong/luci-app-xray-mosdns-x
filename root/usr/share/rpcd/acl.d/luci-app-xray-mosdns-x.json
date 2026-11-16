@@ -45,6 +45,9 @@
 				],
 				"/usr/libexec/xray-mosdns/geoview.uc": [
 					"exec"
+				],
+				"/usr/libexec/xray-mosdns/adlist.uc": [
+					"exec"
 				]
 			}
 		},

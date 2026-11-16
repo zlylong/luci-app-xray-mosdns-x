@@ -97,3 +97,23 @@ config device
 	option enabled '0'
 	list mac 'aa:bb:cc:00:00:99'
 	option outbound 'a'
+
+# blocklist subscriptions
+config adblock 'adblock'
+	option dir '/tmp/xm-adlists'
+
+config adlist 'adg'
+	option enabled '1'
+	option name 'AdGuard DNS filter'
+	option url 'https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt'
+
+config adlist 'off'
+	option enabled '0'
+	option name 'disabled'
+	option url 'https://example.invalid/x.txt'
+
+config rule 'builtin_adlist'
+	option enabled '1'
+	option rule_type 'domain'
+	list value 'adlist:all'
+	option outbound 'block'

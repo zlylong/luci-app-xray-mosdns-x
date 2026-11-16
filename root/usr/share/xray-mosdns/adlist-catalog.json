@@ -1,0 +1,551 @@
+{
+	"source": "https://adguardteam.github.io/HostlistsRegistry/assets/filters.json",
+	"groups": [
+		{
+			"id": 1,
+			"name": "General"
+		},
+		{
+			"id": 2,
+			"name": "Other"
+		},
+		{
+			"id": 3,
+			"name": "Regional"
+		},
+		{
+			"id": 4,
+			"name": "Security"
+		}
+	],
+	"filters": [
+		{
+			"id": 24,
+			"group": 1,
+			"name": "1Hosts (Lite)",
+			"description": "List for blocking pesky ads, trackers, and malware. Balanced version: set & forget, doesn't hamper user experience.",
+			"homepage": "https://badmojr.github.io/1Hosts/",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_24.txt"
+		},
+		{
+			"id": 70,
+			"group": 1,
+			"name": "1Hosts (Xtra)",
+			"description": "Aggressive version - maximum blocking against emerging privacy threats. May (occasionally) disrupt legit sites or services.",
+			"homepage": "https://badmojr.github.io/1Hosts/",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_70.txt"
+		},
+		{
+			"id": 1,
+			"group": 1,
+			"name": "AdGuard DNS filter",
+			"description": "List composed of several filters (AdGuard Base filter, Social Media filter, Tracking Protection filter, Mobile Ads filter, EasyList and EasyPrivacy) and simplified specifically to be better compatible with DNS-level ad blocking",
+			"homepage": "https://github.com/AdguardTeam/AdGuardSDNSFilter",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt"
+		},
+		{
+			"id": 59,
+			"group": 1,
+			"name": "AdGuard DNS Popup Hosts filter",
+			"description": "Filter includes rules for sites that open in a new window, composed from AdGuard, EasyList, ABPindo filters and improved for compatibility with DNS-level pop-up blocking.",
+			"homepage": "https://github.com/AdguardTeam/AdGuardSDNSFilter",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_59.txt"
+		},
+		{
+			"id": 53,
+			"group": 1,
+			"name": "AWAvenue Ads Rule",
+			"description": "Uses Adblock syntax to fight against various advertising SDKs in Android apps on the network level, preventing them from loading.",
+			"homepage": "https://awavenue.top/",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_53.txt"
+		},
+		{
+			"id": 4,
+			"group": 1,
+			"name": "Dan Pollock's List",
+			"description": "List for blocking ads and preventing user tracking",
+			"homepage": "https://someonewhocares.org/",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_4.txt"
+		},
+		{
+			"id": 34,
+			"group": 1,
+			"name": "HaGeZi's Normal Blocklist",
+			"description": "Broom - Cleans the Internet and protects your privacy! Blocks Ads, Affiliate, Tracking, Metrics, Telemetry, Phishing, Malware, Scam, Fake, Coins and other Crap.",
+			"homepage": "https://github.com/hagezi/dns-blocklists",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_34.txt"
+		},
+		{
+			"id": 48,
+			"group": 1,
+			"name": "HaGeZi's Pro Blocklist",
+			"description": "Big broom - Cleans the Internet and protects your privacy! Blocks Ads, Affiliate, Tracking, Metrics, Telemetry, Phishing, Malware, Scam, Fake, Coins and other Crap.",
+			"homepage": "https://github.com/hagezi/dns-blocklists",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_48.txt"
+		},
+		{
+			"id": 51,
+			"group": 1,
+			"name": "HaGeZi's Pro++ Blocklist",
+			"description": "Sweeper - Aggressive cleans the Internet and protects your privacy! Blocks Ads, Affiliate, Tracking, Metrics, Telemetry, Phishing, Malware, Scam, Fake, Coins and other Crap.",
+			"homepage": "https://github.com/hagezi/dns-blocklists",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_51.txt"
+		},
+		{
+			"id": 49,
+			"group": 1,
+			"name": "HaGeZi's Ultimate Blocklist",
+			"description": "Ultimate Sweeper - Strictly cleans the Internet and protects your privacy! Blocks Ads, Affiliate, Tracking (+Referral), Metrics, Telemetry, Phishing, Malware, Scam, Free Hoster, Fake, Coins and other Crap.",
+			"homepage": "https://github.com/hagezi/dns-blocklists",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_49.txt"
+		},
+		{
+			"id": 27,
+			"group": 1,
+			"name": "OISD Blocklist Big",
+			"description": "List for blocking ads and trackers. Prioritizes functionality over blocking. Risks of incorrect blocking are higher than in the small version of OISD Blocklist.",
+			"homepage": "https://oisd.nl/",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_27.txt"
+		},
+		{
+			"id": 5,
+			"group": 1,
+			"name": "OISD Blocklist Small",
+			"description": "List for blocking ads and trackers. Prioritizes functionality over blocking.",
+			"homepage": "https://oisd.nl/",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_5.txt"
+		},
+		{
+			"id": 3,
+			"group": 1,
+			"name": "Peter Lowe's Blocklist",
+			"description": "Blocklist with hostnames of ad and tracking servers",
+			"homepage": "https://pgl.yoyo.org/adservers/",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_3.txt"
+		},
+		{
+			"id": 69,
+			"group": 1,
+			"name": "ShadowWhisperer Tracking List",
+			"description": "Blocks domains related to analytics, diagnostics, metrics, location, and public IP detection.",
+			"homepage": "https://github.com/ShadowWhisperer/BlockLists",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_69.txt"
+		},
+		{
+			"id": 33,
+			"group": 1,
+			"name": "Steven Black's List",
+			"description": "Unified hosts file (adware + malware).",
+			"homepage": "https://github.com/StevenBlack/hosts",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_33.txt"
+		},
+		{
+			"id": 39,
+			"group": 2,
+			"name": "Dandelion Sprout's Anti Push Notifications",
+			"description": "Aims to remove push notifications on sites. Combines eligible rules from AdGuard Popups Filter's anti-push sections and Fanboy's Notifications Blocking List.",
+			"homepage": "https://github.com/DandelionSprout/adfilt",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_39.txt"
+		},
+		{
+			"id": 6,
+			"group": 2,
+			"name": "Dandelion Sprout's Game Console Adblock List",
+			"description": "List for blocking ads on videogame consoles that use AdGuard Home",
+			"homepage": "https://github.com/DandelionSprout/adfilt",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_6.txt"
+		},
+		{
+			"id": 45,
+			"group": 2,
+			"name": "HaGeZi's Allowlist Referral",
+			"description": "This list unblocks affiliate & tracking referral links that appear in mails, search results etc.",
+			"homepage": "https://github.com/hagezi/dns-blocklists#referral",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_45.txt"
+		},
+		{
+			"id": 46,
+			"group": 2,
+			"name": "HaGeZi's Anti-Piracy Blocklist",
+			"description": "Blocks websites and services that are mainly used for illegal distribution of copyrighted content.",
+			"homepage": "https://github.com/hagezi/dns-blocklists#piracy",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_46.txt"
+		},
+		{
+			"id": 67,
+			"group": 2,
+			"name": "HaGeZi's Apple Tracker Blocklist",
+			"description": "Blocks Apple native broadband trackers that track your activity.",
+			"homepage": "https://github.com/hagezi/dns-blocklists",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_67.txt"
+		},
+		{
+			"id": 47,
+			"group": 2,
+			"name": "HaGeZi's Gambling Blocklist",
+			"description": "Blocks gambling content.",
+			"homepage": "https://github.com/hagezi/dns-blocklists#gambling",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_47.txt"
+		},
+		{
+			"id": 73,
+			"group": 2,
+			"name": "HaGeZi's Huawei Tracker Blocklist",
+			"description": "Blocks Huawei native trackers built into devices, services, and operating systems that track your activity.",
+			"homepage": "https://github.com/hagezi/dns-blocklists",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_73.txt"
+		},
+		{
+			"id": 72,
+			"group": 2,
+			"name": "HaGeZi's LG webOS Tracker Blocklist",
+			"description": "Blocks LG webOS native trackers built into devices, services, and operating systems that track your activity.",
+			"homepage": "https://github.com/hagezi/dns-blocklists",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_72.txt"
+		},
+		{
+			"id": 66,
+			"group": 2,
+			"name": "HaGeZi's OPPO & Realme Tracker Blocklist",
+			"description": "Blocks OPPO & Realme native broadband trackers that track your activity.",
+			"homepage": "https://github.com/hagezi/dns-blocklists",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_66.txt"
+		},
+		{
+			"id": 61,
+			"group": 2,
+			"name": "HaGeZi's Samsung Tracker Blocklist",
+			"description": "Blocks Samsung native broadband trackers that track your activity.",
+			"homepage": "https://github.com/hagezi/dns-blocklists",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_61.txt"
+		},
+		{
+			"id": 65,
+			"group": 2,
+			"name": "HaGeZi's Vivo Tracker Blocklist",
+			"description": "Blocks Vivo native broadband trackers that track your activity.",
+			"homepage": "https://github.com/hagezi/dns-blocklists",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_65.txt"
+		},
+		{
+			"id": 63,
+			"group": 2,
+			"name": "HaGeZi's Windows/Office Tracker Blocklist",
+			"description": "Blocks Windows/Office native broadband trackers that track your activity.",
+			"homepage": "https://github.com/hagezi/dns-blocklists",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_63.txt"
+		},
+		{
+			"id": 60,
+			"group": 2,
+			"name": "HaGeZi's Xiaomi Tracker Blocklist",
+			"description": "Blocks Xiaomi native broadband trackers that track your activity.",
+			"homepage": "https://github.com/hagezi/dns-blocklists",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_60.txt"
+		},
+		{
+			"id": 37,
+			"group": 2,
+			"name": "No Google",
+			"description": "Completely blocks all Google-related domains (including YouTube).",
+			"homepage": "https://github.com/nickspaargaren/no-google",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_37.txt"
+		},
+		{
+			"id": 7,
+			"group": 2,
+			"name": "Perflyst and Dandelion Sprout's Smart-TV Blocklist",
+			"description": "List for preventing smart TVs from sending metadata to the vendor, and for blocking ads in apps and movie services",
+			"homepage": "https://github.com/Perflyst/PiHoleBlocklist",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_7.txt"
+		},
+		{
+			"id": 57,
+			"group": 2,
+			"name": "ShadowWhisperer's Dating List",
+			"description": "Blocks dating websites.",
+			"homepage": "https://github.com/ShadowWhisperer/BlockLists",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_57.txt"
+		},
+		{
+			"id": 29,
+			"group": 3,
+			"name": "CHN: AdRules DNS List",
+			"description": "List for blocking ads in the Chinese region",
+			"homepage": "https://github.com/Cats-Team/AdRules",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_29.txt"
+		},
+		{
+			"id": 21,
+			"group": 3,
+			"name": "CHN: anti-AD",
+			"description": "List for blocking ads in the Chinese region. Aims at privacy protection.",
+			"homepage": "https://anti-ad.net/",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_21.txt"
+		},
+		{
+			"id": 35,
+			"group": 3,
+			"name": "HUN: Hufilter",
+			"description": "The Hungarian Adblock List.",
+			"homepage": "https://github.com/hufilter/hufilter",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_35.txt"
+		},
+		{
+			"id": 22,
+			"group": 3,
+			"name": "IDN: ABPindo",
+			"description": "Filter complementary to EasyList for blocking ads on Indonesian and Malaysian websites",
+			"homepage": "https://github.com/ABPindo/indonesianadblockrules",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_22.txt"
+		},
+		{
+			"id": 19,
+			"group": 3,
+			"name": "IRN: PersianBlocker list",
+			"description": "Optimal and extensive list for blocking ads and trackers on Persian language sites",
+			"homepage": "https://github.com/PersianBlocker/PersianBlocker",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_19.txt"
+		},
+		{
+			"id": 43,
+			"group": 3,
+			"name": "ISR: EasyList Hebrew",
+			"description": "List for blocking ads in Hebrew.",
+			"homepage": "https://github.com/easylist/EasyListHebrew",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_43.txt"
+		},
+		{
+			"id": 25,
+			"group": 3,
+			"name": "KOR: filterslists-KO",
+			"description": "A DNS version of filterslist-KO, a filter for Korean-language websites.",
+			"homepage": "https://github.com/FilteringDev/filterslists-KO",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_25.txt"
+		},
+		{
+			"id": 15,
+			"group": 3,
+			"name": "KOR: YousList",
+			"description": "List for blocking ads mainly on Korean websites",
+			"homepage": "https://github.com/yous/YousList",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_15.txt"
+		},
+		{
+			"id": 36,
+			"group": 3,
+			"name": "LIT: EasyList Lithuania",
+			"description": "This is a (currently pretty small and not much tested) version of EasyList Lithuania designed for use with domains-based tools.",
+			"homepage": "https://github.com/EasyList-Lithuania/easylist_lithuania",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_36.txt"
+		},
+		{
+			"id": 20,
+			"group": 3,
+			"name": "MKD: Macedonian Pi-hole Blocklist",
+			"description": "List for blocking ads on Macedonian websites",
+			"homepage": "https://github.com/cchevy/macedonian-pi-hole-blocklist",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_20.txt"
+		},
+		{
+			"id": 13,
+			"group": 3,
+			"name": "NOR: Dandelion Sprouts nordiske filtre",
+			"description": "Dandelion Sprout's Nordic Filters (DNS filtering in AdGuard Home, AdGuard for Android, and AdGuard for Windows)",
+			"homepage": "https://github.com/DandelionSprout/adfilt",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_13.txt"
+		},
+		{
+			"id": 41,
+			"group": 3,
+			"name": "POL: CERT Polska List of malicious domains",
+			"description": "CERT Polska deals with incidents and threats originating or aiming at systems in the .pl domain or connected to NASK's or other Polish Internet provider's network.",
+			"homepage": "https://cert.pl/posts/2020/03/ostrzezenia_phishing/",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_41.txt"
+		},
+		{
+			"id": 14,
+			"group": 3,
+			"name": "POL: Polish filters for Pi-hole",
+			"description": "Polish filters for Pi-hole.",
+			"homepage": "https://www.certyficate.it/",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_14.txt"
+		},
+		{
+			"id": 17,
+			"group": 3,
+			"name": "SWE: Frellwit's Swedish Hosts File",
+			"description": "List for blocking ads, tracking, scams & malware mainly on Swedish websites",
+			"homepage": "https://github.com/lassekongo83/Frellwits-filter-lists/",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_17.txt"
+		},
+		{
+			"id": 26,
+			"group": 3,
+			"name": "TUR: turk-adlist",
+			"description": "List for blocking ads and annoying elements on Turkish websites",
+			"homepage": "https://github.com/bkrucarci/turk-adlist",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_26.txt"
+		},
+		{
+			"id": 40,
+			"group": 3,
+			"name": "TUR: Turkish Ad Hosts",
+			"description": "Necessary hosts file to block tracking and possibly advertising networks in commonly used mobile apps (and possibly web pages) in Turkey.",
+			"homepage": "https://github.com/symbuzzer/Turkish-Ad-Hosts",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_40.txt"
+		},
+		{
+			"id": 62,
+			"group": 3,
+			"name": "Ukrainian Security Filter",
+			"description": "Filters malicious web resources (phishing, online fraud, malware, etc.) targeting Ukrainian citizens",
+			"homepage": "https://github.com/braveinnovators/ukrainian-security-filter",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_62.txt"
+		},
+		{
+			"id": 16,
+			"group": 3,
+			"name": "VNM: ABPVN List",
+			"description": "List for blocking ads on Vietnamese websites",
+			"homepage": "http://abpvn.com/",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_16.txt"
+		},
+		{
+			"id": 12,
+			"group": 4,
+			"name": "Dandelion Sprout's Anti-Malware List",
+			"description": "Dandelion Sprout's Anti-Malware List (DNS filtering in AdGuard Home, AdGuard for Android, and AdGuard for Windows)",
+			"homepage": "https://github.com/DandelionSprout/adfilt",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_12.txt"
+		},
+		{
+			"id": 55,
+			"group": 4,
+			"name": "HaGeZi's Badware Hoster Blocklist",
+			"description": "Blocks known free hosters that also host badware via user content to prevent the use of these hosters for malicious purposes.",
+			"homepage": "https://github.com/hagezi/dns-blocklists",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_55.txt"
+		},
+		{
+			"id": 71,
+			"group": 4,
+			"name": "HaGeZi's DNS Rebind Protection",
+			"description": "DNS Rebind Protection is a security mechanism that prevents attackers from manipulating DNS responses to make a domain resolve to private or local IP addresses, thereby blocking malicious scripts from accessing internal networks through DNS rebinding attacks.",
+			"homepage": "https://github.com/hagezi/dns-blocklists",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_71.txt"
+		},
+		{
+			"id": 54,
+			"group": 4,
+			"name": "HaGeZi's DynDNS Blocklist",
+			"description": "Blocks dynamic DNS services to protect against malicious use in phishing campaigns and others.",
+			"homepage": "https://github.com/hagezi/dns-blocklists",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_54.txt"
+		},
+		{
+			"id": 52,
+			"group": 4,
+			"name": "HaGeZi's Encrypted DNS/VPN/TOR/Proxy Bypass",
+			"description": "Prevents methods to bypass your DNS, blocks encrypted DNS, VPN, TOR, and proxies. Prevention of bypassing is not guaranteed.",
+			"homepage": "https://github.com/hagezi/dns-blocklists#bypass",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_52.txt"
+		},
+		{
+			"id": 56,
+			"group": 4,
+			"name": "HaGeZi's The World's Most Abused TLDs",
+			"description": "The Top Most Abused Top Level Domains, merged from HaGeZi, Yokoffing, DandelionSprout and SpamHAUS.",
+			"homepage": "https://github.com/hagezi/dns-blocklists",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_56.txt"
+		},
+		{
+			"id": 44,
+			"group": 4,
+			"name": "HaGeZi's Threat Intelligence Feeds",
+			"description": "Increases security significantly! Blocks Malware, Cryptojacking, Spam, Scam and Phishing.",
+			"homepage": "https://github.com/hagezi/dns-blocklists",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_44.txt"
+		},
+		{
+			"id": 68,
+			"group": 4,
+			"name": "HaGeZi's URL Shortener Blocklist",
+			"description": "Blocks URL shorteners.",
+			"homepage": "https://github.com/hagezi/dns-blocklists",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_68.txt"
+		},
+		{
+			"id": 11,
+			"group": 4,
+			"name": "Malicious URL Blocklist (URLHaus)",
+			"description": "Blocklist of malicious websites based on the Database dump of Abuse.ch URLhaus",
+			"homepage": "https://urlhaus.abuse.ch/",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_11.txt"
+		},
+		{
+			"id": 8,
+			"group": 4,
+			"name": "NoCoin Filter List",
+			"description": "List for blocking browser-based crypto mining",
+			"homepage": "https://github.com/hoshsadiq/adblock-nocoin-list/",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_8.txt"
+		},
+		{
+			"id": 18,
+			"group": 4,
+			"name": "Phishing Army",
+			"description": "The blocklist to filter phishing domains",
+			"homepage": "https://phishing.army/",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_18.txt"
+		},
+		{
+			"id": 30,
+			"group": 4,
+			"name": "Phishing URL Blocklist (PhishTank and OpenPhish)",
+			"description": "Blocklist of phishing websites, based on PhishTank and OpenPhish lists",
+			"homepage": "https://gitlab.com/malware-filter/phishing-filter",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_30.txt"
+		},
+		{
+			"id": 10,
+			"group": 4,
+			"name": "Scam Blocklist by DurableNapkin",
+			"description": "List for blocking untrustworthy websites",
+			"homepage": "https://github.com/durablenapkin/scamblocklist",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_10.txt"
+		},
+		{
+			"id": 42,
+			"group": 4,
+			"name": "ShadowWhisperer's Malware List",
+			"description": "Malicious Sites, PUPs, Malware, Browser Hijackers, Phishing Sites",
+			"homepage": "https://github.com/ShadowWhisperer/BlockLists",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_42.txt"
+		},
+		{
+			"id": 31,
+			"group": 4,
+			"name": "Stalkerware Indicators List",
+			"description": "Indicators of compromise on Stalkerware applications for Android and iOS.",
+			"homepage": "https://github.com/AssoEchap/stalkerware-indicators",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_31.txt"
+		},
+		{
+			"id": 9,
+			"group": 4,
+			"name": "The Big List of Hacked Malware Web Sites",
+			"description": "List of websites that are hacked with malware, ransomware or trojans",
+			"homepage": "https://github.com/mitchellkrogza/The-Big-List-of-Hacked-Malware-Web-Sites",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_9.txt"
+		},
+		{
+			"id": 50,
+			"group": 4,
+			"name": "uBlock₀ filters – Badware risks",
+			"description": "For sites documented to put users at risk of installing adware/crapware/malware, having login credentials stolen, etc. The purpose is to at least ensure a user is warned of the risks ahead.",
+			"homepage": "https://github.com/uBlockOrigin/uAssets",
+			"url": "https://adguardteam.github.io/HostlistsRegistry/assets/filter_50.txt"
+		}
+	]
+}

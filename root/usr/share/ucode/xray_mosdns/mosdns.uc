@@ -14,10 +14,15 @@ import { note } from 'xray_mosdns.util';
 const TABLE = 'xray-mosdns';
 
 // Xray domain syntax -> mosdns domain syntax
-function domain_entries(rule) {
+function domain_entries(rule, cfg) {
 	let out = [];
 	for (let v in rule.values) {
-		if (index(v, 'geosite:') == 0)
+		if (index(v, 'adlist:') == 0) {
+			// every enabled subscription, merged into one file by adlist.uc
+			if (cfg.adblock.lists > 0)
+				push(out, 'provider:adblock');
+		}
+		else if (index(v, 'geosite:') == 0)
 			push(out, `provider:geosite:${substr(v, 8)}`);
 		else if (match(v, /^(domain|full|keyword|regexp):/))
 			push(out, v);
@@ -173,23 +178,30 @@ export function build(cfg, plan) {
 
 	// rules, in the same order Xray evaluates them
 	let i = 0;
+	let ad_exception = false;
 	for (let r in plan.rules) {
 		if (r.type != 'domain')
 			continue;
-		const entries = domain_entries(r);
+		const entries = domain_entries(r, cfg);
 		if (!length(entries))
 			continue;
 		const tag = `rule_${i++}`;
 		qmatch(tag, { domain: entries });
+		// exceptions (@@ rules) shipped inside the subscribed lists
+		const cond = ('provider:adblock' in entries) ? `${tag} && (! query_is_ad_exception)` : tag;
+		if (cond != tag && !ad_exception) {
+			ad_exception = true;
+			qmatch('query_is_ad_exception', { domain: [ 'provider:adallow' ] });
+		}
 		switch (r.class) {
 		case 'block':
-			push(main, { if: tag, exec: [ '_new_nxdomain_response', '_return' ] });
+			push(main, { if: cond, exec: [ '_new_nxdomain_response', '_return' ] });
 			break;
 		case 'direct':
-			push(main, { if: tag, exec: via_local(true) });
+			push(main, { if: cond, exec: via_local(true) });
 			break;
 		default:
-			push(main, { if: tag, exec: via_proxy(true) });
+			push(main, { if: cond, exec: via_proxy(true) });
 		}
 	}
 
@@ -231,6 +243,11 @@ export function build(cfg, plan) {
 		data_providers: [
 			{ tag: 'geosite', file: '/usr/share/v2ray/geosite.dat', auto_reload: true },
 			{ tag: 'geoip', file: '/usr/share/v2ray/geoip.dat', auto_reload: true },
+			// auto_reload: a blocklist update takes effect without restarting mosdns
+			...(ad_exception ? [
+				{ tag: 'adblock', file: `${cfg.adblock.dir}/block.txt`, auto_reload: true },
+				{ tag: 'adallow', file: `${cfg.adblock.dir}/allow.txt`, auto_reload: true },
+			] : []),
 		],
 		plugins,
 		servers: [ { exec: 'main_sequence', listeners } ],

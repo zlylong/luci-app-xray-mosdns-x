@@ -99,6 +99,19 @@ config node 'node_example'
 	option host ''
 	option service_name ''
 
+# 拦截列表订阅。列表为 AdGuard Home 的规则格式，由 adlist.uc 下载并转换
+config adblock 'adblock'
+	# 转换后的列表存放目录（列表较大，注意闪存空间）
+	option dir '/etc/xray-mosdns/adlists'
+	# 每天自动更新，以及更新的钟点
+	option auto_update '1'
+	option update_hour '5'
+
+#config adlist
+#	option enabled '1'
+#	option name 'AdGuard DNS filter'
+#	option url 'https://adguardteam.github.io/HostlistsRegistry/assets/filter_1.txt'
+
 # 节点组：把几个节点组合成一个出口，可以像节点一样被选作总节点或规则出口
 # strategy: fastest（最快）| ordered（按顺序，列表顺序即优先级）| roundrobin | random
 # fallback: 成员全部不可用时的出口，direct | block | <node section>
@@ -114,11 +127,12 @@ config node 'node_example'
 # rule_type: domain | ip | port | network
 # outbound:  main（跟随分流总节点）| direct | block | <node section> | <group section>
 # 下面几条是预置规则，和你自己加的规则没有区别，可以关掉、修改、调整顺序。
-config rule 'builtin_ads'
+# 订阅的拦截列表（在“广告过滤”页添加）。adlist:all 表示所有已启用的订阅
+config rule 'builtin_adlist'
 	option enabled '1'
-	option remarks '广告'
+	option remarks '广告（订阅列表）'
 	option rule_type 'domain'
-	list value 'geosite:category-ads-all'
+	list value 'adlist:all'
 	option outbound 'block'
 
 config rule 'builtin_cn_domain'

@@ -129,6 +129,35 @@ if [ "$(g '@global[0].schema')" != "2" ]; then
 	s '@global[0].schema' '2'
 fi
 
+# 0.9.3: blocklist subscriptions get a settings section and their own rule row,
+# placed right after the built-in ad rule so it is checked before the split rows
+uci -q get xray-mosdns.adblock >/dev/null 2>&1 || {
+	uci -q set xray-mosdns.adblock=adblock
+	s adblock.dir '/etc/xray-mosdns/adlists'
+	s adblock.auto_update '1'
+	s adblock.update_hour '5'
+}
+uci -q get xray-mosdns.builtin_adlist >/dev/null 2>&1 || {
+	uci -q batch <<-EOC
+	set xray-mosdns.builtin_adlist=rule
+	set xray-mosdns.builtin_adlist.enabled='1'
+	set xray-mosdns.builtin_adlist.remarks='广告（订阅列表）'
+	set xray-mosdns.builtin_adlist.rule_type='domain'
+	add_list xray-mosdns.builtin_adlist.value='adlist:all'
+	set xray-mosdns.builtin_adlist.outbound='block'
+	EOC
+	# Section order is rule order. The row has to be checked before the split
+	# rows: behind builtin_ads when an upgraded config still has that row,
+	# otherwise in front of the first mainland row.
+	order=$(uci -q -X show xray-mosdns | grep -E '^xray-mosdns\.[^.=]+=[a-z_]+$')
+	pos=$(echo "$order" | grep -n '^xray-mosdns\.builtin_ads=' | cut -d: -f1)
+	if [ -z "$pos" ]; then
+		pos=$(echo "$order" | grep -n '^xray-mosdns\.builtin_cn_domain=' | cut -d: -f1)
+		[ -n "$pos" ] && pos=$((pos - 1))
+	fi
+	[ -n "$pos" ] && uci -q reorder "xray-mosdns.builtin_adlist=$pos"
+}
+
 # drop removed legacy options/lists
 for opt in node_mode node bypass_chn default_outbound proxy_domains direct_domains block_domains allow_coexist; do
 	uci -q delete "xray-mosdns.@global[0].$opt"

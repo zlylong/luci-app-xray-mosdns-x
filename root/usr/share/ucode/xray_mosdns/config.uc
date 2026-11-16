@@ -222,6 +222,18 @@ export function load(confdir) {
 		});
 	}
 
+	// blocklist subscriptions: the lists themselves are downloaded and
+	// converted by adlist.uc; the generator only needs to know where they are
+	// and whether any is enabled
+	const ab = sections(all, 'adblock')[0] ?? {};
+	let ad_dir = rtrim(str(ab.dir, '/etc/xray-mosdns/adlists'), '/');
+	if (!match(ad_dir, /^\/[A-Za-z0-9_.\/-]+$/) || index(ad_dir, '..') >= 0)
+		ad_dir = '/etc/xray-mosdns/adlists';
+	cfg.adblock = {
+		dir: ad_dir,
+		lists: length(filter(sections(all, 'adlist'), s => bool(s.enabled, true) && str(s.url, null) != null)),
+	};
+
 	// per-device routing, keyed by MAC address
 	for (let s in sections(all, 'device')) {
 		if (!bool(s.enabled, true))

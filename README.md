@@ -55,6 +55,11 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
 - **路由器自身流量**（可选）：output 链里按同一套分类给路由器发起的连接打标记，策略路由把它们
   绕回 lo，再由 prerouting 送进 TProxy。Xray 和 mosdns 自己发的包带 `self_mark`，不会被再次送回；
   路由器自己的 53 端口查询同时重定向到 mosdns，同样受 DNS 看门狗管理
+- **广告过滤订阅**：可以直接从 AdGuard Home 的列表库（内置目录快照，66 个列表）里选，或填自定义地址。
+  `adlist.uc` 把列表转换成 mosdns 的域名文件：`||example.com^` → 域名及子域名，hosts 行和纯域名 → 精确匹配，
+  `@@` 例外单独存放；通配符、正则和带其他修饰符的规则会被跳过并计数。合并后的文件由 mosdns 自动重载，
+  更新列表不需要重启。订阅通过规则表里的“广告（订阅列表）”一行（`adlist:all`）生效。
+  默认规则里不再包含 `geosite:category-ads-all`；从旧版本升级且原来开着去广告的配置会保留那一行，不需要可以删掉
 - **按设备分流**：按 MAC 地址把某台设备的全部流量（或只有 UDP / TCP）送到指定节点或节点组，
   或者让它完全直连，先于规则表生效，适合游戏加速。每个不同的出口对应一个额外的 TProxy 入站，
   nft 按源 MAC 把包送到对应端口，Xray 再按入站选出口
@@ -85,6 +90,7 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
 ├── root/usr/libexec/xray-mosdns/             状态、流量、测速、更新、导入等辅助脚本
 │   ├── groups.uc                             节点组：查询当前出口、锁定、看护进程
 │   ├── geoview.uc                            geo 数据查询：tags / lookup / list / dump
+│   ├── adlist.uc                             拦截列表：下载、转换为 mosdns 域名文件、定时更新
 │   └── dns-watchdog.sh                       DNS 看门狗：mosdns 不应答时把 LAN 解析交还 dnsmasq
 ├── htdocs/luci-static/resources/view/xray-mosdns/   LuCI 页面（原生表单组件，无自定义主题）
 │   ├── status.js                             概览：运行状态、启停、连通性、节点流量
@@ -93,6 +99,7 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
 │   ├── resolver.js                           DNS：接管、上游、缓存与过滤
 │   ├── system.js                             系统：运行参数
 │   ├── components.js                         更新：Xray / mosdns-x / geo 数据、定时更新
+│   ├── adblock.js                            广告过滤：订阅拦截列表（AdGuard 列表库或自定义地址）
 │   ├── geoview.js                            Geo 查询：域名/IP 反查数据集、查看和下载数据集内容
 │   └── logview.js                            日志
 ├── tests/                                    夹具配置 + 生成/断言脚本
@@ -205,6 +212,8 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
 | group | failback | 仅 ordered：0（默认）切换后只有当前成员不可用才再切；1 前面的成员恢复后立即切回 |
 | global | probe_url / probe_interval | 节点组的探测地址与间隔，默认 gstatic generate_204 / 1m |
 | global | probe_url_backup | 备用探测地址（可选）：所有组的全部成员同时探测失败时自动换用 |
+| adblock | dir / auto_update / update_hour | 拦截列表的存放目录、是否每天自动更新、更新钟点 |
+| adlist | enabled / name / url | 一条订阅：AdGuard 规则、hosts 或纯域名格式的列表地址 |
 | device | mac / network / outbound | 按设备分流：MAC 地址列表；tcp,udp / udp / tcp；main / direct / 节点 / 节点组 |
 | global | schema | 配置版本，由包维护，不要改 |
 | global | ipv6_enabled | 启用 IPv6 TProxy（实验性） |
@@ -272,7 +281,8 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-0.1.0-r1.apk
 - [x] 按设备（MAC）分流、DNS 看门狗、备用探测地址、Geo 查询
 - [x] 路由器自身流量代理（output 链）
 - [ ] 按设备的 DNS 策略
-- [ ] 去广告订阅列表 / 查询日志（替代 ADG）
+- [x] 去广告订阅列表（AdGuard 列表库）
+- [ ] 查询日志与统计（替代 ADG）
 - [ ] 订阅 URL 自动更新、按设备访问控制
 - [ ] Gitea Actions 构建产物发布（未包含）
 

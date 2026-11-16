@@ -157,7 +157,12 @@ export function build(cfg, plan, env) {
 	for (let r in plan.rules) {
 		let rule = { type: 'field' };
 		switch (r.type) {
-		case 'domain':  rule.domain = r.values; break;
+		case 'domain':
+			// subscribed blocklists are answered by mosdns; Xray has no such list
+			rule.domain = filter(r.values, v => index(v, 'adlist:') != 0);
+			if (!length(rule.domain))
+				continue;
+			break;
 		case 'ip':      rule.ip = r.values; break;
 		case 'port':    rule.port = r.raw; break;
 		case 'network': rule.network = r.raw; break;

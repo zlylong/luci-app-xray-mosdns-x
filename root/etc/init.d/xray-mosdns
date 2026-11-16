@@ -39,6 +39,11 @@ start_service() {
 		return 1
 	fi
 
+	# blocklist subscriptions: keep the daily job in step with the settings and
+	# fetch lists that were just added (in the background, start does not wait)
+	ucode /usr/libexec/xray-mosdns/adlist.uc cron-sync >/dev/null 2>&1
+	ucode /usr/libexec/xray-mosdns/adlist.uc ensure >/dev/null 2>&1
+
 	XRAY_BIN=$(get_opt '@global[0].xray_bin'); [ -n "$XRAY_BIN" ] || XRAY_BIN=/usr/bin/xray
 	MOSDNS_BIN=$(get_opt '@dns[0].mosdns_bin'); [ -n "$MOSDNS_BIN" ] || MOSDNS_BIN=/usr/bin/mosdns
 
