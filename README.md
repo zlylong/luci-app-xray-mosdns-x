@@ -40,7 +40,9 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
   所以启动和重载期间不会出现解析空窗
 - **Xray 看护**：同一个看门狗也看 Xray 的 TProxy 端口。启动后或运行中 Xray 不再监听（崩溃、procd 放弃重启）
   持续 15–20 秒，就在 prerouting / output 链最前面加一条 return，把透明代理撤出路径，流量暂时直连而不是
-  送进不通的端口；概览页显示原因。Xray 恢复监听后自动撤掉这两条规则；procd 能及时拉起的单次崩溃不会触发
+  送进不通的端口；同一个 nft 事务里 LAN 的 53 端口也交还 dnsmasq（mosdns 的国外上游经 Xray，此时同样不通）。
+  概览页显示原因。Xray 恢复监听后自动撤掉这两条规则，DNS 重定向由看门狗在 mosdns 能应答时装回；
+  重载时撤出状态保持不变，不会把流量送回不通的端口。procd 能及时拉起的单次崩溃不会触发
 - **只处理选中的入口接口**：默认是 LAN，可以在“系统 → 接口”里加上 VPN 等接口；
   从其他接口（包括 WAN）进入的流量、发往路由器自身的流量都不会被 TProxy
 - **Xray 不参与解析**：路由策略为 `AsIs`，没有内置 DNS。透明代理的连接自带真实目的地址（就是 mosdns-x 给客户端的那个），
@@ -49,7 +51,9 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
 - **节点域名不在生成配置时解析**：直接交给 Xray 在拨号时解析，开机 WAN 未就绪也能启动，
   节点 IP 变化无需重启；节点域名在 mosdns 中固定走国内上游
 - **重载不断流**：`reload` 重新生成配置，nft 规则在单个事务内替换，procd 只重启配置文件
-  发生变化的进程；生成失败时保留上一份可用配置继续运行
+  发生变化的进程；生成失败、或启动前检查（二进制、geo 数据缺失等）失败时保留上一份可用配置继续运行，
+  概览页显示原因。生成的配置旁边有一份 `runtime.env`，记下这份配置用的端口、防火墙标记、二进制路径等；
+  防火墙脚本、看门狗、状态和流量脚本都按它工作，所以没有生效的 UCI 修改不会让它们和运行中的配置对不上
 - 国外 DNS 通过 Xray 的内部 SOCKS inbound 经代理解析；从这个 inbound 进来的流量固定走总节点，不受规则表和默认出口影响。
   可以配置多个国外上游（IP 或 tcp/tls/https 地址）
 - AAAA 过滤同时作用于 HTTPS 记录（类型 65）查询，它同样能带出 IPv6 地址
@@ -100,7 +104,9 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
 │   ├── groups.uc                             节点组：查询当前出口、锁定、看护进程
 │   ├── geoview.uc                            geo 数据查询：tags / lookup / list / dump
 │   ├── adlist.uc                             拦截列表：下载、转换为 mosdns 域名文件、定时更新
-│   └── dns-watchdog.sh                       DNS 看门狗：mosdns 不应答时把 LAN 解析交还 dnsmasq
+│   ├── info.sh                               只读查询（节点组出口、拦截列表状态、版本）：只有只读权限的
+│   │                                         LuCI 用户也能打开页面，改动类命令仍需写权限
+│   └── dns-watchdog.sh                       DNS 看门狗：mosdns 不应答时把 LAN 解析交还 dnsmasq；也看护 Xray
 ├── htdocs/luci-static/resources/view/xray-mosdns/   LuCI 页面（原生表单组件，无自定义主题）
 │   ├── status.js                             概览：运行状态、启停、连通性、节点流量
 │   ├── nodelist.js                           节点：列表、导入、测速、节点组
@@ -114,7 +120,7 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
 │   ├── common.js                             辅助函数
 │   ├── adblock.js                            DNS 页的“广告过滤”标签：订阅拦截列表（AdGuard 列表库或自定义地址）
 │   └── querylog.js                           DNS 页的“查询日志”标签：最近的 DNS 查询及其处理方式
-├── tests/                                    夹具配置 + 生成/断言脚本
+├── tests/                                    夹具配置 + 生成/运行/断言脚本
 └── .gitea/workflows/build.yml                Gitea Actions：推送后用 SDK 编译并上传产物
 ```
 
@@ -127,8 +133,10 @@ podman run --rm --network none -v "$PWD":/src:ro -v /tmp/xm-test:/out \
     docker.io/openwrt/rootfs:x86-64-24.10.4 sh /src/tests/gen.sh /src /out
 python3 tests/check.py /tmp/xm-test          # 对三套夹具的输出做断言
 # tests/migrate.sh（同样在 rootfs 里跑）：升级迁移前后生成结果必须逐字节一致
-# tests/scripts.sh /src /out（rootfs 里需装 ucode-mod-socket）：测速、流量、update.sh 的输出，
-#   结果同样由 check.py 断言
+# tests/scripts.sh /src /out（rootfs 里需装 ucode-mod-socket）：测速、流量、日志、update.sh 版本查询等辅助脚本的输出
+# tests/runtime.sh /src /out：用替身 nft/ip/curl/unzip 跑 fw.sh 的撤出/恢复、update.sh 的校验和替换、
+#   包的 postrm（升级与卸载）；会写 /var/etc、/etc/crontabs，只能在一次性的 rootfs 里跑
+# 以上结果都由 check.py 断言。init 脚本和 procd 的启动顺序在 rootfs 里跑不了，需要在路由器上验证
 xray run -test -c /tmp/xm-test/chnroute/xray.json
 ```
 

@@ -90,8 +90,10 @@ export function load(confdir) {
 			bypass_ips: ip_list(g.bypass_ips, 'bypass_ips'),
 			// geosite.dat / geoip.dat, for mosdns, the kernel sets and Xray alike
 			geo_dir: rtrim(str(g.geo_dir, '/usr/share/v2ray'), '/') || '/',
+			xray_bin: str(g.xray_bin, '/usr/bin/xray'),
 		},
 		dns: {
+			mosdns_bin: str(d.mosdns_bin, '/usr/bin/mosdns'),
 			listen_port: port(d.listen_port, 5335, 'dns.listen_port'),
 			// hijack every LAN port-53 query to mosdns (dnsmasq config is left alone)
 			redirect: bool(d.redirect, true),
@@ -125,9 +127,12 @@ export function load(confdir) {
 
 	if (!match(cfg.global.probe_interval, /^[0-9]+[smh]$/))
 		fail(`invalid probe_interval '${cfg.global.probe_interval}' (use e.g. 30s, 1m)`);
-	// goes into the Xray environment and the generated files
+	// go into the Xray environment, the start script and the generated files
 	if (!match(cfg.global.geo_dir, /^\/[A-Za-z0-9_.\/-]*$/))
 		fail(`invalid geo_dir '${cfg.global.geo_dir}' (an absolute directory path)`);
+	for (let p in [ [ 'xray_bin', cfg.global.xray_bin ], [ 'dns.mosdns_bin', cfg.dns.mosdns_bin ] ])
+		if (!match(p[1], /^\/[A-Za-z0-9_.\/-]+$/))
+			fail(`invalid ${p[0]} '${p[1]}' (an absolute file path)`);
 	// values passed on to Xray and mosdns as they are: caught here, with the
 	// option's name, rather than by a daemon that then will not start
 	if (!(cfg.global.log_level in [ 'debug', 'info', 'warning', 'error', 'none' ]))

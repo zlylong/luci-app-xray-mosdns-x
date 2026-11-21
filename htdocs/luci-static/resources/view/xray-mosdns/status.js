@@ -26,7 +26,7 @@ return view.extend({
 			uci.load(xm.CONF),
 			xm.exec('status.sh'),
 			xm.exec('traffic.sh'),
-			xm.exec('groups.uc', [ 'list' ])
+			xm.exec('info.sh', [ 'groups' ])
 		]);
 	},
 
@@ -51,9 +51,10 @@ return view.extend({
 				[ _('服务'), enabled ? xm.badge(_('已启用'), 'ok') : xm.badge(_('未启用')) ],
 				[ 'Xray', running(st.xray_running == 1, enabled) ],
 				[ 'mosdns-x', running(st.mosdns_running == 1, enabled) ],
-				[ _('防火墙规则'), fwOk
-					? xm.badge(_('已加载'), 'ok')
-					: (enabled ? xm.badge(_('未加载'), 'bad') : xm.badge(_('未加载'))) ],
+				[ _('防火墙规则'), (fwOk && st.fw.gated)
+					? E('span', {}, [ xm.badge(_('已撤出'), 'warn'), ' ', _('Xray 没有监听：流量暂时直连，DNS 由 dnsmasq 解析') ])
+					: (fwOk ? xm.badge(_('已加载'), 'ok')
+						: (enabled ? xm.badge(_('未加载'), 'bad') : xm.badge(_('未加载')))) ],
 				[ _('未命中规则时'), xm.DEFAULTS[global.default_action || 'proxy'] ],
 				[ _('总节点'), xm.targetLabel(st.main_target || global.main_target || 'direct') ],
 				[ _('分流位置'), global.kernel_split === '0'
@@ -69,7 +70,9 @@ return view.extend({
 							? E('span', {}, [ xm.badge(_('已接管'), 'ok'), ' ',
 								_('53 端口重定向到 mosdns-x :%s').format(dns.listen_port || '5335') ])
 							: E('span', {}, [ xm.badge(_('已回退'), 'warn'), ' ',
-								_('mosdns-x 没有应答，当前由 dnsmasq 解析') ]))) ]
+								(st.fw && st.fw.gated)
+									? _('透明代理已撤出（Xray 没有监听），当前由 dnsmasq 解析')
+									: _('mosdns-x 没有应答，当前由 dnsmasq 解析') ]))) ]
 			];
 			statusBox.replaceChildren(
 				st.last_error ? E('p', { 'class': 'alert-message warning' }, [
@@ -152,7 +155,7 @@ return view.extend({
 			return xm.exec('groups.uc', [ 'pin', group, node || '-' ]).then(function(r) {
 				if (r.ok === false)
 					ui.addNotification(null, E('p', {}, r.error || _('操作失败')), 'error');
-				return xm.exec('groups.uc', [ 'list' ]).then(renderGroups);
+				return xm.exec('info.sh', [ 'groups' ]).then(renderGroups);
 			});
 		}
 
@@ -219,7 +222,7 @@ return view.extend({
 
 		poll.add(function() {
 			return Promise.all([
-				xm.exec('status.sh'), xm.exec('traffic.sh'), xm.exec('groups.uc', [ 'list' ])
+				xm.exec('status.sh'), xm.exec('traffic.sh'), xm.exec('info.sh', [ 'groups' ])
 			]).then(function(r) {
 				renderStatus(r[0] || {});
 				renderTraffic(r[1] || {});

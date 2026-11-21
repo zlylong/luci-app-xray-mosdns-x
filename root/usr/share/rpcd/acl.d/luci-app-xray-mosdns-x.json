@@ -26,6 +26,9 @@
 				],
 				"/usr/libexec/xray-mosdns/querylog.uc": [
 					"exec"
+				],
+				"/usr/libexec/xray-mosdns/info.sh": [
+					"exec"
 				]
 			}
 		},

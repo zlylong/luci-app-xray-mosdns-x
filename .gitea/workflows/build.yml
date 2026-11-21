@@ -70,6 +70,11 @@ jobs:
       - name: Run the helper scripts
         run: chroot "$R" /bin/sh /src/tests/scripts.sh /src /out
 
+      # fw.sh gate/ungate, update.sh and the package's postrm, with stand-ins
+      # for nft, ip, curl and unzip
+      - name: Run the runtime scripts
+        run: chroot "$R" /bin/sh /src/tests/runtime.sh /src /out
+
       - name: Check the results
         run: |
           python3 -c 'import yaml' 2>/dev/null || {

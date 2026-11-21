@@ -81,9 +81,8 @@ start_service() {
 	ucode /usr/libexec/xray-mosdns/adlist.uc cron-sync >/dev/null 2>&1
 	ucode /usr/libexec/xray-mosdns/adlist.uc ensure >/dev/null 2>&1
 
-	XRAY_BIN=$(get_opt '@global[0].xray_bin'); [ -n "$XRAY_BIN" ] || XRAY_BIN=/usr/bin/xray
-	MOSDNS_BIN=$(get_opt '@dns[0].mosdns_bin'); [ -n "$MOSDNS_BIN" ] || MOSDNS_BIN=/usr/bin/mosdns
-	GEO_DIR=$(get_opt '@global[0].geo_dir'); GEO_DIR=${GEO_DIR%/}; [ -n "$GEO_DIR" ] || GEO_DIR=/usr/share/v2ray
+	# what the new configuration asks for (UCI)
+	uci_values
 
 	# the generated files and the config hold node credentials, the query log
 	# holds who looked up what: root only
@@ -94,14 +93,67 @@ start_service() {
 	[ -e "$MOSDNS_LOG" ] || : > "$MOSDNS_LOG"
 	chmod 600 "$MOSDNS_LOG"
 
+	bad=""
 	if ! problem=$(preflight); then
-		set_error "$problem"
-		teardown
-		return 1
+		# What runs keeps running: a mistyped path or a geo file moved away
+		# for a moment must not take the proxy and DNS down with it.
+		if nft list table inet xray-mosdns >/dev/null 2>&1 && have_previous; then
+			bad="$problem"
+		else
+			set_error "$problem"
+			teardown
+			return 1
+		fi
+	else
+		generate_and_switch
 	fi
 
-	# ---- new configuration: generated aside, checked, then switched to
-	bad=""
+	if [ -n "$bad" ]; then
+		if ! have_previous; then
+			set_error "$bad"
+			teardown
+			return 1
+		fi
+		set_error "$bad（继续使用上一份配置）"
+		# Its rules may have been cleared by a stop since. fw.sh takes the
+		# mark and table from the previous files' runtime.env, not from UCI.
+		"$PLUGIN_DIR/fw.sh" apply >/dev/null 2>&1 || {
+			set_error "$bad；上一份配置的防火墙规则也无法加载"
+			teardown
+			return 1
+		}
+	fi
+
+	# The daemons as the files in effect want them: with the previous set's
+	# binaries, ports and geo directory when the new set was not taken.
+	runtime_values
+	declare_instances
+}
+
+# a previous set of files to keep running on
+have_previous() {
+	[ -f "$OUT/xray.json" ] && [ -f "$OUT/nft.rules" ]
+}
+
+uci_values() {
+	XRAY_BIN=$(get_opt '@global[0].xray_bin'); [ -n "$XRAY_BIN" ] || XRAY_BIN=/usr/bin/xray
+	MOSDNS_BIN=$(get_opt '@dns[0].mosdns_bin'); [ -n "$MOSDNS_BIN" ] || MOSDNS_BIN=/usr/bin/mosdns
+	GEO_DIR=$(get_opt '@global[0].geo_dir'); GEO_DIR=${GEO_DIR%/}; [ -n "$GEO_DIR" ] || GEO_DIR=/usr/share/v2ray
+	TPROXY_PORT=$(get_opt '@global[0].tproxy_port'); [ -n "$TPROXY_PORT" ] || TPROXY_PORT=12345
+	DNS_WATCH=log-only
+	[ "$(get_opt '@dns[0].redirect')" != "0" ] && [ "$(get_opt '@dns[0].fallback')" != "0" ] && DNS_WATCH=manage
+}
+
+# The values the files in effect were generated with (runtime.env); a set
+# from before that file existed goes by UCI.
+runtime_values() {
+	uci_values
+	[ -f "$OUT/runtime.env" ] && . "$OUT/runtime.env"
+}
+
+# ---- new configuration: generated aside, checked, then switched to; sets
+# $bad when it was not taken
+generate_and_switch() {
 	rm -rf "$NEW"
 	mkdir -p "$NEW"
 	# the generator reads two things back from its output: sets extracted from
@@ -130,23 +182,9 @@ start_service() {
 			bad="防火墙规则加载失败：$(reason "$NEW/.log")"
 		fi
 	fi
+}
 
-	if [ -n "$bad" ]; then
-		# keep running on the previous set, if there is one
-		if ! { [ -f "$OUT/xray.json" ] && [ -f "$OUT/nft.rules" ]; }; then
-			set_error "$bad"
-			teardown
-			return 1
-		fi
-		set_error "$bad（继续使用上一份配置）"
-		# its rules may have been cleared by a stop since
-		"$PLUGIN_DIR/fw.sh" apply >/dev/null 2>&1 || {
-			set_error "$bad；上一份配置的防火墙规则也无法加载"
-			teardown
-			return 1
-		}
-	fi
-
+declare_instances() {
 	# mosdns-x is part of the service: it runs whenever the service does
 	procd_open_instance mosdns
 	procd_set_param command "$MOSDNS_BIN" start -c "$OUT/mosdns.yaml" -d "$OUT"
@@ -158,13 +196,12 @@ start_service() {
 
 	# Owns the LAN port-53 redirect: installed only while mosdns answers,
 	# so a dead mosdns leaves DNS with dnsmasq instead of timing out.
-	# Without that job it still runs, to keep the mosdns log file bounded.
-	wd_mode=log-only
-	[ "$(get_opt '@dns[0].redirect')" != "0" ] && [ "$(get_opt '@dns[0].fallback')" != "0" ] && wd_mode=manage
+	# Without that job it still runs, to keep the mosdns log file bounded,
+	# and in either mode it watches Xray.
 	# helpers are started by their own path, not through an interpreter, so
 	# that procd logs their output under their name (log.sh sorts by it)
 	procd_open_instance dnswatch
-	procd_set_param command /usr/libexec/xray-mosdns/dns-watchdog.sh "$wd_mode"
+	procd_set_param command /usr/libexec/xray-mosdns/dns-watchdog.sh "$DNS_WATCH"
 	# an updated script restarts it, like a changed config does the daemons
 	procd_set_param file /usr/libexec/xray-mosdns/dns-watchdog.sh
 	procd_set_param respawn 3600 5 0
@@ -204,18 +241,34 @@ listening() {
 # proxy is taken out of the path (fw.sh gate), so that traffic goes out
 # directly rather than into a closed port; the watchdog puts it back once
 # Xray listens, and does the same for a crash later on.
+#
+# A start that finds the proxy already out of the path (Xray was down) keeps
+# it out from the first moment: fw.sh apply carries that over in the same
+# transaction, so there is no window into the closed port.
 service_started() {
 	[ "$(get_opt '@global[0].enabled')" = "1" ] && [ -f "$OUT/nft.rules" ] || return 0
 	nft list table inet xray-mosdns >/dev/null 2>&1 || return 0
-	port=$(get_opt '@global[0].tproxy_port'); [ -n "$port" ] || port=12345
+	runtime_values
+	if "$PLUGIN_DIR/fw.sh" gated; then
+		# still out of the path from before this start: switching to new
+		# files cleared the overview's message, gate puts it back (and
+		# changes nothing else). The watchdog puts the proxy back once Xray
+		# listens.
+		"$PLUGIN_DIR/fw.sh" gate >/dev/null 2>&1
+		return 0
+	fi
 	i=0
 	while [ $i -lt 15 ]; do
-		listening "$port" && return 0
+		listening "$TPROXY_PORT" && return 0
 		sleep 1
 		i=$((i + 1))
 	done
-	"$PLUGIN_DIR/fw.sh" gate
-	logger -p daemon.err -t xray-mosdns "Xray is not listening on :$port after the start: transparent proxy taken out, traffic goes out directly until it is back"
+	if "$PLUGIN_DIR/fw.sh" gate 2>"$OUT/.gate.log"; then
+		logger -p daemon.warn -t xray-mosdns "Xray is not listening on :$TPROXY_PORT after the start: transparent proxy taken out, traffic goes out directly until it is back"
+	else
+		set_error "Xray 没有在 TProxy 端口 $TPROXY_PORT 上监听，透明代理也无法撤下：$(reason "$OUT/.gate.log")"
+	fi
+	rm -f "$OUT/.gate.log"
 }
 
 stop_service() {
