@@ -132,7 +132,7 @@ config adblock 'adblock'
 # rule_type: domain | ip | port | network
 # outbound:  main（跟随分流总节点）| direct | block | <node section> | <group section>
 # 下面几条是预置规则，和你自己加的规则没有区别，可以关掉、修改、调整顺序。
-# 订阅的拦截列表（在“广告过滤”页添加）。adlist:all 表示所有已启用的订阅
+# 订阅的拦截列表（在 DNS 页的“广告过滤”标签里添加）。adlist:all 表示所有已启用的订阅
 config rule 'builtin_adlist'
 	option enabled '1'
 	option remarks '广告（订阅列表）'

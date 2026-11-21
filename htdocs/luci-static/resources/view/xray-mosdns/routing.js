@@ -147,7 +147,7 @@ return view.extend({
 		};
 
 		o = s.option(form.DynamicList, 'value', _('匹配值'),
-			_('域名：geosite:google、domain:example.com、full:a.example.com、keyword:abc，adlist:all 表示“DNS → 广告过滤”里订阅的全部列表。' +
+			_('域名：geosite:google、domain:example.com、full:a.example.com、keyword:abc，adlist:all 表示 DNS 页“广告过滤”标签里订阅的全部列表。' +
 			  'IP：192.0.2.0/24、geoip:telegram。端口：443、1000-2000。协议：tcp 或 udp。'));
 		o.modalonly = true;
 		o.rmempty = false;

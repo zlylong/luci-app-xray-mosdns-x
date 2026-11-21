@@ -40,31 +40,8 @@
 		"title": "DNS",
 		"order": 40,
 		"action": {
-			"type": "firstchild"
-		}
-	},
-	"admin/services/xray-mosdns/dns/settings": {
-		"title": "设置",
-		"order": 10,
-		"action": {
 			"type": "view",
 			"path": "xray-mosdns/resolver"
-		}
-	},
-	"admin/services/xray-mosdns/dns/adblock": {
-		"title": "广告过滤",
-		"order": 20,
-		"action": {
-			"type": "view",
-			"path": "xray-mosdns/adblock"
-		}
-	},
-	"admin/services/xray-mosdns/dns/querylog": {
-		"title": "查询日志",
-		"order": 30,
-		"action": {
-			"type": "view",
-			"path": "xray-mosdns/querylog"
 		}
 	},
 	"admin/services/xray-mosdns/system": {
@@ -102,13 +79,13 @@
 	"admin/services/xray-mosdns/adblock": {
 		"action": {
 			"type": "alias",
-			"path": "admin/services/xray-mosdns/dns/adblock"
+			"path": "admin/services/xray-mosdns/dns"
 		}
 	},
 	"admin/services/xray-mosdns/querylog": {
 		"action": {
 			"type": "alias",
-			"path": "admin/services/xray-mosdns/dns/querylog"
+			"path": "admin/services/xray-mosdns/dns"
 		}
 	}
 }

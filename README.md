@@ -102,13 +102,15 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
 │   ├── status.js                             概览：运行状态、启停、连通性、节点流量
 │   ├── nodelist.js                           节点：列表、导入、测速、节点组
 │   ├── routing.js                            分流：总节点、分流模式、规则
-│   ├── resolver.js                           DNS：接管、上游、缓存与过滤
+│   ├── resolver.js                           DNS：接管、上游、IPv6、缓存、拦截与日志，加上下面两个标签
 │   ├── system.js                             系统：运行参数
 │   ├── components.js                         更新：Xray / mosdns-x / geo 数据、定时更新
-│   ├── adblock.js                            广告过滤：订阅拦截列表（AdGuard 列表库或自定义地址）
-│   ├── querylog.js                           查询日志：最近的 DNS 查询及其处理方式
 │   ├── geoview.js                            Geo 查询：域名/IP 反查数据集、查看和下载数据集内容
 │   └── logview.js                            日志
+├── htdocs/luci-static/resources/xray-mosdns/        页面共用的模块
+│   ├── common.js                             辅助函数
+│   ├── adblock.js                            DNS 页的“广告过滤”标签：订阅拦截列表（AdGuard 列表库或自定义地址）
+│   └── querylog.js                           DNS 页的“查询日志”标签：最近的 DNS 查询及其处理方式
 ├── tests/                                    夹具配置 + 生成/断言脚本
 └── .gitea/workflows/build.yml                Gitea Actions：推送后用 SDK 编译并上传产物
 ```
@@ -214,7 +216,7 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-<版本>-r1.apk
 | dns | remote_dns | 国外上游列表：IP（TCP 53）或 tcp:// tls:// https:// 地址，全部经代理 |
 | dns | block_mode | 拦截方式：nxdomain（默认）/ zero（返回 0.0.0.0 和 ::） |
 | dns | min_ttl | 最小 TTL，0 = 不改动（默认） |
-| dns | query_log | 记录每次查询，供“DNS → 查询日志”查看（默认 0） |
+| dns | query_log | 记录每次查询，在 DNS 页的“查询日志”标签里查看（默认 0） |
 | dns | filter_proxy_ipv6 | 代理域名不返回 AAAA（默认 1） |
 | dns | filter_direct_ipv6 | 直连域名不返回 AAAA（默认 0） |
 | dns | domestic_dns | 国内 DoH/DoT/明文上游列表 |
