@@ -1,6 +1,12 @@
 #!/bin/sh
 # luci-app-xray-mosdns-x - nftables + policy routing helper (IPv4 + optional IPv6)
-# usage: fw.sh apply [flush-dns] | clear | status
+# usage: fw.sh apply [flush-dns] | clear | status | gate | ungate | gated
+#
+# gate / ungate take the transparent proxy out of the path and put it back
+# while the table stays loaded: with Xray not listening, traffic goes out
+# directly instead of into a closed port. A first rule returning from the
+# prerouting and output chains does that; apply replaces both chains, so a
+# reload ungates as well. gated tells (exit status) whether it is in place.
 #
 # apply is safe to run repeatedly: nft.rules replaces chains and static sets
 # in a single transaction, so there is no window without rules. A failed
@@ -154,9 +160,41 @@ status_fw() {
 	fi
 }
 
+GATE="xray-mosdns: Xray not listening"
+# shown on the overview while gated (the start script's error file)
+ERR=/var/run/xray-mosdns.error
+TPORT=$(get_opt '@global[0].tproxy_port'); [ -n "$TPORT" ] || TPORT=12345
+GATE_MSG="Xray 没有在 TProxy 端口 $TPORT 上监听：已撤下透明代理，流量暂时直连；Xray 恢复监听后自动恢复（见“日志 → Xray”）"
+
+gated() {
+	nft list chain $TABLE prerouting 2>/dev/null | grep -qF "comment \"$GATE\""
+}
+
+gate() {
+	nft list table $TABLE >/dev/null 2>&1 || return 0
+	gated && return 0
+	nft "insert rule $TABLE prerouting return comment \"$GATE\"" &&
+		nft "insert rule $TABLE output return comment \"$GATE\"" &&
+		printf '%s\n' "$GATE_MSG" > "$ERR"
+}
+
+ungate() {
+	for c in prerouting output; do
+		for h in $(nft -a list chain $TABLE "$c" 2>/dev/null | sed -n "s/.*comment \"$GATE\" # handle \([0-9]*\)\$/\1/p"); do
+			nft delete rule $TABLE "$c" handle "$h"
+		done
+	done
+	# the message is gone with the reason; anything else in the file stays
+	grep -qF "Xray 没有在 TProxy 端口" "$ERR" 2>/dev/null && rm -f "$ERR"
+	return 0
+}
+
 case "$1" in
 	apply) apply_fw "$2" ;;
 	clear) clear_fw ;;
 	status) status_fw ;;
-	*) echo "usage: $0 {apply [flush-dns]|clear|status}" >&2; exit 1 ;;
+	gate) gate ;;
+	ungate) ungate ;;
+	gated) gated ;;
+	*) echo "usage: $0 {apply [flush-dns]|clear|status|gate|ungate|gated}" >&2; exit 1 ;;
 esac
