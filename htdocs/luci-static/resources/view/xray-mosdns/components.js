@@ -17,8 +17,8 @@ return view.extend({
 	load: function() {
 		return Promise.all([
 			uci.load(xm.CONF),
-			xm.exec('update.sh', [ 'versions' ]),
-			xm.exec('update.sh', [ 'cron-status' ])
+			xm.exec('info.sh', [ 'versions' ]),
+			xm.exec('info.sh', [ 'cron-status' ])
 		]);
 	},
 
@@ -72,7 +72,7 @@ return view.extend({
 
 		function check() {
 			say(_('正在查询最新版本…'));
-			return xm.exec('update.sh', [ 'check' ]).then(function(d) {
+			return xm.exec('info.sh', [ 'check' ]).then(function(d) {
 				renderVersions(d);
 				say(d.ok === false ? (d.error || _('查询失败')) : _('已刷新'));
 			});
@@ -91,7 +91,7 @@ return view.extend({
 							say(_('正在更新 %s…').format(name));
 							return xm.exec('update.sh', [ action ]).then(function(out) {
 								say(out.ok ? (out.message || _('更新完成')) : (out.error || _('更新失败')));
-								return xm.exec('update.sh', [ 'versions' ]).then(renderVersions);
+								return xm.exec('info.sh', [ 'versions' ]).then(renderVersions);
 							});
 						}
 					}, _('更新'))
@@ -113,7 +113,7 @@ return view.extend({
 				return xm.exec('update.sh', [ autoChk.checked ? 'cron-install' : 'cron-remove' ]);
 			}).then(function(out) {
 				say(out.ok ? out.message : (out.error || _('保存失败')));
-				return xm.exec('update.sh', [ 'cron-status' ]).then(renderCron);
+				return xm.exec('info.sh', [ 'cron-status' ]).then(renderCron);
 			});
 		}
 

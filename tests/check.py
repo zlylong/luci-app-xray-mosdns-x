@@ -338,6 +338,101 @@ else:
     check(txt("log-legacy") == txt("log-all"), "log: `log.sh <lines>` from older pages still works")
     check(txt("log-tail") == sl[8:10], "log: the line count keeps the newest lines")
 
+# ------------------------------------------------------------------ runtime.env (the values in effect)
+def runtime_env(case):
+    env = {}
+    for line in open(f"{out}/{case}/runtime.env").read().splitlines():
+        if line and not line.startswith("#"):
+            k, v = line.split("=", 1)
+            env[k] = v.strip("'")
+    return env
+
+rt = runtime_env("chnroute")
+check(rt == {"XRAY_BIN": "/usr/bin/xray", "MOSDNS_BIN": "/usr/bin/mosdns", "GEO_DIR": "/usr/share/v2ray",
+             "TPROXY_PORT": "12345", "API_PORT": "10085", "DNS_PORT": "5335", "DNS_REDIRECT": "1", "DNS_WATCH": "manage",
+             "FWMARK": "0x1", "ROUTE_TABLE": "100", "IPV6": "0", "MAIN_TARGET": "hk1"}, f"runtime.env (chnroute): {rt}")
+rt = runtime_env("groups")
+check(rt["DNS_WATCH"] == "log-only" and rt["MAIN_TARGET"] == "hk", f"runtime.env (groups): static redirect, a group as main target: {rt}")
+check(runtime_env("gfw")["IPV6"] == "1", "runtime.env (gfw): IPv6 on")
+
+# ------------------------------------------------------------------ fw.sh gate, update.sh, postrm (tests/runtime.sh)
+rd = f"{out}/runtime"
+if not os.path.isdir(rd):
+    print("runtime: no output from tests/runtime.sh, skipped")
+else:
+    G = 'return comment "xray-mosdns: Xray not listening"'
+    REDIR = "udp dport 53 redirect to :5335"
+    st = dict(l.split("=", 1) for l in open(f"{rd}/status.txt").read().split())
+
+    def state(name):
+        s, cur = {}, None
+        for line in open(f"{rd}/{name}.txt").read().splitlines():
+            if line.startswith("[gated] "):
+                s["gated"] = line[8:]
+            elif line.startswith("[error]"):
+                s["error"] = line[7:].strip()
+            elif line.startswith("["):
+                cur = line.strip("[]")
+                s[cur] = []
+            else:
+                s[cur].append(line)
+        return s
+
+    a = state("apply")
+    check(st["apply"] == "0" and a["prerouting"] == ['iifname != "br-lan" return', "meta l4proto tcp goto do_tproxy"]
+          and a["dns_redirect"] == [REDIR] and a["gated"] == "no", f"gate: plain apply {a}")
+    g = state("gate")
+    check(st["gate"] == "0" and g["prerouting"][0] == G and g["output"][0] == G, f"gate: first in prerouting and output {g}")
+    check(g["dns_redirect"] == [] and g["gated"] == "yes" and "TProxy 端口 12345" in g["error"],
+          f"gate: LAN DNS handed back to dnsmasq, the overview says why {g}")
+    g2 = state("gate-again")
+    check(st["gate-again"] == "0" and g2["prerouting"].count(G) == 1 and g2["output"].count(G) == 1, "gate: a second gate adds nothing")
+    gm, go = state("gate-msg"), state("gate-other")
+    check(st["gate-msg"] == "0" and "TProxy 端口 12345" in gm["error"] and gm["prerouting"].count(G) == 1,
+          f"gate: gating again puts a cleared message back {gm}")
+    check(st["gate-other"] == "0" and go["error"] == "another problem", f"gate: ... without covering another message {go}")
+    ag = state("apply-gated")
+    check(st["apply-gated"] == "0" and ag["prerouting"][0] == G and ag["prerouting"].count(G) == 1 and len(ag["prerouting"]) == 3
+          and ag["output"][0] == G and ag["dns_redirect"] == [] and ag["gated"] == "yes",
+          f"gate: a reload while gated stays gated, DNS stays with dnsmasq {ag}")
+    u = state("ungate")
+    check(st["ungate"] == "0" and G not in u["prerouting"] and G not in u["output"] and u["dns_redirect"] == [REDIR]
+          and u["gated"] == "no" and u["error"] == "", f"ungate: proxy back, a static DNS redirect back, message gone {u}")
+    r = state("gate-refused")
+    check(st["gate-refused"] == "1" and G not in r["prerouting"] and G not in r["output"] and r["dns_redirect"] == [REDIR]
+          and r["gated"] == "no" and r["error"] == "", f"gate: a refused transaction changes nothing and reports no gate {r}")
+    check(st["half"] == "1", "gated: half a gate (prerouting only) does not count")
+    h = state("half-gate")
+    check(st["half-gate"] == "0" and h["prerouting"].count(G) == 1 and h["output"].count(G) == 1 and h["gated"] == "yes",
+          f"gate: completes half a gate without doubling it {h}")
+    m = state("ungate-managed")
+    check(st["ungate-managed"] == "0" and G not in m["prerouting"] and m["dns_redirect"] == [] and m["gated"] == "no",
+          f"ungate: a watched DNS redirect is left to the watchdog {m}")
+
+    up = {}
+    for line in open(f"{rd}/update.txt").read().splitlines():
+        k, _, v = line.partition(" ")
+        up[k] = v
+    check('"ok":true' in up.get("geo-good", ""), f"update geo: good checksums install {up.get('geo-good')}")
+    check("does not match its published checksum" in up.get("geo-bad", "") and up.get("geoip-kept") == "yes",
+          "update geo: a wrong checksum installs nothing")
+    check("does not match its published checksum" in up.get("xray-bad", "") and up.get("xray-after-bad") == "Xray 1.0.0 (old)",
+          "update xray: a wrong .dgst installs nothing")
+    check('"ok":true' in up.get("xray-good", "") and up.get("xray-after-good") == "Xray 99.0.0 (new)"
+          and up.get("old-still-running") == "yes" and up.get("leftovers") == "0",
+          f"update xray: replaces a running binary by rename, nothing left over {up}")
+    check("another update is running" in up.get("locked", ""), "update: one at a time")
+    check(up.get("backups-geosite") == "3" and up.get("backups-xray") == "3", "update: three backups of each file kept")
+    check(up.get("mode-backups") == "drwx------" and up.get("mode-geo") == "-rw-------", "update: backups and downloads are root's")
+
+    pr = open(f"{rd}/postrm.txt").read()
+    upgrade, removal = pr.split("[removal]")
+    check("cron-ours 2 cron-other 1" in upgrade and "etc-dir present backups present table present" in upgrade
+          and "mine.txt" in upgrade and "1.block" in upgrade, f"postrm: an upgrade leaves everything {upgrade}")
+    check("cron-ours 0 cron-other 1" in removal and "etc-dir gone backups gone table gone" in removal
+          and removal.strip().endswith("shared mine.txt"),
+          f"postrm: removal takes our cron lines, data, backups and files, nothing else {removal}")
+
 if failed:
     print("\n".join("FAIL: " + f for f in failed))
     sys.exit(1)

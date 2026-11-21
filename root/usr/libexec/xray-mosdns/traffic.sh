@@ -17,9 +17,17 @@ function done(nodes, error) {
 	exit(0);
 }
 
+// the binary and API port in effect (runtime.env next to the running
+// config), else the configured ones
+let rt = {};
+for (let l in split(fs.readfile('/var/etc/xray-mosdns/runtime.env') ?? '', '\n')) {
+	const m = match(l, /^([A-Z_]+)='?([^']*)'?$/);
+	if (m)
+		rt[m[1]] = m[2];
+}
 const uci = cursor();
-let xray = getenv('XRAY') || uci.get_first('xray-mosdns', 'global', 'xray_bin') || '/usr/bin/xray';
-let port = getenv('API_PORT') || uci.get_first('xray-mosdns', 'global', 'api_port') || '10085';
+let xray = getenv('XRAY') || rt.XRAY_BIN || uci.get_first('xray-mosdns', 'global', 'xray_bin') || '/usr/bin/xray';
+let port = getenv('API_PORT') || rt.API_PORT || uci.get_first('xray-mosdns', 'global', 'api_port') || '10085';
 // both go into a shell command
 if (!match(xray, /^[A-Za-z0-9_.\/-]+$/))
 	xray = '/usr/bin/xray';
@@ -28,8 +36,11 @@ if (!match(port, /^[0-9]+$/))
 
 const p = fs.popen(`${xray} api statsquery --server=127.0.0.1:${port} 2>/dev/null`, 'r');
 const raw = p?.read('all');
-if (!p || p.close() != 0)
-	done([], (system('pidof xray >/dev/null 2>&1') == 0) ? 'api_unavailable' : 'xray_not_running');
+if (!p || p.close() != 0) {
+	// is it running at all? by the name of the binary in use (xray-core, ...)
+	const name = match(xray, /([^\/]+)$/)[1];
+	done([], (system(`pidof '${name}' >/dev/null 2>&1`) == 0) ? 'api_unavailable' : 'xray_not_running');
+}
 
 let data;
 try {

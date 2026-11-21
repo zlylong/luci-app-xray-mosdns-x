@@ -108,8 +108,8 @@ return baseclass.extend({
 	/* download status and the AdGuard catalogue, for tab() */
 	load: function() {
 		return Promise.all([
-			xm.exec('adlist.uc', [ 'status' ]),
-			xm.exec('adlist.uc', [ 'catalog' ])
+			xm.exec('info.sh', [ 'adlist-status' ]),
+			xm.exec('info.sh', [ 'adlist-catalog' ])
 		]);
 	},
 
@@ -154,7 +154,7 @@ return baseclass.extend({
 		}
 
 		function refresh() {
-			return xm.exec('adlist.uc', [ 'status' ]).then(function(st) {
+			return xm.exec('info.sh', [ 'adlist-status' ]).then(function(st) {
 				if (st && st.ok !== false) {
 					status = st;
 					renderStatus();

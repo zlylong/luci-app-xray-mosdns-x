@@ -38,10 +38,15 @@ FW=/usr/share/xray-mosdns/fw.sh
 XFAILS=4	# probes without Xray listening before the proxy is taken out (15-20 s;
 		# procd waits 5 s before restarting a crashed daemon)
 
-# read on every round: a reload can change them without restarting this loop
+# Read on every round, as the files in effect have them (runtime.env): a
+# reload can change them without restarting this loop, and a reload that
+# fell back to the previous files keeps the previous ports.
 ports() {
-	PORT=$(uci -q get 'xray-mosdns.@dns[0].listen_port'); [ -n "$PORT" ] || PORT=5335
-	TPORT=$(uci -q get 'xray-mosdns.@global[0].tproxy_port'); [ -n "$TPORT" ] || TPORT=12345
+	DNS_PORT=$(uci -q get 'xray-mosdns.@dns[0].listen_port'); [ -n "$DNS_PORT" ] || DNS_PORT=5335
+	TPROXY_PORT=$(uci -q get 'xray-mosdns.@global[0].tproxy_port'); [ -n "$TPROXY_PORT" ] || TPROXY_PORT=12345
+	[ -f "$OUT/runtime.env" ] && . "$OUT/runtime.env"
+	PORT=$DNS_PORT
+	TPORT=$TPROXY_PORT
 }
 
 # Any DNS reply counts, including SERVFAIL or NXDOMAIN: a dead uplink is not
@@ -74,20 +79,30 @@ listening() {
 }
 
 xfail=0
+gate_err=""	# the last gate/ungate failure, logged once rather than every round
 watch_xray() {
 	# no rules loaded (service stopped or torn down): nothing points at Xray
 	nft list table inet xray-mosdns >/dev/null 2>&1 || { xfail=0; return; }
 	if listening "$TPORT"; then
 		xfail=0
-		if "$FW" gated; then
-			"$FW" ungate
+		"$FW" gated || return 0
+		if e=$("$FW" ungate 2>&1); then
+			gate_err=""
 			logger -t xray-mosdns "Xray is listening on :$TPORT again: transparent proxy back in the path"
+		elif [ "$e" != "$gate_err" ]; then
+			gate_err=$e
+			logger -p daemon.err -t xray-mosdns "$e"
 		fi
 	else
 		xfail=$((xfail + 1))
-		if [ "$xfail" -ge "$XFAILS" ] && ! "$FW" gated; then
-			"$FW" gate
-			logger -p daemon.warn -t xray-mosdns "Xray is not listening on :$TPORT: transparent proxy taken out, traffic goes out directly until it is back"
+		[ "$xfail" -ge "$XFAILS" ] || return 0
+		"$FW" gated && return 0
+		if e=$("$FW" gate 2>&1); then
+			gate_err=""
+			logger -p daemon.warn -t xray-mosdns "Xray is not listening on :$TPORT: transparent proxy taken out, LAN DNS with dnsmasq, traffic goes out directly until it is back"
+		elif [ "$e" != "$gate_err" ]; then
+			gate_err=$e
+			logger -p daemon.err -t xray-mosdns "Xray is not listening on :$TPORT and $e"
 		fi
 	fi
 }
@@ -103,7 +118,10 @@ while :; do
 	fi
 	if healthy; then
 		fail=0
-		if ! active; then
+		# with the proxy out of the path, LAN DNS stays with dnsmasq on purpose
+		if "$FW" gated; then
+			:
+		elif ! active; then
 			nft -f "$ON" 2>/dev/null && {
 				touch "$STAMP"
 				logger -t xray-mosdns "mosdns-x is answering: LAN DNS redirected to :$PORT"
