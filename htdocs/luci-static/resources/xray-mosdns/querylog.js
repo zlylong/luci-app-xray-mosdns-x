@@ -1,9 +1,12 @@
 'use strict';
-'require view';
+'require baseclass';
 'require uci';
 'require ui';
 'require poll';
 'require xray-mosdns.common as xm';
+
+/* The "query log" tab of the DNS page: recent DNS queries and how they were
+ * handled. */
 
 var KINDS = {
 	proxy: [ _('代理'), 'warn' ],
@@ -19,15 +22,13 @@ function fmtTime(ts) {
 	return '%02d:%02d:%02d'.format(d.getHours(), d.getMinutes(), d.getSeconds());
 }
 
-return view.extend({
+return baseclass.extend({
 	load: function() {
-		return Promise.all([
-			uci.load(xm.CONF),
-			xm.exec('querylog.uc', [ '200' ])
-		]);
+		return xm.exec('querylog.uc', [ '200' ]);
 	},
 
-	render: function(res) {
+	/* the tab's content; needs the config loaded */
+	render: function(data) {
 		var enabled = (uci.get(xm.CONF, 'dns', 'query_log') === '1');
 		var body = E('tbody');
 		var summary = E('div', { 'class': 'cbi-section-descr' });
@@ -41,16 +42,16 @@ return view.extend({
 			})));
 		var follow = E('input', { 'type': 'checkbox', 'id': 'xm-ql-follow', 'checked': '' });
 
-		function show(data) {
-			var entries = (data && data.entries) || [];
+		function show(d) {
+			var entries = (d && d.entries) || [];
 			var kind = kindSel.value;
 			if (kind)
 				entries = entries.filter(function(e) { return e.kind === kind; });
 
-			var c = (data && data.counts) || {};
-			summary.textContent = (data && data.total)
+			var c = (d && d.counts) || {};
+			summary.textContent = (d && d.total)
 				? _('最近的记录里匹配到 %d 条：代理 %d，直连 %d，拦截 %d，自动判断 %d，本地 %d。')
-					.format(data.total, c.proxy || 0, c.direct || 0, c.block || 0, c.fallback || 0, c.lan || 0)
+					.format(d.total, c.proxy || 0, c.direct || 0, c.block || 0, c.fallback || 0, c.lan || 0)
 				: (enabled ? _('还没有记录。') : '');
 
 			body.replaceChildren.apply(body, entries.length ? entries.map(function(e) {
@@ -70,7 +71,7 @@ return view.extend({
 			]) ]);
 		}
 
-		var last = res[1] || {};
+		var last = data || {};
 		function refresh() {
 			return xm.exec('querylog.uc', [ '200', filter.value.trim() ]).then(function(d) {
 				if (d && d.ok !== false) {
@@ -89,21 +90,11 @@ return view.extend({
 		kindSel.addEventListener('change', function() { show(last); });
 		show(last);
 
-		poll.add(function() {
-			return (enabled && follow.checked) ? refresh() : Promise.resolve();
-		}, 5);
-
-		var page = [
-			E('h2', {}, _('查询日志')),
-			E('div', { 'class': 'cbi-map-descr' },
-				_('mosdns-x 最近处理的 DNS 查询：谁查了什么、按哪条路处理、结果如何。“自动判断”是没有命中任何规则的域名，先问国内上游，返回国内地址就直连，否则改用代理一侧的结果。'))
-		];
-
-		if (!enabled)
-			page.push(E('p', { 'class': 'alert-message warning' },
-				_('查询日志没有开启。到“DNS → 设置”的“日志”标签里打开“记录查询”，保存并应用后这里才会有内容。')));
-
-		page.push(E('div', { 'class': 'cbi-section' }, [
+		var node = E('div', { 'class': 'cbi-section' }, [
+			E('div', { 'class': 'cbi-section-descr' },
+				_('mosdns-x 最近处理的 DNS 查询：谁查了什么、按哪条路处理、结果如何。“自动判断”是没有命中任何规则的域名，先问国内上游，返回国内地址就直连，否则改用代理一侧的结果。')),
+			enabled ? '' : E('p', { 'class': 'alert-message warning' },
+				_('查询日志没有开启。在“拦截与日志”标签里打开“记录查询”，保存并应用后这里才会有内容。')),
 			E('div', {}, [
 				filter, kindSel,
 				E('button', {
@@ -127,12 +118,18 @@ return view.extend({
 				])),
 				body
 			])
-		]));
+		]);
 
-		return E('div', {}, page);
-	},
+		/* only while the tab is the one on screen */
+		function onScreen() {
+			var pane = node.closest('[data-tab]');
+			return !!pane && pane.getAttribute('data-tab-active') === 'true';
+		}
 
-	handleSave: null,
-	handleSaveApply: null,
-	handleReset: null
+		poll.add(function() {
+			return (enabled && follow.checked && onScreen()) ? refresh() : Promise.resolve();
+		}, 5);
+
+		return node;
+	}
 });

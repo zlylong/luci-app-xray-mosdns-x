@@ -1,10 +1,13 @@
 'use strict';
-'require view';
+'require baseclass';
 'require form';
 'require uci';
 'require ui';
 'require poll';
 'require xray-mosdns.common as xm';
+
+/* The "ad filtering" tab of the DNS page: blocklist subscriptions, their
+ * update settings, and the tools around them. */
 
 var GROUPS = {
 	'General': [ _('常规'), _('在大多数设备上阻止跟踪和广告的列表') ],
@@ -100,19 +103,20 @@ function catalogDialog(catalog) {
 	]);
 }
 
-return view.extend({
+return baseclass.extend({
+	/* download status and the AdGuard catalogue, for tab() */
 	load: function() {
 		return Promise.all([
-			uci.load(xm.CONF),
 			xm.exec('adlist.uc', [ 'status' ]),
 			xm.exec('adlist.uc', [ 'catalog' ])
 		]);
 	},
 
-	render: function(res) {
-		var m, s, o;
-		var status = res[1] || {};
-		var catalog = res[2] || {};
+	/* fills tab `tab` of section `s` (same map, config xray-mosdns) */
+	tab: function(s, tab, data) {
+		var o, ss;
+		var status = (data && data[0]) || {};
+		var catalog = (data && data[1]) || {};
 		var summary = E('div', { 'class': 'cbi-section-descr' });
 		var stateCells = {};
 
@@ -181,31 +185,54 @@ return view.extend({
 			});
 		}
 
-		m = new form.Map(xm.CONF, _('广告过滤'),
-			_('订阅拦截列表，被列入的域名在 DNS 上直接返回“不存在”。列表使用 AdGuard Home 的规则格式，可以从它的列表库里选，也可以填自己的地址。'));
+		/* ------------------------------------------------------------ tools */
+		o = s.taboption(tab, form.DummyValue, '_adblock_tools');
+		o.render = function() {
+			return E('div', { 'class': 'cbi-section' }, [
+				E('div', { 'class': 'cbi-section-descr' },
+					_('订阅拦截列表，被列入的域名在 DNS 上直接返回“不存在”（或按“拦截与日志”里的拦截方式应答）。列表使用 AdGuard Home 的规则格式，可以从它的列表库里选，也可以填自己的地址。')),
+				E('div', {}, [
+					E('button', {
+						'class': 'cbi-button cbi-button-action', 'style': 'margin-right:.5em',
+						'click': function(ev) { ev.preventDefault(); catalogDialog(catalog); }
+					}, _('从 AdGuard 列表库添加…')),
+					E('button', {
+						'class': 'cbi-button cbi-button-action', 'style': 'margin-right:.5em',
+						'click': ui.createHandlerFn(this, updateNow)
+					}, _('立即更新')),
+					E('button', {
+						'class': 'cbi-button cbi-button-action',
+						'title': _('重新下载 AdGuard 的列表目录，并让来自列表库的订阅跟随它'),
+						'click': ui.createHandlerFn(this, syncCatalog)
+					}, _('刷新列表库'))
+				]),
+				summary
+			]);
+		};
 
 		/* ------------------------------------------------------------ subscriptions */
-		s = m.section(form.GridSection, 'adlist', _('订阅的列表'),
+		o = s.taboption(tab, form.SectionValue, '_adlist', form.GridSection, 'adlist', _('订阅的列表'),
 			_('列表通过“分流”页里的“广告（订阅列表）”规则行生效：排在它前面的规则优先，所以把某个域名加到它前面的直连或代理规则里，就等于放行。新添加的列表在“保存并应用”后自动下载。从列表库添加的订阅会跟随列表库：每次更新前先刷新目录，名称和地址随之同步；列表被弃用或移除时只做标记，不会自动删除。'));
-		s.addremove = true;
-		s.anonymous = true;
-		s.sortable = true;
-		s.nodescriptions = true;
-		s.addbtntitle = _('添加自定义列表');
-		s.modaltitle = function(sid) {
+		ss = o.subsection;
+		ss.addremove = true;
+		ss.anonymous = true;
+		ss.sortable = true;
+		ss.nodescriptions = true;
+		ss.addbtntitle = _('添加自定义列表');
+		ss.modaltitle = function(sid) {
 			return _('列表') + ' » ' + (uci.get(xm.CONF, sid, 'name') || _('新列表'));
 		};
 
-		o = s.option(form.Flag, 'enabled', _('启用'));
+		o = ss.option(form.Flag, 'enabled', _('启用'));
 		o.editable = true;
 		o.default = '1';
 		o.rmempty = false;
 
-		o = s.option(form.Value, 'name', _('名称'),
+		o = ss.option(form.Value, 'name', _('名称'),
 			_('来自列表库的订阅，名称和地址在每次更新时会被列表库里的值覆盖。'));
 		o.rmempty = false;
 
-		o = s.option(form.Value, 'url', _('地址'),
+		o = ss.option(form.Value, 'url', _('地址'),
 			_('http 或 https 地址。支持 AdGuard 规则（||example.com^）、hosts 文件和纯域名列表三种写法。'));
 		o.rmempty = false;
 		o.validate = function(sid, v) {
@@ -216,7 +243,7 @@ return view.extend({
 			return E('span', { 'title': u }, u.length > 56 ? u.substring(0, 56) + '…' : u);
 		};
 
-		o = s.option(form.DummyValue, '_state', _('规则数'));
+		o = ss.option(form.DummyValue, '_state', _('规则数'));
 		o.modalonly = false;
 		o.textvalue = function(sid) {
 			stateCells[sid] = E('span', {}, listState(sid));
@@ -224,19 +251,20 @@ return view.extend({
 		};
 
 		/* ------------------------------------------------------------ settings */
-		s = m.section(form.NamedSection, 'adblock', 'adblock', _('更新'));
+		o = s.taboption(tab, form.SectionValue, '_adblock', form.NamedSection, 'adblock', 'adblock', _('更新'));
+		ss = o.subsection;
 
-		o = s.option(form.Flag, 'auto_update', _('每天自动更新'));
+		o = ss.option(form.Flag, 'auto_update', _('每天自动更新'));
 		o.default = '1';
 		o.rmempty = false;
 
-		o = s.option(form.ListValue, 'update_hour', _('更新时间'));
+		o = ss.option(form.ListValue, 'update_hour', _('更新时间'));
 		for (var h = 0; h < 24; h++)
 			o.value(String(h), '%d:17'.format(h));
 		o.default = '5';
 		o.depends('auto_update', '1');
 
-		o = s.option(form.Value, 'dir', _('存放目录'),
+		o = ss.option(form.Value, 'dir', _('存放目录'),
 			_('转换后的列表保存在这里。大的列表有十几 MB，闪存空间紧张时可以改到 U 盘之类的位置；放在 /tmp 下重启后需要重新下载。'));
 		o.default = '/etc/xray-mosdns/adlists';
 
@@ -245,28 +273,5 @@ return view.extend({
 			/* cheap when idle: only keep asking while an update is running */
 			return status.running ? refresh() : Promise.resolve();
 		}, 3);
-
-		return m.render().then(function(node) {
-			var tools = E('div', { 'class': 'cbi-section' }, [
-				E('button', {
-					'class': 'cbi-button cbi-button-action', 'style': 'margin-right:.5em',
-					'click': function() { catalogDialog(catalog); }
-				}, _('从 AdGuard 列表库添加…')),
-				E('button', {
-					'class': 'cbi-button cbi-button-action', 'style': 'margin-right:.5em',
-					'click': ui.createHandlerFn(this, updateNow)
-				}, _('立即更新')),
-				E('button', {
-					'class': 'cbi-button cbi-button-action',
-					'title': _('重新下载 AdGuard 的列表目录，并让来自列表库的订阅跟随它'),
-					'click': ui.createHandlerFn(this, syncCatalog)
-				}, _('刷新列表库')),
-				summary
-			]);
-			var first = node.querySelector('.cbi-section');
-			if (first)
-				first.parentNode.insertBefore(tools, first);
-			return node;
-		});
 	}
 });

@@ -3,13 +3,19 @@
 'require form';
 'require uci';
 'require xray-mosdns.common as xm';
+'require xray-mosdns.adblock as adblock';
+'require xray-mosdns.querylog as querylog';
 
 return view.extend({
 	load: function() {
-		return uci.load(xm.CONF);
+		return Promise.all([
+			uci.load(xm.CONF),
+			adblock.load(),
+			querylog.load()
+		]);
 	},
 
-	render: function() {
+	render: function(res) {
 		var m, s, o;
 
 		m = new form.Map(xm.CONF, 'DNS',
@@ -21,6 +27,8 @@ return view.extend({
 		s.tab('ipv6tab', _('IPv6'));
 		s.tab('cachetab', _('缓存'));
 		s.tab('logtab', _('拦截与日志'));
+		s.tab('adblock', _('广告过滤'));
+		s.tab('querylog', _('查询日志'));
 
 		/* ------------------------------------------------------------ takeover */
 		o = s.taboption('general', form.Flag, 'redirect', _('重定向 LAN 的 53 端口'),
@@ -94,8 +102,17 @@ return view.extend({
 		o.default = 'nxdomain';
 
 		o = s.taboption('logtab', form.Flag, 'query_log', _('记录查询'),
-			_('把每一次查询写进 /tmp/mosdns-x.log，供“DNS → 查询日志”查看。日志在内存里，超过 4 MB 时只保留最新的 4000 行，重启后清空。'));
+			_('把每一次查询写进 /tmp/mosdns-x.log，在“查询日志”标签里查看。日志在内存里，超过 4 MB 时只保留最新的 4000 行，重启后清空。'));
 		o.default = '0';
+
+		/* ------------------------------------------------------------ ad filtering */
+		adblock.tab(s, 'adblock', res[1]);
+
+		/* ------------------------------------------------------------ query log */
+		o = s.taboption('querylog', form.DummyValue, '_querylog');
+		o.render = function() {
+			return querylog.render(res[2]);
+		};
 
 		return m.render();
 	}
