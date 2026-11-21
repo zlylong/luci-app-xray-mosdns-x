@@ -121,6 +121,8 @@ podman run --rm --network none -v "$PWD":/src:ro -v /tmp/xm-test:/out \
     docker.io/openwrt/rootfs:x86-64-24.10.4 sh /src/tests/gen.sh /src /out
 python3 tests/check.py /tmp/xm-test          # 对三套夹具的输出做断言
 # tests/migrate.sh（同样在 rootfs 里跑）：升级迁移前后生成结果必须逐字节一致
+# tests/scripts.sh /src /out（rootfs 里需装 ucode-mod-socket）：测速、流量、update.sh 的输出，
+#   结果同样由 check.py 断言
 xray run -test -c /tmp/xm-test/chnroute/xray.json
 ```
 

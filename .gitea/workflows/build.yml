@@ -43,17 +43,34 @@ jobs:
             fi
           done
           [ -n "$ok" ] || { echo "rootfs: no mirror delivered it" >&2; exit 1; }
+          echo "MIRROR=$m" >> "$GITHUB_ENV"
           rm -rf "$R" && mkdir -p "$R"
           tar -xzf /tmp/rootfs.tar.gz -C "$R"
-          # the scripts redirect to /dev/null, which a booted system creates
-          [ -c "$R/dev/null" ] || { rm -f "$R/dev/null"; mknod -m 666 "$R/dev/null" c 1 3; }
+          # device nodes a booted system creates: the scripts redirect to
+          # /dev/null, apk wants randomness
+          for d in "null 3" "zero 5" "urandom 9"; do
+            set -- $d
+            [ -c "$R/dev/$1" ] || { rm -f "$R/dev/$1"; mknod -m 666 "$R/dev/$1" c 1 "$2"; }
+          done
           mkdir -p "$R/src"
           tar -C "$GITHUB_WORKSPACE" --exclude=.git -cf - . | tar -C "$R/src" -xf -
+
+      # a dependency of the package that the image does not include; fetched
+      # from the mirror that just delivered the rootfs
+      - name: Install ucode-mod-socket
+        run: |
+          rm -f "$R/etc/resolv.conf" && cp /etc/resolv.conf "$R/etc/resolv.conf"
+          grep -rl downloads.immortalwrt.org "$R/etc/apk" | xargs -r sed -i "s#https://downloads.immortalwrt.org#$MIRROR#g"
+          chroot "$R" apk update || echo "apk update: some feeds failed"
+          chroot "$R" apk add ucode-mod-socket
 
       - name: Generate configs for the fixtures
         run: chroot "$R" /bin/sh /src/tests/gen.sh /src /out
 
-      - name: Check the generated configs
+      - name: Run the helper scripts
+        run: chroot "$R" /bin/sh /src/tests/scripts.sh /src /out
+
+      - name: Check the results
         run: |
           python3 -c 'import yaml' 2>/dev/null || {
             apt-get update -qq && apt-get install -y -qq python3-yaml >/dev/null
