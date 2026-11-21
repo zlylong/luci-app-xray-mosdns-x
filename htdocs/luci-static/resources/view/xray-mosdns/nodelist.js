@@ -33,7 +33,8 @@ function importDialog() {
 			ui.addNotification(null, E('p', {}, _('没有可导入的内容')), 'warning');
 			return;
 		}
-		return fs.write(IMPORT_FILE, text).then(function() {
+		/* 0600: the links carry credentials; the import deletes the file */
+		return fs.write(IMPORT_FILE, text, 384).then(function() {
 			return xm.exec('import-links.sh', [ IMPORT_FILE ]);
 		}).then(function(out) {
 			ui.hideModal();
@@ -258,10 +259,14 @@ return view.extend({
 				' ',
 				E('button', {
 					'class': 'cbi-button cbi-button-action',
+					/* a few at a time: each test opens connections from the router */
 					'click': ui.createHandlerFn(this, function() {
-						return Promise.all(Object.keys(latencyCells).map(function(sid) {
-							return testNode(sid, latencyCells[sid]);
-						}));
+						var queue = Object.keys(latencyCells);
+						function worker() {
+							var sid = queue.shift();
+							return sid ? testNode(sid, latencyCells[sid]).then(worker) : Promise.resolve();
+						}
+						return Promise.all([ worker(), worker(), worker(), worker() ]);
 					})
 				}, _('全部测速'))
 			]);

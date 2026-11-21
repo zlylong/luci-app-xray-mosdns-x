@@ -4,6 +4,7 @@
 //
 // usage: gen-config.uc [-o outdir] [-c uci-confdir] [-g geoip.dat]
 //                      [-l lan-device]... [-n]
+//   -g  geoip.dat to extract kernel sets from (default: global.geo_dir)
 //   -n  do not resolve node hostnames (bypass set is then IP literals only)
 'use strict';
 
@@ -18,7 +19,7 @@ import { country_cached } from 'xray_mosdns.geoip';
 let opt = {
 	out: '/var/etc/xray-mosdns',
 	confdir: null,
-	geoip: '/usr/share/v2ray/geoip.dat',
+	geoip: null,	// default: <global.geo_dir>/geoip.dat
 	lan: [],
 	resolve: true,
 };
@@ -65,33 +66,52 @@ function lan_devices(cfg) {
 }
 
 // Best effort only: these addresses keep LAN clients that talk to a node
-// directly out of the proxy. Nothing breaks when a lookup fails.
+// directly out of the proxy. Nothing breaks when a lookup fails. The names
+// are looked up all at once, so a slow resolver costs one timeout, not one
+// per node.
 function node_ips(cfg, plan) {
 	let res = { v4: [], v6: [] };
+	let names = {};		// host name -> the nodes using it
+	function add(ip) {
+		const v = ipver(ip);
+		if (v == 4)
+			push(res.v4, ip);
+		else if (v == 6)
+			push(res.v6, ip);
+	}
 	for (let name in plan.needed) {
 		const addr = plan.by_name[name].address;
 		if (!addr)
 			continue;
-		let found = [];
-		if (ipver(addr)) {
-			found = [ addr ];
-		}
+		if (ipver(addr))
+			add(addr);
 		else if (opt.resolve && match(addr, /^[A-Za-z0-9._-]+$/)) {
-			const p = fs.popen(`resolveip -t 3 '${addr}' 2>/dev/null`, 'r');
-			if (p) {
-				found = split(trim(p.read('all') ?? ''), /\s+/);
-				p.close();
+			if (!names[addr])
+				names[addr] = [];
+			push(names[addr], name);
+		}
+	}
+
+	const hosts = keys(names);
+	if (length(hosts)) {
+		// one background lookup per name, each answer line prefixed with the name
+		// (names are checked above to hold nothing the shell would interpret)
+		const cmd = join(' ', map(hosts, h => `(resolveip -t 3 '${h}' 2>/dev/null | sed 's/^/${h} /') &`)) + ' wait';
+		let answered = {};
+		const p = fs.popen(cmd, 'r');
+		if (p) {
+			for (let line in split(p.read('all') ?? '', '\n')) {
+				const f = split(trim(line), /\s+/);
+				if (length(f) == 2 && (f[0] in hosts) && ipver(f[1])) {
+					answered[f[0]] = true;
+					add(f[1]);
+				}
 			}
-			if (!length(filter(found, ipver)))
-				note(`node ${name}: could not resolve '${addr}' (continuing)`);
+			p.close();
 		}
-		for (let ip in found) {
-			const v = ipver(ip);
-			if (v == 4)
-				push(res.v4, ip);
-			else if (v == 6)
-				push(res.v6, ip);
-		}
+		for (let h in hosts)
+			if (!answered[h])
+				note(`node ${join(', ', names[h])}: could not resolve '${h}' (continuing)`);
 	}
 	res.v4 = uniq_list(res.v4);
 	res.v6 = uniq_list(res.v6);
@@ -104,6 +124,8 @@ for (let dev in opt.lan)
 
 // ---------------------------------------------------------------- generate
 const cfg = load(opt.confdir);
+if (!opt.geoip)
+	opt.geoip = `${cfg.global.geo_dir}/geoip.dat`;
 
 // the group watcher switches to the backup probe target by writing this file
 const PROBE_STATE = '/var/run/xray-mosdns-probe';

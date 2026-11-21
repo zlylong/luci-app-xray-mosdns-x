@@ -2,11 +2,22 @@
 # Import proxy share links (vless / vmess / trojan / shadowsocks) into UCI nodes.
 # Imported nodes are created DISABLED; select one in the Nodes page afterwards.
 # Usage: import-links.sh <file-with-one-link-per-line>
-FILE="${1:-/tmp/xray-mosdns-import.txt}"
+LUCI_FILE=/tmp/xray-mosdns-import.txt	# where the Nodes page puts the pasted links
+FILE="${1:-$LUCI_FILE}"
 CFG=xray-mosdns
-TMPJ=/tmp/.xray-mosdns-import.json
 
 [ -f "$FILE" ] || { printf '{"ok":false,"error":"file not found"}\n'; exit 1; }
+
+# links and decoded vmess payloads carry credentials: private temp file,
+# removed on any exit, and the page's paste file with it
+umask 077
+TMPJ=$(mktemp /tmp/xray-mosdns-import.XXXXXX) || { printf '{"ok":false,"error":"no temp file"}\n'; exit 1; }
+cleanup() {
+	rm -f "$TMPJ"
+	[ "$FILE" = "$LUCI_FILE" ] && rm -f "$FILE"
+}
+trap cleanup EXIT
+trap 'exit 1' INT TERM HUP
 
 b64dec() {
 	v=$(printf '%s' "$1" | tr '_-' '/+' | tr -d '\r\n')
@@ -14,7 +25,8 @@ b64dec() {
 		2) v="$v==" ;;
 		3) v="$v=" ;;
 	esac
-	printf '%s' "$v" | base64 -d 2>/dev/null
+	# ucode decodes it: BusyBox on OpenWrt has no base64 applet
+	V="$v" ucode -e 'const d = b64dec(getenv("V")); if (d != null) print(d);' 2>/dev/null
 }
 
 urldec() {
@@ -41,7 +53,7 @@ new_section() {
 
 # split "a=1&b=2" query string and expose via shell vars for the caller
 parse_query() {
-	Q_TLS=0; Q_SNI=""; Q_FP=""; Q_NET=""; Q_PATH=""; Q_HOST=""; Q_SVC=""; Q_FLOW=""; Q_INSEC=0
+	Q_TLS=0; Q_SNI=""; Q_FP=""; Q_NET=""; Q_PATH=""; Q_HOST=""; Q_SVC=""; Q_FLOW=""
 	for kv in $(printf '%s' "$1" | sed 's/&/ /g'); do
 		k=${kv%%=*}; v=${kv#*=}
 		case "$k" in
@@ -53,7 +65,6 @@ parse_query() {
 			host) Q_HOST=$(urldec "$v") ;;
 			serviceName) Q_SVC=$(urldec "$v") ;;
 			flow) Q_FLOW=$v ;;
-			allowInsecure) [ "$v" = "1" ] && Q_INSEC=1 ;;
 		esac
 	done
 }
@@ -84,7 +95,6 @@ parse_vless() {
 	[ -n "$Q_HOST" ] && uci_set "$sec.host" "$Q_HOST"
 	[ -n "$Q_SVC" ] && uci_set "$sec.service_name" "$Q_SVC"
 	[ -n "$flow" ] && uci_set "$sec.flow" "$flow"
-	[ "$Q_INSEC" = "1" ] && uci_set "$sec.allow_insecure" '1'
 	echo "$sec"
 }
 
@@ -144,7 +154,6 @@ parse_trojan() {
 	[ -n "$Q_PATH" ] && uci_set "$sec.path" "$Q_PATH"
 	[ -n "$Q_HOST" ] && uci_set "$sec.host" "$Q_HOST"
 	[ -n "$Q_SVC" ] && uci_set "$sec.service_name" "$Q_SVC"
-	[ "$Q_INSEC" = "1" ] && uci_set "$sec.allow_insecure" '1'
 	echo "$sec"
 }
 

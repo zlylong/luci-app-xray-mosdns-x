@@ -188,7 +188,7 @@ return view.extend({
 			return E('div', {}, [
 				E('h2', {}, _('Geo 数据查询')),
 				E('p', { 'class': 'alert-message warning' },
-					_('没有找到 geo 数据（/usr/share/v2ray/geosite.dat、geoip.dat）。可以到“更新”页下载。'))
+					_('没有找到 geo 数据（geosite.dat、geoip.dat，目录在“系统 → 端口与路径”里设置）。可以到“更新”页下载。'))
 			]);
 
 		return E('div', {}, [

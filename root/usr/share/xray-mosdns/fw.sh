@@ -4,29 +4,60 @@
 #
 # apply is safe to run repeatedly: nft.rules replaces chains and static sets
 # in a single transaction, so there is no window without rules. A failed
-# apply leaves the loaded table as it was.
+# apply leaves the loaded table as it was, and exits non-zero, as it does
+# when the policy routing is not in place afterwards.
+#
+# XM_RULES_DIR names the directory nft.rules and its companions are read
+# from (default: the output directory); the start script loads a new set
+# from where it was generated, before switching to it.
 OUT=/var/etc/xray-mosdns
+RULES=${XM_RULES_DIR:-$OUT}
 STATE="$OUT/.fw-state"
 TABLE="inet xray-mosdns"
+PREF=100	# priority of the policy rule
 
 get_opt() { uci -q get "xray-mosdns.$1" 2>/dev/null; }
 FWMARK=$(get_opt '@global[0].fwmark'); [ -n "$FWMARK" ] || FWMARK=0x1
 ROUTE_TABLE=$(get_opt '@global[0].route_table'); [ -n "$ROUTE_TABLE" ] || ROUTE_TABLE=100
 IPV6_EN=$(get_opt '@global[0].ipv6_enabled'); [ "$IPV6_EN" = "1" ] || IPV6_EN=0
 
-# $1 family flag (-4/-6), $2 fwmark, $3 table
+# $1 family flag (-4/-6), $2 fwmark, $3 table. Only what add_route put
+# there goes: the rule at our priority and the one route. Another user of
+# the same mark or table keeps theirs.
 del_route() {
 	i=0
-	while [ $i -lt 8 ] && ip "$1" rule del fwmark "$2" lookup "$3" 2>/dev/null; do
+	while [ $i -lt 8 ] && ip "$1" rule del fwmark "$2" lookup "$3" pref "$PREF" 2>/dev/null; do
 		i=$((i + 1))
 	done
-	ip "$1" route flush table "$3" 2>/dev/null || true
+	ip "$1" route del local default dev lo table "$3" 2>/dev/null || true
 }
 
-# $1 family flag. `ip rule add` refuses an identical rule, so this is idempotent.
+# $1 family flag. `ip rule add` refuses an identical rule, so this is
+# idempotent; what counts is that both are there afterwards.
 add_route() {
-	ip "$1" rule add fwmark "$FWMARK" lookup "$ROUTE_TABLE" pref 100 2>/dev/null || true
-	ip "$1" route replace local default dev lo table "$ROUTE_TABLE" 2>/dev/null || true
+	ip "$1" rule add fwmark "$FWMARK" lookup "$ROUTE_TABLE" pref "$PREF" 2>/dev/null
+	ip "$1" route replace local default dev lo table "$ROUTE_TABLE" 2>/dev/null
+	if ip "$1" rule show 2>/dev/null | grep -qE "fwmark $(printf '0x%x' "$FWMARK") lookup $ROUTE_TABLE( |\$)" &&
+		ip "$1" route show table "$ROUTE_TABLE" 2>/dev/null | grep -q '^local default dev lo'; then
+		return 0
+	fi
+	echo "policy routing (fwmark $FWMARK, table $ROUTE_TABLE) is not in place for IPv${1#-}" >&2
+	logger -t xray-mosdns "policy routing (fwmark $FWMARK, table $ROUTE_TABLE) is not in place for IPv${1#-}"
+	return 1
+}
+
+# $1 family flag. Another program using the same mark or routing table
+# makes the two step on each other: say so in the log (the values can be
+# changed under System > Ports and paths).
+warn_shared() {
+	hex=$(printf '0x%x' "$FWMARK")
+	others=$(ip "$1" rule show 2>/dev/null | grep -vE "^$PREF:" | grep -E "fwmark $hex( |/)|lookup $ROUTE_TABLE( |\$)")
+	[ -n "$others" ] && logger -p daemon.warn -t xray-mosdns \
+		"fwmark $FWMARK / table $ROUTE_TABLE are also used by: $(printf '%s' "$others" | tr '\n\t' '; ')"
+	others=$(ip "$1" route show table "$ROUTE_TABLE" 2>/dev/null | grep -v '^local default dev lo')
+	[ -n "$others" ] && logger -p daemon.warn -t xray-mosdns \
+		"routing table $ROUTE_TABLE also holds: $(printf '%s' "$others" | head -3 | tr '\n' ';')"
+	return 0
 }
 
 # remove the routing set up by a previous apply (which may have used other values)
@@ -52,20 +83,20 @@ clear_fw() {
 # rules in force until the new ones are complete and leaves them untouched
 # if the new ones are rejected.
 load_rules() {
-	nft -f "$OUT/nft.rules" 2>/dev/null && return 0
+	nft -f "$RULES/nft.rules" 2>/dev/null && return 0
 
 	batch="$OUT/.nft-rebuild"
 	{
 		echo "add table $TABLE"
 		echo "delete table $TABLE"
-		cat "$OUT/nft.rules"
+		cat "$RULES/nft.rules"
 		# with the DNS watchdog, nft.rules leaves the redirect chains to it:
 		# carry an active redirect over rather than hand LAN DNS to dnsmasq
 		# until the watchdog's next probe
-		if ! grep -q "^flush chain $TABLE dns_redirect\$" "$OUT/nft.rules" &&
-			[ -f "$OUT/nft-dns-on.rules" ] &&
+		if ! grep -q "^flush chain $TABLE dns_redirect\$" "$RULES/nft.rules" &&
+			[ -f "$RULES/nft-dns-on.rules" ] &&
 			nft list chain $TABLE dns_redirect 2>/dev/null | grep -q 'redirect to'; then
-			cat "$OUT/nft-dns-on.rules"
+			cat "$RULES/nft-dns-on.rules"
 		fi
 	} > "$batch"
 	if err=$(nft -f "$batch" 2>&1); then
@@ -80,24 +111,25 @@ load_rules() {
 }
 
 apply_fw() {
-	[ -f "$OUT/nft.rules" ] || { echo "missing $OUT/nft.rules" >&2; exit 1; }
+	[ -f "$RULES/nft.rules" ] || { echo "missing $RULES/nft.rules" >&2; exit 1; }
 
 	load_rules || exit 1
 	# per-device chains that the current ruleset no longer uses
 	for c in $(nft list table $TABLE 2>/dev/null | sed -n 's/^[[:space:]]*chain \(dev_[0-9]*\) {.*/\1/p'); do
-		grep -q "^add chain $TABLE $c\$" "$OUT/nft.rules" || nft delete chain $TABLE "$c" 2>/dev/null || true
+		grep -q "^add chain $TABLE $c\$" "$RULES/nft.rules" || nft delete chain $TABLE "$c" 2>/dev/null || true
 	done
 
-	if [ "$1" = "flush-dns" ] && [ -f "$OUT/nft-flush-dns.rules" ]; then
-		nft -f "$OUT/nft-flush-dns.rules" 2>/dev/null || true
+	if [ "$1" = "flush-dns" ] && [ -f "$RULES/nft-flush-dns.rules" ]; then
+		nft -f "$RULES/nft-flush-dns.rules" 2>/dev/null || true
 	fi
 
 	if [ -f "$STATE" ] && [ "$(cat "$STATE")" != "$FWMARK $ROUTE_TABLE" ]; then
 		clear_routes
 	fi
-	add_route -4
+	warn_shared -4
+	add_route -4 || exit 1
 	if [ "$IPV6_EN" = "1" ]; then
-		add_route -6
+		add_route -6 || exit 1
 	else
 		del_route -6 "$FWMARK" "$ROUTE_TABLE"
 	fi

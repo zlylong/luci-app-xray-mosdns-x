@@ -51,8 +51,11 @@ var PRESETS = {
 	}
 };
 
-/* a preset is staged like any other edit: nothing changes until Save & Apply */
-function applyPreset(id) {
+/* A preset is staged like any other edit: nothing changes until Save &
+ * Apply. The form's own unsaved edits are taken in first (map.save parses
+ * them before running the callback), so they are kept, not overwritten
+ * and not lost to a page reload. */
+function applyPreset(id, map) {
 	var p = PRESETS[id];
 
 	function toggle(name, enabled) {
@@ -67,12 +70,10 @@ function applyPreset(id) {
 		uci.set(xm.CONF, name, 'enabled', enabled ? '1' : '0');
 	}
 
-	uci.set(xm.CONF, 'global', 'default_action', p.default_action);
-	p.on.forEach(function(n) { toggle(n, true); });
-	p.off.forEach(function(n) { toggle(n, false); });
-
-	return uci.save().then(function() {
-		window.location.reload();
+	return map.save(function() {
+		uci.set(xm.CONF, 'global', 'default_action', p.default_action);
+		p.on.forEach(function(n) { toggle(n, true); });
+		p.off.forEach(function(n) { toggle(n, false); });
 	});
 }
 
@@ -237,7 +238,7 @@ return view.extend({
 						'class': 'cbi-button cbi-button-action',
 						'style': 'margin-right:.5em',
 						'title': PRESETS[id].descr,
-						'click': ui.createHandlerFn(this, function() { return applyPreset(id); })
+						'click': ui.createHandlerFn(this, function() { return applyPreset(id, m); })
 					}, PRESETS[id].title);
 				}))
 			]);

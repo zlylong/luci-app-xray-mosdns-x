@@ -139,8 +139,14 @@ done
 uci -q delete 'xray-mosdns.@dns[0].xray_dns_port'
 # mosdns-x has no switch of its own any more: it follows the service
 uci -q delete 'xray-mosdns.@dns[0].enabled'
+# Xray 26 has no allowInsecure: the importer stored it, nothing ever read it
+for s in $(uci -q show xray-mosdns | sed -n 's/^xray-mosdns\.\([^.=]*\)\.allow_insecure=.*/\1/p'); do
+	uci -q delete "xray-mosdns.$s.allow_insecure"
+done
 
 uci commit xray-mosdns
+# node credentials: root only (uci keeps the mode when it rewrites the file)
+chmod 600 /etc/config/xray-mosdns 2>/dev/null
 
 # <= 0.8 rewrote dnsmasq's upstream; put the user's own settings back
 [ -x /usr/share/xray-mosdns/dnsmasq.sh ] && /usr/share/xray-mosdns/dnsmasq.sh revert

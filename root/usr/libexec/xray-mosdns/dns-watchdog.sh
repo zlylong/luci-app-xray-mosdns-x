@@ -15,6 +15,7 @@
 #   log-only: do not touch the redirect (it is static, or there is none);
 #             only keep the mosdns log file from growing without bound
 MODE=${1:-manage}
+umask 077	# the log trim writes a copy of the query log
 OUT=/var/etc/xray-mosdns
 LOG=/tmp/mosdns-x.log
 LOG_MAX=4194304		# bytes; trimmed back to the newest LOG_KEEP lines
