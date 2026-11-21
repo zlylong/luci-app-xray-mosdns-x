@@ -51,10 +51,55 @@ cron_line() {
 	printf '%s %s * * * /usr/libexec/xray-mosdns/update.sh geo-auto >>/tmp/xray-mosdns-geo-update.log 2>&1 # xray-mosdns-geo-auto' "0" "$hour"
 }
 
-backup_file() { # $1 = path
+KEEP_BACKUPS=3
+LOCK="$TMP.lock"
+
+# one update at a time: a second one is told so instead of racing the first
+lock() {
+	exec 9>"$LOCK" && flock -n 9 && return 0
+	err "another update is running"
+	exit 0
+}
+
+# $1 = path; prints the copy's path. Keeps the newest $KEEP_BACKUPS of each file.
+backup_file() {
 	[ -f "$1" ] || return 0
-	d="$BACKUP_DIR/$(basename "$1").$(date +%Y%m%d-%H%M%S)"
-	cp -a "$1" "$d" && echo "$d"
+	b=$(basename "$1")
+	d="$BACKUP_DIR/$b.$(date +%Y%m%d-%H%M%S)"
+	cp -a "$1" "$d" || return 1
+	ls -1t "$BACKUP_DIR/$b".* 2>/dev/null | tail -n +$((KEEP_BACKUPS + 1)) | while read -r old; do
+		rm -f "$old"
+	done
+	echo "$d"
+}
+
+# $1 = backup from backup_file (may be empty), $2 = where it belongs
+restore() {
+	[ -n "$1" ] && [ -f "$1" ] || return 1
+	cp -a "$1" "$2.restore.$$" && mv -f "$2.restore.$$" "$2"
+}
+
+# $1 = file, $2 = expected sha256 (hex)
+sha256_ok() {
+	[ -n "$2" ] && [ "$(sha256sum "$1" 2>/dev/null | cut -d' ' -f1)" = "$(printf '%s' "$2" | tr 'A-F' 'a-f')" ]
+}
+
+# $1 = new binary, $2 = target. The copy is made next to the target and
+# renamed over it, so the target is never half-written, and a running
+# daemon keeps its old file.
+install_bin() {
+	new="$2.new.$$"
+	mkdir -p "$(dirname "$2")"
+	if cp -f "$1" "$new" && chmod 755 "$new" && "$new" version >/dev/null 2>&1 && mv -f "$new" "$2"; then
+		return 0
+	fi
+	rm -f "$new"
+	return 1
+}
+
+# $1 = xray|mosdns: no prebuilt archive for this machine
+no_asset() {
+	err "no prebuilt $1 for $(uname -m) here: update it with the package manager or by hand"
 }
 
 geo_size() { [ -f "$1" ] && wc -c < "$1" 2>/dev/null | tr -d ' ' || echo 0; }
@@ -108,19 +153,38 @@ cmd_check() {
 cmd_geo() {
 	gd=$(v2ray_dir)
 	mkdir -p "$gd"
-	curl -fsSL --max-time 600 -o "$TMP/geosite.dat" \
-		https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat || { err "geosite.dat download failed"; return; }
-	curl -fsSL --max-time 600 -o "$TMP/geoip.dat" \
-		https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat || { err "geoip.dat download failed"; return; }
+	# both files and their checksums from one release, not whatever "latest" is per request
+	_ver="${1:-$(remote_tag Loyalsoldier/v2ray-rules-dat)}"
+	if [ -n "$_ver" ]; then
+		base="https://github.com/Loyalsoldier/v2ray-rules-dat/releases/download/$_ver"
+	else
+		base="https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download"
+		_ver="manual-$(date +%Y%m%d-%H%M%S)"
+	fi
+	for f in geosite.dat geoip.dat; do
+		curl -fsSL --max-time 600 -o "$TMP/$f" "$base/$f" || { err "$f download failed"; return; }
+		sum=$(curl -fsSL --max-time 30 "$base/$f.sha256sum" 2>/dev/null | sed -n 's/^\([0-9a-fA-F]\{64\}\).*/\1/p' | head -1)
+		[ -n "$sum" ] || { err "cannot download the checksum of $f"; return; }
+		sha256_ok "$TMP/$f" "$sum" || { err "$f does not match its published checksum: not installed"; return; }
+	done
 	gs=$(geo_size "$TMP/geosite.dat"); gp=$(geo_size "$TMP/geoip.dat")
 	[ "$gs" -gt 1000000 ] && [ "$gp" -gt 1000000 ] || { err "downloaded geo data looks invalid"; return; }
-	backup_file "$gd/geosite.dat" >/dev/null
-	backup_file "$gd/geoip.dat" >/dev/null
-	mv -f "$TMP/geosite.dat" "$gd/geosite.dat" && mv -f "$TMP/geoip.dat" "$gd/geoip.dat" || { err "install failed"; return; }
-	_ver="${1:-$(remote_tag Loyalsoldier/v2ray-rules-dat)}"
-	[ -n "$_ver" ] || _ver="manual-$(date +%Y%m%d-%H%M%S)"
+	bs=$(backup_file "$gd/geosite.dat") && bp=$(backup_file "$gd/geoip.dat") || { err "cannot back up the current geo data"; return; }
+	# copies next to the targets, renamed over them; the first is undone if the second fails
+	if ! { cp -f "$TMP/geosite.dat" "$gd/.geosite.dat.new" && cp -f "$TMP/geoip.dat" "$gd/.geoip.dat.new"; }; then
+		rm -f "$gd/.geosite.dat.new" "$gd/.geoip.dat.new"
+		err "install failed (disk full?)"
+		return
+	fi
+	mv -f "$gd/.geosite.dat.new" "$gd/geosite.dat" || { rm -f "$gd/.geoip.dat.new"; err "install failed"; return; }
+	if ! mv -f "$gd/.geoip.dat.new" "$gd/geoip.dat"; then
+		rm -f "$gd/.geoip.dat.new"
+		restore "$bs" "$gd/geosite.dat"
+		err "install failed; the previous geo data is back in place"
+		return
+	fi
 	geo_marker_write "$_ver"
-	ok "geo data updated ($_ver; geosite ${gs} bytes, geoip ${gp} bytes). Restart xray/passwall to reload."
+	ok "geo data updated ($_ver; geosite ${gs} bytes, geoip ${gp} bytes). mosdns-x reloads it by itself; restart the service so Xray does too."
 }
 
 cmd_geo_auto() {
@@ -140,7 +204,7 @@ cmd_cron_install() {
 	[ "$hour" -ge 0 ] 2>/dev/null && [ "$hour" -le 23 ] || hour=4
 	cf=$(cron_file)
 	mkdir -p "$(dirname "$cf")"
-	[ -f "$cf" ] && cp -a "$cf" "$BACKUP_DIR/crontab.$(date +%Y%m%d-%H%M%S)"
+	backup_file "$cf" >/dev/null
 	if [ -f "$cf" ]; then
 		sed -i '/# xray-mosdns-geo-auto/d' "$cf"
 	else
@@ -154,7 +218,7 @@ cmd_cron_install() {
 cmd_cron_remove() {
 	cf=$(cron_file)
 	if [ -f "$cf" ]; then
-		cp -a "$cf" "$BACKUP_DIR/crontab.$(date +%Y%m%d-%H%M%S)" 2>/dev/null || true
+		backup_file "$cf" >/dev/null || true
 		sed -i '/# xray-mosdns-geo-auto/d' "$cf"
 	fi
 	[ -n "$ROOT" ] || /etc/init.d/cron restart >/dev/null 2>&1 || true
@@ -171,28 +235,35 @@ cmd_cron_status() {
 
 cmd_xray() {
 	xb=$(xray_bin)
-	asset=$(asset_name xray); [ -n "$asset" ] || { err "unsupported architecture"; return; }
+	asset=$(asset_name xray); [ -n "$asset" ] || { no_asset xray; return; }
 	url=$(latest_url XTLS/Xray-core "$asset")
 	[ -n "$url" ] || { err "cannot find release asset $asset"; return; }
 	curl -fL --max-time 600 -o "$TMP/xray.zip" "$url" || { err "download failed"; return; }
+	# every Xray archive comes with a .dgst listing its hashes
+	sum=$(curl -fsSL --max-time 30 "$url.dgst" 2>/dev/null | sed -n 's/^SHA2-256= *\([0-9a-fA-F]\{64\}\).*/\1/p' | head -1)
+	[ -n "$sum" ] || { err "cannot download the checksum of $asset"; return; }
+	sha256_ok "$TMP/xray.zip" "$sum" || { err "$asset does not match its published checksum: not installed"; return; }
 	rm -rf "$TMP/xray-new"; mkdir -p "$TMP/xray-new"
 	unzip -o -q "$TMP/xray.zip" -d "$TMP/xray-new" || { err "unzip failed"; return; }
 	chmod +x "$TMP/xray-new/xray" 2>/dev/null || { err "no xray binary in archive"; return; }
 	newver=$("$TMP/xray-new/xray" version 2>/dev/null | head -1)
 	[ -n "$newver" ] || { err "downloaded xray does not run"; return; }
 	oldver=$("$xb" version 2>/dev/null | head -1)
-	backup_file "$xb" >/dev/null
-	mkdir -p "$(dirname "$xb")"
-	if cp -f "$TMP/xray-new/xray" "$xb" && chmod 755 "$xb" && "$xb" version >/dev/null 2>&1; then
-		ok "xray updated: $oldver -> $newver. Restart the service (and PassWall) to use it."
+	bk=$(backup_file "$xb") || { err "cannot back up $xb"; return; }
+	if install_bin "$TMP/xray-new/xray" "$xb" && "$xb" version >/dev/null 2>&1; then
+		ok "xray updated: $oldver -> $newver. Restart the service to use it."
+	elif restore "$bk" "$xb"; then
+		err "install failed; the previous xray is back in place"
 	else
 		err "install failed"
 	fi
 }
 
+# pmkol/mosdns-x publishes no checksums: the archive is only checked by
+# running the binary it contains
 cmd_mosdns() {
 	mb=$(mosdns_bin)
-	asset=$(asset_name mosdns); [ -n "$asset" ] || { err "unsupported architecture"; return; }
+	asset=$(asset_name mosdns); [ -n "$asset" ] || { no_asset mosdns-x; return; }
 	url=$(latest_url pmkol/mosdns-x "$asset")
 	[ -n "$url" ] || { err "cannot find release asset $asset"; return; }
 	curl -fL --max-time 600 -o "$TMP/mosdns.zip" "$url" || { err "download failed"; return; }
@@ -204,10 +275,11 @@ cmd_mosdns() {
 	newver=$("$newbin" version 2>/dev/null | head -1)
 	[ -n "$newver" ] || { err "downloaded mosdns does not run"; return; }
 	oldver=$("$mb" version 2>/dev/null | head -1)
-	backup_file "$mb" >/dev/null
-	mkdir -p "$(dirname "$mb")"
-	if cp -f "$newbin" "$mb" && chmod 755 "$mb" && "$mb" version >/dev/null 2>&1; then
-		ok "mosdns updated: $oldver -> $newver. Restart the service to use it."
+	bk=$(backup_file "$mb") || { err "cannot back up $mb"; return; }
+	if install_bin "$newbin" "$mb" && "$mb" version >/dev/null 2>&1; then
+		ok "mosdns updated: $oldver -> $newver (no published checksum to verify against). Restart the service to use it."
+	elif restore "$bk" "$mb"; then
+		err "install failed; the previous mosdns is back in place"
 	else
 		err "install failed"
 	fi
@@ -216,12 +288,12 @@ cmd_mosdns() {
 case "${1:-versions}" in
 	versions) cmd_versions ;;
 	check) cmd_check ;;
-	geo) cmd_geo "${2:-}" ;;
-	geo-auto) cmd_geo_auto ;;
-	xray) cmd_xray ;;
-	mosdns) cmd_mosdns ;;
-	cron-install) cmd_cron_install ;;
-	cron-remove) cmd_cron_remove ;;
+	geo) lock; cmd_geo "${2:-}" ;;
+	geo-auto) lock; cmd_geo_auto ;;
+	xray) lock; cmd_xray ;;
+	mosdns) lock; cmd_mosdns ;;
+	cron-install) lock; cmd_cron_install ;;
+	cron-remove) lock; cmd_cron_remove ;;
 	cron-status) cmd_cron_status ;;
 	*) err "unknown action" ;;
 esac
