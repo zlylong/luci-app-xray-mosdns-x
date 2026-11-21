@@ -107,6 +107,11 @@ check(m["servers"][0]["listeners"][0]["addr"] == ":5335", "redirect mode listens
 pre = chain(n, "prerouting")
 check(pre[0] == 'iifname != { "br-lan" } return', "traffic not entering from the LAN must be left alone")
 check(pre.index("ip daddr @direct4_dns return") < pre.index("ip daddr @proxy4_dns goto do_tproxy") < pre.index("ip daddr @ipg4_0 goto do_tproxy") < pre.index("ip daddr @ipg4_1 return"), "DNS sets first, then IP rule groups in rule order")
+SHARED = 'comment "learned for a direct and a proxied name"'
+check(pre.index(f"ip daddr @direct4_dns ip daddr @proxy4_dns goto do_tproxy {SHARED}") < pre.index("ip daddr @direct4_dns return"),
+      "an address in both DNS sets goes to Xray, ahead of the direct set")
+check(x["inbounds"][0]["tag"] == "tproxy-in" and x["inbounds"][0]["sniffing"] == {"enabled": True, "destOverride": ["http", "tls", "quic"], "routeOnly": True},
+      "Xray sniffs the name that decides such flows, and still connects to the address")
 check(pre[-1] == "goto do_tproxy", "chnroute: default is proxy")
 check("meta nfproto ipv6 return" in pre, "IPv6 must not be proxied when disabled")
 check("not-an-ip" not in n, "invalid bypass entry leaked into nft")
@@ -159,6 +164,8 @@ pre = chain(n, "prerouting")
 check(pre[-1] == "return", "gfw: kernel default is direct")
 check(not any("@ipg" in r for r in pre), "gfw: no IP rule groups are needed")
 check("ip6 daddr @proxy6_dns goto do_tproxy" in pre and "meta nfproto ipv6 return" not in pre, "ipv6 rules present")
+check(pre.index(f"ip6 daddr @direct6_dns ip6 daddr @proxy6_dns goto do_tproxy {SHARED}") < pre.index("ip6 daddr @direct6_dns return"),
+      "ipv6: an address in both DNS sets goes to Xray too")
 check("2001:db8:1::5" in n.split("add element inet xray-mosdns bypass6 {", 1)[1].split("}")[0], "v6 node address must be bypassed")
 check(len(chain(n, "do_tproxy")) == 3, "ipv6 tproxy rule present")
 check('"br-guest"' in pre[0], "lan_devices from the config are honoured")
@@ -204,6 +211,8 @@ oc = chain(n, "output")
 check(oc[0] == 'meta mark 0xff return comment "sent by Xray or mosdns"' and oc[1] == "meta l4proto != tcp return", "router: own packets of Xray/mosdns are skipped first, then only TCP is considered")
 check("meta l4proto { tcp, udp } th dport 53 return" in oc and oc.index("ct mark & 0x1 == 0x1 goto out_mark") < oc.index("ct state != new return") < oc.index("ip daddr @bypass4 return"), "router: DNS exempt, then per-flow shortcut, then classification")
 check(oc[-1] == "goto out_mark" and "ip daddr @proxy4_dns goto out_mark" in oc, "router: same classification as the LAN, with a marking verdict")
+check(oc.index(f"ip daddr @direct4_dns ip daddr @proxy4_dns goto out_mark {SHARED}") < oc.index("ip daddr @direct4_dns return"),
+      "router: an address in both DNS sets is marked for Xray too")
 check(chain(n, "out_mark") == ["ct mark set ct mark | 0x1", "meta mark set 0x1"], "router: marking chain")
 check(chain(n, "prerouting")[0] == 'iifname "lo" meta mark 0x1 goto do_tproxy comment "router traffic, marked in output"', "router: re-routed packets enter the tproxy path from lo")
 check(chain(n, "dns_redirect_out") == ["meta mark != 0xff fib daddr type local meta l4proto { tcp, udp } th dport 53 counter redirect to :5335"], "router: its own lookups go to mosdns, except the ones mosdns sends to dnsmasq")
@@ -262,6 +271,13 @@ check(dc[:3] == ["fib daddr type != unicast return", "ip daddr @bypass4 return",
 check("th dport { 12345, 12346, 12347 } drop" in n, "devices: their ports are closed to direct access too")
 gj = json.load(open(f"{out}/groups/groups.json"))
 check(len(gj) == 1 and gj[0]["name"] == "hk" and gj[0]["remarks"] == "香港" and gj[0]["strategy"] == "ordered" and [mm["name"] for mm in gj[0]["members"]] == ["a", "b"], "groups.json: only the used group, in member order")
+
+# ------------------------------------------------------------------ nosniff: chnroute with sniffing off
+x, m, n = load("nosniff")
+pre = chain(n, "prerouting")
+check("sniffing" not in x["inbounds"][0], "nosniff: Xray does not sniff")
+check(not any("@direct4_dns ip daddr @proxy4_dns" in r for r in pre) and pre.index("ip daddr @direct4_dns return") < pre.index("ip daddr @proxy4_dns goto do_tproxy"),
+      "nosniff: Xray could not decide by name, so the direct set keeps precedence")
 
 # ------------------------------------------------------------------ blocklist conversion
 block = open(f"{out}/adlist/block.txt").read().split()

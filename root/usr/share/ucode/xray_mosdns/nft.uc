@@ -196,10 +196,20 @@ export function build(cfg, plan, env) {
 			return r;
 		}
 		// addresses mosdns resolved for a domain rule are the most specific
-		// information available, so they are tested before the IP rules
+		// information available, so they are tested before the IP rules.
+		// An address learned for both a direct and a proxied name, typically
+		// one CDN address serving many sites, cannot be decided by address:
+		// such flows go to Xray, which matches the sniffed name against the
+		// same rules. Without sniffing Xray could not tell them apart either,
+		// and the direct set keeps precedence.
+		const shared = 'comment "learned for a direct and a proxied name"';
+		if (g.sniffing)
+			push(r, `ip daddr @direct4_dns ip daddr @proxy4_dns ${proxy} ${shared}`);
 		push(r, 'ip daddr @direct4_dns return');
 		push(r, `ip daddr @proxy4_dns ${proxy}`);
 		if (g.ipv6) {
+			if (g.sniffing)
+				push(r, `ip6 daddr @direct6_dns ip6 daddr @proxy6_dns ${proxy} ${shared}`);
 			push(r, 'ip6 daddr @direct6_dns return');
 			push(r, `ip6 daddr @proxy6_dns ${proxy}`);
 		}
