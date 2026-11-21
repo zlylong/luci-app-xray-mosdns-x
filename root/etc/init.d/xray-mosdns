@@ -200,9 +200,10 @@ listening() {
 }
 
 # After procd has (re)started the daemons: the rules send proxied traffic
-# to Xray's TProxy port. If Xray does not come up there, the rules are taken
-# away again, so that traffic goes out directly rather than into a closed
-# port.
+# to Xray's TProxy port. If Xray does not come up there, the transparent
+# proxy is taken out of the path (fw.sh gate), so that traffic goes out
+# directly rather than into a closed port; the watchdog puts it back once
+# Xray listens, and does the same for a crash later on.
 service_started() {
 	[ "$(get_opt '@global[0].enabled')" = "1" ] && [ -f "$OUT/nft.rules" ] || return 0
 	nft list table inet xray-mosdns >/dev/null 2>&1 || return 0
@@ -213,8 +214,8 @@ service_started() {
 		sleep 1
 		i=$((i + 1))
 	done
-	set_error "Xray 没有在 TProxy 端口 $port 上监听：已撤下透明代理规则，流量暂时直连（见“日志 → Xray”）"
-	teardown
+	"$PLUGIN_DIR/fw.sh" gate
+	logger -p daemon.err -t xray-mosdns "Xray is not listening on :$port after the start: transparent proxy taken out, traffic goes out directly until it is back"
 }
 
 stop_service() {

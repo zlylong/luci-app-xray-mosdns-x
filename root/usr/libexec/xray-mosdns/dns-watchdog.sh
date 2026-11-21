@@ -1,5 +1,5 @@
 #!/bin/sh
-# luci-app-xray-mosdns-x - DNS watchdog
+# luci-app-xray-mosdns-x - DNS and Xray watchdog
 #
 # LAN DNS reaches mosdns-x through one nftables redirect rule. If mosdns-x is
 # down or stops answering, that rule would turn every lookup on the LAN into
@@ -11,9 +11,17 @@
 # domain rules only apply to addresses learned earlier; IP rules and the
 # default still work. That is the price of keeping the network usable.
 #
+# The same goes for Xray: the rules send proxied traffic to its TProxy port.
+# When nothing has listened there for a while (Xray crashed and procd gave
+# up, say), the transparent proxy is taken out of the path (fw.sh gate) and
+# that traffic goes out directly; it is put back as soon as Xray listens
+# again. A single crash that procd restarts within the grace period does
+# not trigger it.
+#
 # usage: dns-watchdog.sh [manage|log-only]
 #   log-only: do not touch the redirect (it is static, or there is none);
 #             only keep the mosdns log file from growing without bound
+#             (Xray is watched in both modes)
 MODE=${1:-manage}
 umask 077	# the log trim writes a copy of the query log
 OUT=/var/etc/xray-mosdns
@@ -26,7 +34,15 @@ STAMP=/var/run/xray-mosdns-dns.stamp
 INTERVAL=5	# seconds between probes
 FAILS=2		# consecutive failed probes before falling back
 
-PORT=$(uci -q get 'xray-mosdns.@dns[0].listen_port'); [ -n "$PORT" ] || PORT=5335
+FW=/usr/share/xray-mosdns/fw.sh
+XFAILS=4	# probes without Xray listening before the proxy is taken out (15-20 s;
+		# procd waits 5 s before restarting a crashed daemon)
+
+# read on every round: a reload can change them without restarting this loop
+ports() {
+	PORT=$(uci -q get 'xray-mosdns.@dns[0].listen_port'); [ -n "$PORT" ] || PORT=5335
+	TPORT=$(uci -q get 'xray-mosdns.@global[0].tproxy_port'); [ -n "$TPORT" ] || TPORT=12345
+}
 
 # Any DNS reply counts, including SERVFAIL or NXDOMAIN: a dead uplink is not
 # something dnsmasq would handle better. Only silence means mosdns-x is gone.
@@ -51,9 +67,36 @@ trim_log() {
 	rm -f "$LOG.trim"
 }
 
+# $1 = port: a TCP socket is listening on it (IPv4 or IPv6)
+listening() {
+	hex=$(printf '%04X' "$1")
+	grep -qE "^ *[0-9]+: [0-9A-F]+:$hex [0-9A-F]+:0000 0A " /proc/net/tcp /proc/net/tcp6 2>/dev/null
+}
+
+xfail=0
+watch_xray() {
+	# no rules loaded (service stopped or torn down): nothing points at Xray
+	nft list table inet xray-mosdns >/dev/null 2>&1 || { xfail=0; return; }
+	if listening "$TPORT"; then
+		xfail=0
+		if "$FW" gated; then
+			"$FW" ungate
+			logger -t xray-mosdns "Xray is listening on :$TPORT again: transparent proxy back in the path"
+		fi
+	else
+		xfail=$((xfail + 1))
+		if [ "$xfail" -ge "$XFAILS" ] && ! "$FW" gated; then
+			"$FW" gate
+			logger -p daemon.warn -t xray-mosdns "Xray is not listening on :$TPORT: transparent proxy taken out, traffic goes out directly until it is back"
+		fi
+	fi
+}
+
 fail=0
 while :; do
+	ports
 	trim_log
+	watch_xray
 	if [ "$MODE" != "manage" ]; then
 		sleep "$INTERVAL"
 		continue
