@@ -33,7 +33,8 @@ function importDialog() {
 			ui.addNotification(null, E('p', {}, _('没有可导入的内容')), 'warning');
 			return;
 		}
-		return fs.write(IMPORT_FILE, text).then(function() {
+		/* 0600: the links carry credentials; the import deletes the file */
+		return fs.write(IMPORT_FILE, text, 384).then(function() {
 			return xm.exec('import-links.sh', [ IMPORT_FILE ]);
 		}).then(function(out) {
 			ui.hideModal();

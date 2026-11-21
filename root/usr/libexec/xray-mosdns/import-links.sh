@@ -2,11 +2,22 @@
 # Import proxy share links (vless / vmess / trojan / shadowsocks) into UCI nodes.
 # Imported nodes are created DISABLED; select one in the Nodes page afterwards.
 # Usage: import-links.sh <file-with-one-link-per-line>
-FILE="${1:-/tmp/xray-mosdns-import.txt}"
+LUCI_FILE=/tmp/xray-mosdns-import.txt	# where the Nodes page puts the pasted links
+FILE="${1:-$LUCI_FILE}"
 CFG=xray-mosdns
-TMPJ=/tmp/.xray-mosdns-import.json
 
 [ -f "$FILE" ] || { printf '{"ok":false,"error":"file not found"}\n'; exit 1; }
+
+# links and decoded vmess payloads carry credentials: private temp file,
+# removed on any exit, and the page's paste file with it
+umask 077
+TMPJ=$(mktemp /tmp/xray-mosdns-import.XXXXXX) || { printf '{"ok":false,"error":"no temp file"}\n'; exit 1; }
+cleanup() {
+	rm -f "$TMPJ"
+	[ "$FILE" = "$LUCI_FILE" ] && rm -f "$FILE"
+}
+trap cleanup EXIT
+trap 'exit 1' INT TERM HUP
 
 b64dec() {
 	v=$(printf '%s' "$1" | tr '_-' '/+' | tr -d '\r\n')

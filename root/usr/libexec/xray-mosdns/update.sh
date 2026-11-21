@@ -7,7 +7,10 @@ set -u
 ROOT="${UPD_TEST_DIR:-}"
 BACKUP_DIR="$ROOT/root/pw-backup/xray-mosdns-update"
 TMP="${TMPDIR:-/tmp}/xray-mosdns-update"
+# downloads, backups and the files put in place are root's alone
+umask 077
 mkdir -p "$BACKUP_DIR" "$TMP"
+chmod 700 "$BACKUP_DIR" "$TMP"
 
 jstr() { V="$1" ucode -e 'print(sprintf("%J", getenv("V")))'; }
 ok() { printf '{"ok":true,"message":%s,"detail":%s}\n' "$(jstr "$1")" "$(jstr "${2:-}")"; }

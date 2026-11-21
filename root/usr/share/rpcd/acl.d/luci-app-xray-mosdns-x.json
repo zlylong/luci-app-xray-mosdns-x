@@ -15,28 +15,13 @@
 				"/usr/libexec/xray-mosdns/traffic.sh": [
 					"exec"
 				],
-				"/usr/libexec/xray-mosdns/import-links.sh": [
-					"exec"
-				],
 				"/usr/libexec/xray-mosdns/latency.sh": [
-					"exec"
-				],
-				"/usr/libexec/xray-mosdns/update.sh": [
 					"exec"
 				],
 				"/usr/libexec/xray-mosdns/check-connect.sh": [
 					"exec"
 				],
-				"/etc/init.d/xray-mosdns": [
-					"exec"
-				],
-				"/usr/libexec/xray-mosdns/groups.uc": [
-					"exec"
-				],
 				"/usr/libexec/xray-mosdns/geoview.uc": [
-					"exec"
-				],
-				"/usr/libexec/xray-mosdns/adlist.uc": [
 					"exec"
 				],
 				"/usr/libexec/xray-mosdns/querylog.uc": [
@@ -51,6 +36,21 @@
 			"file": {
 				"/tmp/xray-mosdns-import.txt": [
 					"write"
+				],
+				"/usr/libexec/xray-mosdns/import-links.sh": [
+					"exec"
+				],
+				"/usr/libexec/xray-mosdns/update.sh": [
+					"exec"
+				],
+				"/etc/init.d/xray-mosdns": [
+					"exec"
+				],
+				"/usr/libexec/xray-mosdns/groups.uc": [
+					"exec"
+				],
+				"/usr/libexec/xray-mosdns/adlist.uc": [
+					"exec"
 				]
 			}
 		}
