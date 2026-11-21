@@ -51,7 +51,8 @@ case "$*" in
 	"-a list chain $T "*) show "$6" handles ;;
 esac
 [ "$1" = "-f" ] || exit 0
-src=$2; [ "$src" = "-" ] && src=/dev/stdin
+# the test rootfs is entered with chroot: no /dev/stdin there
+[ "$2" = "-" ] || exec < "$2"
 W="$S.tx"; rm -rf "$W"; mkdir -p "$W"
 [ -d "$S" ] && cp -a "$S"/. "$W"/
 n=$(cat "$W/.h" 2>/dev/null || echo 0)
@@ -68,7 +69,7 @@ while IFS= read -r line; do
 		"flush chain") : > "$W/$c" ;;
 		"add chain") [ -f "$W/$c" ] || : > "$W/$c" ;;
 	esac
-done < "$src"
+done
 echo "$n" > "$W/.h"
 rm -rf "$S"; mv "$W" "$S"
 exit 0
@@ -154,7 +155,8 @@ echo "script fw-gate: done"
 # ---------------------------------------------------------------- update.sh
 U="$OUT/upd"; F="$U/fix"; ROOT="$U/root"
 mkdir -p "$F" "$ROOT/usr/bin" "$ROOT/usr/share/v2ray" "$U/tmp"
-head -c 1200000 /dev/urandom > "$F/geosite.dat"; head -c 1100000 /dev/urandom > "$F/geoip.dat"; echo zip > "$F/xray.zip"
+# big enough to pass update.sh's size check; no /dev/urandom in a chroot
+yes geosite | head -c 1200000 > "$F/geosite.dat"; yes geoip | head -c 1100000 > "$F/geoip.dat"; echo zip > "$F/xray.zip"
 printf '#!/bin/sh\n[ "$1" = version ] && echo "Xray 99.0.0 (new)"\n[ "$1" = run ] && sleep 30\nexit 0\n' > "$F/xray-new"
 printf '#!/bin/sh\n[ "$1" = version ] && echo "Xray 1.0.0 (old)"\n[ "$1" = run ] && sleep 30\nexit 0\n' > "$ROOT/usr/bin/xray"
 chmod 755 "$F/xray-new" "$ROOT/usr/bin/xray"
