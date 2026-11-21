@@ -97,7 +97,6 @@ config node 'node_example'
 	option tls '1'
 	option tls_server_name ''
 	option fingerprint 'chrome'
-	option allow_insecure '0'
 	# transport: tcp | ws | grpc | http | xhttp
 	option transport 'tcp'
 	option path '/'

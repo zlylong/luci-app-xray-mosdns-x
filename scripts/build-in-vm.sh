@@ -37,8 +37,8 @@ TERM=dumb make package/luci-app-xray-mosdns-x/compile V=s -j"$(nproc)"
 
 mkdir -p "$REPO_DIR/out"
 rm -f "$REPO_DIR"/out/*.apk
-for pat in 'luci-app-xray-mosdns-x-*.apk' 'luci-i18n-xray-mosdns-x-zh-cn-*.apk'; do
-	f=$(ls -t $(find bin -type f -name "$pat" 2>/dev/null) 2>/dev/null | head -1)
-	[ -n "$f" ] && [ -f "$f" ] && cp -v "$f" "$REPO_DIR/out/"
-done
+f=$(ls -t $(find bin -type f -name 'luci-app-xray-mosdns-x-*.apk' 2>/dev/null) 2>/dev/null | head -1)
+[ -n "$f" ] && [ -f "$f" ] && cp -v "$f" "$REPO_DIR/out/"
 ls -la "$REPO_DIR/out"
+# a build that produced nothing is a failed build
+ls "$REPO_DIR"/out/luci-app-xray-mosdns-x-*.apk >/dev/null 2>&1 || { echo "no package was built" >&2; exit 1; }

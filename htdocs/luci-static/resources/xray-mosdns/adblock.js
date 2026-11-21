@@ -36,8 +36,10 @@ function subscribed() {
 	return function(f) { return !!(ids[String(f.id)] || urls[f.url]); };
 }
 
-/* pick lists from AdGuard's catalogue; the picks are staged like any other edit */
-function catalogDialog(catalog) {
+/* Pick lists from AdGuard's catalogue. The picks are staged like any other
+ * edit, after the form's own unsaved edits (map.save parses those first),
+ * and the form is redrawn in place: nothing typed so far is lost. */
+function catalogDialog(catalog, map) {
 	var isSubscribed = subscribed();
 	var boxes = [];
 	var body = [];
@@ -79,17 +81,16 @@ function catalogDialog(catalog) {
 			ui.hideModal();
 			return;
 		}
-		picked.forEach(function(b) {
-			var sid = uci.add(xm.CONF, 'adlist');
-			uci.set(xm.CONF, sid, 'enabled', '1');
-			uci.set(xm.CONF, sid, 'name', b[1].name);
-			uci.set(xm.CONF, sid, 'url', b[1].url);
-			/* the link to the catalogue: name and address follow this entry from now on */
-			uci.set(xm.CONF, sid, 'catalog_id', String(b[1].id));
-		});
-		return uci.save().then(function() {
-			window.location.reload();
-		});
+		return map.save(function() {
+			picked.forEach(function(b) {
+				var sid = uci.add(xm.CONF, 'adlist');
+				uci.set(xm.CONF, sid, 'enabled', '1');
+				uci.set(xm.CONF, sid, 'name', b[1].name);
+				uci.set(xm.CONF, sid, 'url', b[1].url);
+				/* the link to the catalogue: name and address follow this entry from now on */
+				uci.set(xm.CONF, sid, 'catalog_id', String(b[1].id));
+			});
+		}).then(ui.hideModal);
 	}
 
 	ui.showModal(_('选择黑名单'), [
@@ -194,7 +195,7 @@ return baseclass.extend({
 				E('div', {}, [
 					E('button', {
 						'class': 'cbi-button cbi-button-action', 'style': 'margin-right:.5em',
-						'click': function(ev) { ev.preventDefault(); catalogDialog(catalog); }
+						'click': function(ev) { ev.preventDefault(); catalogDialog(catalog, s.map); }
 					}, _('从 AdGuard 列表库添加…')),
 					E('button', {
 						'class': 'cbi-button cbi-button-action', 'style': 'margin-right:.5em',

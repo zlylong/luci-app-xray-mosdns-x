@@ -150,8 +150,8 @@ xray run -test -c /tmp/xm-test/chnroute/xray.json
 ## 代码仓库与 CI
 
 - 仓库：<https://github.com/zlylong/luci-app-xray-mosdns-x>
-- Gitea Actions（`.gitea/workflows/build.yml`）：每次推送都在官方镜像
-  `immortalwrt/sdk:x86-64-openwrt-25.12.2` 里编译，产物作为构建产物上传
+- Gitea Actions（`.gitea/workflows/build.yml`）：推送 master、每个合并请求和每个标签都会先在
+  ImmortalWrt rootfs 里跑 `tests/`，通过后在官方镜像 `immortalwrt/sdk:x86-64-openwrt-25.12.2` 里编译，产物作为构建产物上传
 - 发版：推送 `v<版本号>` 标签（须与 Makefile 的 `PKG_VERSION` 一致），编译后自动创建发布并附上安装包和校验和。
   发布说明取自带注释标签的内容；带连字符的标签（如 `v1.0.0-rc1`）发布为预发布版本
 
@@ -184,10 +184,10 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-<版本>-r1.apk
 
 ## 启用步骤（确认要替换 PassWall 后）
 
-1. 在 LuCI → 服务 → Xray + mosdns-x → Settings 中选择节点（先到 Nodes 页添加）
+1. 在 LuCI → 服务 → Xray + mosdns-x → “节点”页添加节点，在“分流”页选择总节点
 2. 停用 PassWall：`/etc/init.d/passwall stop; /etc/init.d/passwall disable`
-3. 启用本插件：`uci set xray-mosdns.@global[0].enabled=1; uci set xray-mosdns.@global[0].node=<节点名>; uci commit xray-mosdns`
-4. 启动：`/etc/init.d/xray-mosdns start`
+3. 启用本插件：`uci set xray-mosdns.@global[0].enabled=1; uci set xray-mosdns.@global[0].main_target=<节点或节点组名>; uci commit xray-mosdns`
+4. 启动：`/etc/init.d/xray-mosdns start`（启动或重载失败时，原因显示在“概览”页，并写入“日志 → 插件服务”）
 5. 检查：`/usr/libexec/xray-mosdns/status.sh`、`/usr/share/xray-mosdns/fw.sh status`
 6. 验证 DNS：`nslookup www.baidu.com 127.0.0.1#5335`、`nslookup www.google.com 127.0.0.1#5335`
    （路由器本机的 53 端口仍是 dnsmasq，只有 LAN 客户端的查询被重定向）
@@ -204,10 +204,9 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-<版本>-r1.apk
 |---|---|---|
 | global | enabled | 总开关（默认 0） |
 | global | tproxy_port | TProxy 监听端口，默认 12345 |
-| global | fwmark / route_table | 策略路由标记/表号，默认 0x1 / 100 |
-| global | default_outbound | 默认出口 proxy / direct |
-| global | bypass_chn | 国内目的地直连（geosite:cn / geoip:cn） |
-| global | node | 选中的节点 section 名 |
+| global | fwmark / route_table | 策略路由标记/表号，默认 0x1 / 100（与其他插件共用时启动日志会提示） |
+| global | main_target | 总节点：节点或节点组的 section 名，或 direct |
+| global | log_level | Xray 日志级别：debug / info / warning（默认）/ error / none |
 | global | socks_port | 内部 SOCKS 端口（给 mosdns 转发国外 DNS），默认 1070 |
 | global | proxy_router | 代理路由器自身的流量：0（默认）/ tcp / tcp,udp |
 | global | self_mark | Xray 和 mosdns 自身流量的标记，默认 0xff |
@@ -239,7 +238,7 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-<版本>-r1.apk
 | node | type/address/port/uuid/... | vless / vmess / trojan / shadowsocks / hysteria2 节点 |
 | global | api_port | Xray 本地统计 API 端口（默认 10085，用于节点流量） |
 | global | geo_dir | geosite.dat / geoip.dat 所在目录（默认 `/usr/share/v2ray`），mosdns-x、内核集合、Xray 和更新页共用 |
-| rule | rule_type/value/outbound | 分流规则，从上到下匹配：domain/ip/port/network → main/节点/balance/failover/direct/block；`value` 是列表 |
+| rule | rule_type/value/outbound | 分流规则，从上到下匹配：domain/ip/port/network → main/节点/节点组/direct/block；`value` 是列表 |
 | rule | builtin_ads / builtin_cn_domain / builtin_cn_ip / builtin_noncn / builtin_gfw | 预置规则行，和普通规则完全一样，“快速预设”只是开关它们 |
 
 ## 已知限制
@@ -266,9 +265,11 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-<版本>-r1.apk
 - *_dns 集合元素 3 天过期；DNS 规则变化时集合会清空并随 mosdns 重启重新学习
 
 - IPv6 TProxy 为实验性功能，需要节点本身可达 IPv6；IPv6 分流规则与 IPv4 共用 geosite/geoip 规则
-- Xray 26.x 已移除 `allowInsecure`（跳过证书校验），插件不再生成该字段；需要绕过证书校验的场景请改用可信证书/域名
+- Xray 26.x 已移除 `allowInsecure`（跳过证书校验），插件不再生成也不再保存该字段（导入时忽略链接里的
+  `allowInsecure`，升级时删除旧值）；需要绕过证书校验的场景请改用可信证书/域名
 - Hysteria2 节点依赖 Xray 的 `hysteria` 协议 + hysteria 传输（Xray 26.x 起），测速对 UDP 节点会先试 TCP，失败后回退 ICMP
-- 订阅导入支持 vless/vmess/trojan/shadowsocks（SIP002），不支持 Hysteria2/TUIC/SSR
+- 分享链接导入支持 vless / vmess / trojan / shadowsocks（SIP002）/ hysteria2（hy2://），不支持 TUIC / SSR，
+  也不支持订阅地址（需要把链接粘贴进来）
 - 规则管理为简单表单（每条规则一个域名/IP/端口集合），复杂表达式请直接编辑
 
 ## 路线图

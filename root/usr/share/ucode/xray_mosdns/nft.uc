@@ -16,7 +16,7 @@
 //   4. a new flow is classified once, by destination address
 'use strict';
 
-import { ipver } from 'xray_mosdns.util';
+import { ipver, note } from 'xray_mosdns.util';
 
 export const TABLE = 'xray-mosdns';
 
@@ -119,17 +119,29 @@ export function build(cfg, plan, env) {
 	// a trailing group that only repeats the default decides nothing
 	while (length(groups) && groups[length(groups) - 1].kind == plan.default_class)
 		pop(groups);
-	// more groups than slots: fold the tail into the last slot of the same kind
+	// More groups than slots: fold the tail into the last slot of the same
+	// kind. That moves those addresses ahead of any group of the other kind
+	// in between, so it goes in the log; Xray still sees every rule in order.
+	let folded = 0, dropped = 0;
 	while (length(groups) > IP_GROUPS) {
 		const extra = pop(groups);
+		let placed = false;
 		for (let i = IP_GROUPS - 1; i >= 0; i--) {
 			if (groups[i].kind == extra.kind) {
 				push(groups[i].v4, ...extra.v4);
 				push(groups[i].v6, ...extra.v6);
+				placed = true;
 				break;
 			}
 		}
+		placed ? folded++ : dropped++;
 	}
+	if (folded || dropped)
+		note(`ip rules: more direct/proxy alternations than the kernel's ${IP_GROUPS} slots; ` +
+		     `${folded} group(s) merged into an earlier one of the same kind` +
+		     (dropped ? `, ${dropped} left out of the kernel sets` : '') +
+		     ': an address matched by rules of both kinds may be decided differently in the kernel ' +
+		     '(merge or reorder IP rules, or set kernel_split 0)');
 
 	let static_sets = {
 		bypass4: [ 'ipv4_addr', [ ...RESERVED4, ...bypass.v4 ] ],

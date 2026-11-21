@@ -10,6 +10,7 @@
 'use strict';
 
 import * as fs from 'fs';
+import { cursor } from 'uci';
 
 const LOG = '/tmp/mosdns-x.log';
 const SCAN = 6000;	// newest log lines looked at
@@ -25,6 +26,13 @@ const needle = lc(ARGV[1] ?? '');
 
 function out(obj) {
 	print(obj, '\n');
+}
+
+// with the query log off there is nothing of interest in the file: do not
+// read thousands of lines to find that out (the DNS page asks on every load)
+if (cursor().get('xray-mosdns', 'dns', 'query_log') != '1') {
+	out({ ok: true, entries: [], total: 0, note: 'query log off' });
+	exit(0);
 }
 
 if (!fs.access(LOG)) {
