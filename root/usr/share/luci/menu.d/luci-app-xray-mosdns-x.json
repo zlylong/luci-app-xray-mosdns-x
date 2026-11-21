@@ -40,8 +40,24 @@
 		"title": "DNS",
 		"order": 40,
 		"action": {
+			"type": "alias",
+			"path": "admin/services/xray-mosdns/dns/settings"
+		}
+	},
+	"admin/services/xray-mosdns/dns/settings": {
+		"title": "设置",
+		"order": 10,
+		"action": {
 			"type": "view",
 			"path": "xray-mosdns/resolver"
+		}
+	},
+	"admin/services/xray-mosdns/dns/querylog": {
+		"title": "查询日志",
+		"order": 20,
+		"action": {
+			"type": "view",
+			"path": "xray-mosdns/querylog"
 		}
 	},
 	"admin/services/xray-mosdns/system": {
@@ -85,11 +101,9 @@
 		}
 	},
 	"admin/services/xray-mosdns/querylog": {
-		"title": "查询日志",
-		"order": 47,
 		"action": {
-			"type": "view",
-			"path": "xray-mosdns/querylog"
+			"type": "alias",
+			"path": "admin/services/xray-mosdns/dns/querylog"
 		}
 	}
 }

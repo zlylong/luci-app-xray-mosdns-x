@@ -13,7 +13,7 @@ var SOURCES = [
 	{ id: 'xray', title: 'Xray',
 	  descr: _('Xray 进程的输出（系统日志）最近 %s 行。详细程度在“系统 → Xray 日志级别”里调。') },
 	{ id: 'mosdns', title: 'mosdns-x',
-	  descr: _('mosdns-x 的日志文件 /tmp/mosdns-x.log 最近 %s 行，不含逐条查询记录（见“查询日志”页）；启动失败这类写进系统日志的输出列在前面。') },
+	  descr: _('mosdns-x 的日志文件 /tmp/mosdns-x.log 最近 %s 行，不含逐条查询记录（见“DNS → 查询日志”）；启动失败这类写进系统日志的输出列在前面。') },
 	{ id: 'app', title: _('插件服务'),
 	  descr: _('本插件服务自身的日志最近 %s 行：启动与重载、配置生成、防火墙规则、DNS 看门狗、节点组看护、拦截列表更新。') }
 ];
