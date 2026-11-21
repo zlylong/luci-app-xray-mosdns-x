@@ -128,6 +128,32 @@ export function load(confdir) {
 	// goes into the Xray environment and the generated files
 	if (!match(cfg.global.geo_dir, /^\/[A-Za-z0-9_.\/-]*$/))
 		fail(`invalid geo_dir '${cfg.global.geo_dir}' (an absolute directory path)`);
+	// values passed on to Xray and mosdns as they are: caught here, with the
+	// option's name, rather than by a daemon that then will not start
+	if (!(cfg.global.log_level in [ 'debug', 'info', 'warning', 'error', 'none' ]))
+		fail(`invalid log_level '${cfg.global.log_level}' (debug, info, warning, error or none)`);
+	for (let k in [ 'probe_url', 'probe_url_backup' ])
+		if (cfg.global[k] != null && !match(cfg.global[k], /^https?:\/\/[^[:space:]'"\\]+$/))
+			fail(`invalid ${k} '${cfg.global[k]}' (an http:// or https:// address)`);
+	if (type(cfg.dns.cache_size) != 'int' || cfg.dns.cache_size < 0)
+		fail(`invalid dns.cache_size '${d.cache_size}' (a whole number)`);
+	// domestic upstreams: an address (optionally with a port) or a URL mosdns knows
+	cfg.dns.domestic = filter(cfg.dns.domestic, u => {
+		const hp = match(u, /^\[?([0-9A-Fa-f:.]+)\]?(:[0-9]{1,5})?$/);
+		if ((hp && ipver(hp[1])) ||
+		    (match(u, /^(udp|tcp|tls|https|h3|quic):\/\/[^[:space:]'"]+$/) && index(u, '\\') < 0))
+			return true;
+		note(`dns.domestic_dns: ignoring '${u}' (use an IP address or a udp/tcp/tls/https/h3/quic URL)`);
+		return false;
+	});
+	// static entries: "name address..."
+	cfg.dns.hosts = filter(cfg.dns.hosts, h => {
+		const f = split(trim(h), /[[:space:]]+/);
+		if (length(f) >= 2 && match(f[0], /^[A-Za-z0-9*_.:-]+$/) && length(filter(slice(f, 1), a => !ipver(a))) == 0)
+			return true;
+		note(`dns.hosts: ignoring '${h}' (use "name address ...")`);
+		return false;
+	});
 
 	if (!ipver(cfg.dns.bootstrap))
 		fail(`dns.bootstrap must be an IP address, got '${cfg.dns.bootstrap}'`);
@@ -227,9 +253,17 @@ export function load(confdir) {
 		const values = words(s.value);
 		if (!length(values))
 			continue;
+		const type = str(s.rule_type, 'domain');
+		// ports go to Xray as written: 80, 443, 1000-2000
+		if (type == 'port')
+			for (let v in values) {
+				const m = match(v, /^([0-9]{1,5})(-([0-9]{1,5}))?$/);
+				if (!m || +m[1] < 1 || +m[1] > 65535 || (m[3] && (+m[3] < +m[1] || +m[3] > 65535)))
+					fail(`rule ${s['.name']}: '${v}' is not a port or port range`);
+			}
 		push(cfg.rules, {
 			name: s['.name'],
-			type: str(s.rule_type, 'domain'),
+			type,
 			raw: join(',', values),
 			values,
 			outbound: str(s.outbound, 'main'),

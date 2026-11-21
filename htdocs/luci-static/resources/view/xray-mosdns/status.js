@@ -39,6 +39,12 @@ return view.extend({
 
 		/* ------------------------------------------------------------ status */
 		function renderStatus(st) {
+			/* a failed call is not "stopped": say what failed */
+			if (st.ok === false) {
+				statusBox.replaceChildren(E('p', { 'class': 'alert-message warning' },
+					_('读取运行状态失败：%s').format(st.error || _('未知错误'))));
+				return;
+			}
 			var enabled = st.enabled == 1;
 			var fwOk = st.fw && st.fw.nft && st.fw.rule;
 			var rows = [
@@ -65,7 +71,10 @@ return view.extend({
 							: E('span', {}, [ xm.badge(_('已回退'), 'warn'), ' ',
 								_('mosdns-x 没有应答，当前由 dnsmasq 解析') ]))) ]
 			];
-			statusBox.replaceChildren(xm.infoTable(rows));
+			statusBox.replaceChildren(
+				st.last_error ? E('p', { 'class': 'alert-message warning' }, [
+					E('strong', {}, _('上次启动时的问题：')), st.last_error ]) : '',
+				xm.infoTable(rows));
 		}
 		renderStatus(res[1] || {});
 
