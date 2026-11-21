@@ -1,52 +1,61 @@
-#!/bin/sh
-# Node traffic counters from the Xray StatsService API (only proxy node traffic).
-# Output: {"nodes":[{"tag":"x.node","uplink":N,"downlink":N,"total":N}],"error":null}
-CFG=xray-mosdns
-XRAY="${XRAY:-$(uci -q get "$CFG.@global[0].xray_bin" 2>/dev/null || true)}"
-[ -n "$XRAY" ] || XRAY=/usr/bin/xray
-API_PORT="${API_PORT:-$(uci -q get "$CFG.@global[0].api_port" 2>/dev/null || true)}"
-[ -n "$API_PORT" ] || API_PORT=10085
+#!/usr/bin/ucode
+// luci-app-xray-mosdns-x - traffic of the proxy nodes, from Xray's StatsService
+//
+// Prints {"nodes":[{"tag":"x.node","uplink":N,"downlink":N,"total":N}],"error":null},
+// busiest node first; error is xray_not_running, api_unavailable or
+// bad_api_output. XRAY and API_PORT in the environment override the
+// configured values.
+//
+// The name ends in .sh because the LuCI views and the rpcd ACL call it so.
+'use strict';
 
-if ! pidof xray >/dev/null 2>&1; then
-	printf '{"nodes":[],"error":"xray_not_running"}\n'
-	exit 0
-fi
+import * as fs from 'fs';
+import { cursor } from 'uci';
 
-OUT=$("$XRAY" api statsquery --server="127.0.0.1:$API_PORT" 2>/dev/null) || {
-	printf '{"nodes":[],"error":"api_unavailable"}\n'
-	exit 0
+function done(nodes, error) {
+	print(sprintf('%J\n', { nodes, error }));
+	exit(0);
 }
 
-printf '%s' "$OUT" | python3 -c '
-import json, sys
+const uci = cursor();
+let xray = getenv('XRAY') || uci.get_first('xray-mosdns', 'global', 'xray_bin') || '/usr/bin/xray';
+let port = getenv('API_PORT') || uci.get_first('xray-mosdns', 'global', 'api_port') || '10085';
+// both go into a shell command
+if (!match(xray, /^[A-Za-z0-9_.\/-]+$/))
+	xray = '/usr/bin/xray';
+if (!match(port, /^[0-9]+$/))
+	port = '10085';
 
-raw = sys.stdin.read().strip()
-try:
-    data = json.loads(raw) if raw else {}
-except ValueError:
-    print(json.dumps({"nodes": [], "error": "bad_api_output"}))
-    sys.exit(0)
+const p = fs.popen(`${xray} api statsquery --server=127.0.0.1:${port} 2>/dev/null`, 'r');
+const raw = p?.read('all');
+if (!p || p.close() != 0)
+	done([], (system('pidof xray >/dev/null 2>&1') == 0) ? 'api_unavailable' : 'xray_not_running');
 
-nodes = {}
-for item in data.get("stat", []):
-    name = item.get("name", "")
-    value = int(item.get("value") or 0)
-    parts = name.split(">>>")
-    if len(parts) != 4 or parts[0] != "outbound" or parts[2] != "traffic":
-        continue
-    tag, direction = parts[1], parts[3]
-    if not tag.endswith(".node"):
-        continue
-    entry = nodes.setdefault(tag, {"tag": tag, "uplink": 0, "downlink": 0})
-    if direction == "uplink":
-        entry["uplink"] += value
-    elif direction == "downlink":
-        entry["downlink"] += value
+let data;
+try {
+	data = json(trim(raw ?? '') || '{}');
+}
+catch (e) {
+	done([], 'bad_api_output');
+}
 
-out = []
-for entry in nodes.values():
-    entry["total"] = entry["uplink"] + entry["downlink"]
-    out.append(entry)
-out.sort(key=lambda x: x["total"], reverse=True)
-print(json.dumps({"nodes": out, "error": None}))
-'
+// stat names look like outbound>>>TAG>>>traffic>>>uplink|downlink
+let nodes = {};
+for (let item in ((type(data?.stat) == 'array') ? data.stat : [])) {
+	const f = split(item?.name ?? '', '>>>');
+	if (length(f) != 4 || f[0] != 'outbound' || f[2] != 'traffic' || !match(f[1], /\.node$/))
+		continue;
+	if (!(f[3] in [ 'uplink', 'downlink' ]))
+		continue;
+	if (!nodes[f[1]])
+		nodes[f[1]] = { tag: f[1], uplink: 0, downlink: 0 };
+	// int64 counters arrive as strings
+	const v = +(item.value ?? 0);
+	if (type(v) == 'int')
+		nodes[f[1]][f[3]] += v;
+}
+
+let list = values(nodes);
+for (let n in list)
+	n.total = n.uplink + n.downlink;
+done(sort(list, (a, b) => b.total - a.total), null);

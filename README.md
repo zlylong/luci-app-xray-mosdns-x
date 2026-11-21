@@ -121,6 +121,8 @@ podman run --rm --network none -v "$PWD":/src:ro -v /tmp/xm-test:/out \
     docker.io/openwrt/rootfs:x86-64-24.10.4 sh /src/tests/gen.sh /src /out
 python3 tests/check.py /tmp/xm-test          # 对三套夹具的输出做断言
 # tests/migrate.sh（同样在 rootfs 里跑）：升级迁移前后生成结果必须逐字节一致
+# tests/scripts.sh /src /out（rootfs 里需装 ucode-mod-socket）：测速、流量、update.sh 的输出，
+#   结果同样由 check.py 断言
 xray run -test -c /tmp/xm-test/chnroute/xray.json
 ```
 
@@ -133,8 +135,8 @@ xray run -test -c /tmp/xm-test/chnroute/xray.json
 - `mosdns-x`（pmkol/mosdns-x，mosdns v4 配置格式；需要其 `nftset` 插件和 `_new_empty_response` 等预设）
 - `nftables` + `kmod-nft-tproxy` + `ip-full`（nftables/ip-full 已声明为包依赖；
   `kmod-nft-tproxy` 需单独安装，避免 SDK/CI 触发内核编译）
-- `ucode` + `ucode-mod-uci` / `ucode-mod-fs` / `ucode-mod-ubus`（生成器；LuCI 本身已依赖）
-- `python3`（仅概览页的节点流量和节点测速使用，未声明为包依赖）
+- `ucode` + `ucode-mod-uci` / `ucode-mod-fs` / `ucode-mod-ubus`（生成器；LuCI 本身已依赖）、
+  `ucode-mod-socket`（节点测速）；均已声明为包依赖
 - `curl`（组件更新、连通性检测、经代理下载拦截列表；未声明为包依赖）
 - `/usr/share/v2ray/geosite.dat`、`geoip.dat`（Loyalsoldier / v2ray 数据）
 

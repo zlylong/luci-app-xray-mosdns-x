@@ -1,151 +1,134 @@
-#!/usr/bin/env python3
-"""Node latency test for luci-app-xray-mosdns-x.
+#!/usr/bin/ucode
+// luci-app-xray-mosdns-x - node latency test
+//
+//   latency.sh <uci-section>       test a configured node
+//   latency.sh --target host:port  test any address
+//
+// Prints {"ok":true,"section":...,"type":...,"target":"ip:port","via":"tcp|icmp","ms":N}
+// or {"ok":false,...,"error":"..."}. The time is that of a TCP handshake with
+// the node, the best of two per address; a node that does not answer on TCP,
+// such as hysteria over UDP, is pinged instead.
+//
+// The name ends in .sh because the LuCI views and the rpcd ACL call it so.
+'use strict';
 
-Usage: latency.sh <uci-section> | latency.sh --target host:port
-Output: {"ok":bool,"ms":float|null,"target":"ip:port","via":"tcp|icmp","type":"..."}
-"""
-import json
-import re
-import socket
-import subprocess
-import sys
-import time
+import * as fs from 'fs';
+import * as socket from 'socket';
+import { cursor } from 'uci';
 
-CONF = "xray-mosdns"
+const TIMEOUT = 2000;	// ms, per connection attempt
 
+function done(res) {
+	print(sprintf('%J\n', res));
+	exit(0);
+}
 
-def uci(section, opt):
-    try:
-        out = subprocess.run(
-            ["uci", "-q", "get", "%s.%s.%s" % (CONF, section, opt)],
-            capture_output=True, text=True, timeout=5)
-        return out.stdout.strip()
-    except Exception:
-        return ""
+function now_ms() {
+	const t = clock(true);
+	return t[0] * 1000.0 + t[1] / 1000000.0;
+}
 
+function is_v6(ip) {
+	return index(ip, ':') >= 0;
+}
 
-IPV4_RE = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
-IPV6_RE = re.compile(r"^[0-9a-fA-F:]+$")
+// IPv4 addresses first, each group in resolver order
+function resolve(host) {
+	if (iptoarr(host))
+		return [ host ];
+	let v4 = [], v6 = [];
+	for (let ai in (socket.addrinfo(host, null, { socktype: socket.SOCK_STREAM }) ?? [])) {
+		const ip = ai.addr?.address;
+		if (!ip || (ip in v4) || (ip in v6))
+			continue;
+		push(is_v6(ip) ? v6 : v4, ip);
+	}
+	return [ ...v4, ...v6 ];
+}
 
+function tcp_ms(ip, port) {
+	const addr = { family: is_v6(ip) ? socket.AF_INET6 : socket.AF_INET, address: ip, port };
+	const t0 = now_ms();
+	const conn = socket.connect(addr, null, null, TIMEOUT);
+	if (!conn)
+		return null;
+	const ms = now_ms() - t0;
+	conn.close();
+	return ms;
+}
 
-def resolve(addr):
-    """Resolve with nslookup instead of getaddrinfo (python3-light lacks idna)."""
-    if IPV4_RE.match(addr) or ":" in addr:
-        return [addr]
-    try:
-        out = subprocess.run(["nslookup", addr], capture_output=True, text=True, timeout=6).stdout
-    except Exception:
-        return []
-    ips = []
-    for tok in re.findall(r"[0-9a-fA-F:.]+", out):
-        tok = tok.rstrip(".")
-        if not (IPV4_RE.match(tok) or (":" in tok and IPV6_RE.match(tok))):
-            continue
-        if tok in ("127.0.0.1", "::1"):
-            continue
-        if tok not in ips:
-            ips.append(tok)
-    return ips
+function ping_ms(ip) {
+	// only a literal address ever reaches the shell
+	if (!iptoarr(ip))
+		return null;
+	const p = fs.popen(`ping -c 1 -W 2 ${ip} 2>/dev/null`, 'r');
+	if (!p)
+		return null;
+	const text = p.read('all') ?? '';
+	p.close();
+	const m = match(text, /time=([0-9.]+)/);
+	return m ? +m[1] : null;
+}
 
+let section = '', ntype = '', host, port;
 
-def tcp_rtt(ip, port, timeout=2.0):
-    family = socket.AF_INET6 if ":" in ip else socket.AF_INET
-    sock = socket.socket(family, socket.SOCK_STREAM)
-    sock.settimeout(timeout)
-    start = time.time()
-    try:
-        sock.connect((ip, port))
-        return (time.time() - start) * 1000.0
-    finally:
-        sock.close()
+if (ARGV[0] == '--target') {
+	const m = match(ARGV[1] ?? '', /^(.*):([^:]*)$/);
+	if (!m || m[1] == '')
+		done({ ok: false, error: 'bad target' });
+	host = m[1];
+	port = m[2];
+}
+else {
+	section = ARGV[0] ?? '';
+	const uci = cursor();
+	host = (section != '') ? uci.get('xray-mosdns', section, 'address') : null;
+	if (!host)
+		done({ ok: false, section, error: 'node not found' });
+	port = uci.get('xray-mosdns', section, 'port') ?? '443';
+	ntype = uci.get('xray-mosdns', section, 'type') ?? '';
+}
 
+const bracketed = match(host, /^\[(.*)\]$/);
+if (bracketed)
+	host = bracketed[1];
+port = +port;
+if (type(port) != 'int' || port < 1 || port > 65535)
+	port = 443;
 
-def ping_rtt(ip, timeout=2):
-    try:
-        out = subprocess.run(
-            ["ping", "-c", "1", "-W", str(timeout), ip],
-            capture_output=True, text=True, timeout=timeout + 3).stdout
-        for line in out.splitlines():
-            if "time=" in line:
-                return float(line.split("time=")[1].split()[0])
-    except Exception:
-        return None
-    return None
+const ips = resolve(host);
+if (!length(ips))
+	done({ ok: false, section, error: 'no address' });
 
+// the IPv6 addresses of a node given by name are tried for hysteria nodes only
+const v6_ok = is_v6(host) || index(ntype, 'hysteria') == 0;
 
-def main():
-    target = None
-    ntype = ""
-    section = ""
-    if len(sys.argv) > 2 and sys.argv[1] == "--target":
-        target = sys.argv[2]
-        addr, _, port = target.rpartition(":")
-        if not addr:
-            print(json.dumps({"ok": False, "error": "bad target"}))
-            return
-    else:
-        section = sys.argv[1] if len(sys.argv) > 1 else ""
-        addr = uci(section, "address")
-        port = uci(section, "port") or "443"
-        ntype = uci(section, "type")
-        if not addr:
-            print(json.dumps({"ok": False, "section": section, "error": "node not found"}))
-            return
+let best = null, used = '', via = 'tcp';
+for (let ip in slice(ips, 0, 3)) {
+	if (is_v6(ip) && !v6_ok)
+		continue;
+	for (let i = 0; i < 2; i++) {
+		const ms = tcp_ms(ip, port);
+		if (ms == null)
+			break;
+		if (best == null || ms < best) {
+			best = ms;
+			used = ip;
+		}
+	}
+}
 
-    try:
-        port = int(port)
-    except ValueError:
-        port = 443
+if (best == null) {
+	via = 'icmp';
+	for (let ip in slice(ips, 0, 2)) {
+		const ms = ping_ms(ip);
+		if (ms != null && (best == null || ms < best)) {
+			best = ms;
+			used = ip;
+		}
+	}
+	if (best == null)
+		done({ ok: false, section, target: `${host}:${port}`, type: ntype, error: 'unreachable (tcp/icmp)' });
+}
 
-    try:
-        ips = resolve(addr)
-        ips.sort(key=lambda x: 1 if ":" in x else 0)
-    except Exception as exc:
-        print(json.dumps({"ok": False, "section": section, "error": "resolve failed: %s" % exc}))
-        return
-
-    if not ips:
-        print(json.dumps({"ok": False, "section": section, "error": "no address"}))
-        return
-
-    best = None
-    used_ip = ""
-    via = "tcp"
-    for ip in ips[:3]:
-        if ":" in ip and ":" not in addr and not ntype.startswith("hysteria"):
-            continue
-        for _ in range(2):
-            try:
-                ms = tcp_rtt(ip, port)
-                if best is None or ms < best:
-                    best = ms
-                    used_ip = ip
-            except Exception:
-                break
-
-    if best is None:
-        via = "icmp"
-        for ip in ips[:2]:
-            ms = ping_rtt(ip)
-            if ms is not None and (best is None or ms < best):
-                best = ms
-                used_ip = ip
-        if best is None:
-            print(json.dumps({"ok": False, "section": section,
-                              "target": "%s:%s" % (addr, port), "type": ntype,
-                              "error": "unreachable (tcp/icmp)"}))
-            return
-
-    result = {
-        "ok": True,
-        "section": section,
-        "type": ntype,
-        "target": "%s:%s" % (used_ip, port),
-        "via": via,
-        "ms": round(best, 1),
-    }
-    print(json.dumps(result))
-
-
-if __name__ == "__main__":
-    main()
+done({ ok: true, section, type: ntype, target: `${used}:${port}`, via, ms: +sprintf('%.1f', best) });

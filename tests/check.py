@@ -4,6 +4,7 @@
 usage: tests/check.py <outdir>
 """
 import json
+import os
 import sys
 
 import yaml
@@ -270,6 +271,35 @@ check(block == ["domain:ads.example.com", "domain:tracker.example.net", "full:ex
                 "domain:noanchor.example.com"], f"adlist: block rules {block}")
 check(allow == ["domain:good.example.com", "domain:good2.example.com"], f"adlist: exceptions {allow}")
 check(json.load(open(f"{out}/adlist/stats.json")) == {"rules": 9, "allow": 2, "skipped": 5}, "adlist: counts (wildcard, regex, other modifiers, localhost and junk are skipped)")
+
+# ------------------------------------------------------------------ helper scripts (tests/scripts.sh)
+sd = f"{out}/scripts"
+if not os.path.isdir(sd):
+    print("scripts: no output from tests/scripts.sh, skipped")
+else:
+    def res(name):
+        return json.load(open(f"{sd}/{name}.json"))
+
+    port = int(open(f"{sd}/port").read())
+    r = res("lat-target")
+    check(r.get("ok") is True and r.get("via") == "tcp" and r.get("target") == f"127.0.0.1:{port}"
+          and isinstance(r.get("ms"), (int, float)) and 0 <= r["ms"] < 2000, f"latency --target: {r}")
+    r = res("lat-node")
+    check(r.get("ok") is True and r.get("section") == "n1" and r.get("type") == "vless" and r.get("via") == "tcp"
+          and r.get("target") == f"127.0.0.1:{port}", f"latency of a node: {r}")
+    check(res("lat-missing") == {"ok": False, "section": "nosuch", "error": "node not found"}, "latency: unknown node")
+    check(res("lat-bad") == {"ok": False, "error": "bad target"}, "latency: target without a port")
+
+    t = res("traffic")
+    check(t == {"nodes": [{"tag": "b.node", "uplink": 5000, "downlink": 0, "total": 5000},
+                          {"tag": "a.node", "uplink": 100, "downlink": 900, "total": 1000}], "error": None},
+          f"traffic: node outbounds only, string and missing values, busiest first: {t}")
+    check(res("traffic-bad") == {"nodes": [], "error": "bad_api_output"}, "traffic: output that is not JSON")
+    check(res("traffic-down") == {"nodes": [], "error": "xray_not_running"}, "traffic: API unreachable, no xray process")
+
+    u = res("update-versions")
+    check(u.get("ok") is True and u.get("xray") == "not installed" and u.get("mosdns") == "not installed", f"update.sh versions: {u}")
+    check(res("jstr") == 'quote " backslash \\ tab \t newline \n end', "update.sh jstr: escapes quotes, backslashes and control characters")
 
 if failed:
     print("\n".join("FAIL: " + f for f in failed))

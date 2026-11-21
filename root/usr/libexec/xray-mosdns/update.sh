@@ -9,7 +9,7 @@ BACKUP_DIR="$ROOT/root/pw-backup/xray-mosdns-update"
 TMP="${TMPDIR:-/tmp}/xray-mosdns-update"
 mkdir -p "$BACKUP_DIR" "$TMP"
 
-jstr() { python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$1" 2>/dev/null || printf '"%s"' "$1"; }
+jstr() { V="$1" ucode -e 'print(sprintf("%J", getenv("V")))'; }
 ok() { printf '{"ok":true,"message":%s,"detail":%s}\n' "$(jstr "$1")" "$(jstr "${2:-}")"; }
 err() { printf '{"ok":false,"error":%s}\n' "$(jstr "$1")"; }
 
