@@ -15,8 +15,9 @@ LUCI_DESCRIPTION:=Manage an Xray TProxy transparent proxy with mosdns-x DNS spli
 LUCI_DEPENDS:=+luci-base +nftables +ip-full +resolveip +ucode +ucode-mod-fs +ucode-mod-uci +ucode-mod-ubus +ucode-mod-socket \
 	+curl +unzip
 # the tproxy expression needs this module; as an install-time dependency it
-# comes from the kmods feed, without making the SDK build a kernel module
-LUCI_EXTRA_DEPENDS:=kmod-nft-tproxy
+# comes from the kmods feed, without making the SDK build a kernel module.
+# Extra dependencies must carry a version constraint: any version will do.
+LUCI_EXTRA_DEPENDS:=kmod-nft-tproxy (>=0)
 LUCI_PKGARCH:=all
 
 # Stopping on removal and starting after an upgrade are done by the default
