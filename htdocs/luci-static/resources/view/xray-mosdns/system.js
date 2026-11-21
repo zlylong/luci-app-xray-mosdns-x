@@ -75,6 +75,13 @@ return view.extend({
 		o = s.taboption('ports', form.Value, 'xray_bin', _('Xray 程序路径'));
 		o.default = '/usr/bin/xray';
 
+		o = s.taboption('ports', form.Value, 'geo_dir', _('Geo 数据目录'),
+			_('geosite.dat 和 geoip.dat 所在的目录。mosdns-x、内核集合和 Xray 都从这里读取，“更新”页也下载到这里。'));
+		o.placeholder = '/usr/share/v2ray';
+		o.validate = function(sid, v) {
+			return (!v || /^\/[A-Za-z0-9_.\/-]*$/.test(v)) ? true : _('需要是以 / 开头的目录路径');
+		};
+
 		o = s.taboption('ports', form.Value, 'tproxy_port', _('TProxy 端口'));
 		o.datatype = 'port';
 		o.default = '12345';

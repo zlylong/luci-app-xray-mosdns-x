@@ -14,7 +14,8 @@ b64dec() {
 		2) v="$v==" ;;
 		3) v="$v=" ;;
 	esac
-	printf '%s' "$v" | base64 -d 2>/dev/null
+	# ucode decodes it: BusyBox on OpenWrt has no base64 applet
+	V="$v" ucode -e 'const d = b64dec(getenv("V")); if (d != null) print(d);' 2>/dev/null
 }
 
 urldec() {

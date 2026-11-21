@@ -16,7 +16,7 @@ err() { printf '{"ok":false,"error":%s}\n' "$(jstr "$1")"; }
 ug() { uci -q get "xray-mosdns.$1" 2>/dev/null || true; }
 xray_bin() { v=$(ug '@global[0].xray_bin'); echo "$ROOT${v:-/usr/bin/xray}"; }
 mosdns_bin() { v=$(ug '@dns[0].mosdns_bin'); echo "$ROOT${v:-/usr/bin/mosdns}"; }
-v2ray_dir() { echo "$ROOT/usr/share/v2ray"; }
+v2ray_dir() { v=$(ug '@global[0].geo_dir'); v=${v%/}; echo "$ROOT${v:-/usr/share/v2ray}"; }
 
 asset_name() { # $1 = xray|mosdns
 	case "$(uname -m)" in

@@ -4,6 +4,7 @@
 //
 // usage: gen-config.uc [-o outdir] [-c uci-confdir] [-g geoip.dat]
 //                      [-l lan-device]... [-n]
+//   -g  geoip.dat to extract kernel sets from (default: global.geo_dir)
 //   -n  do not resolve node hostnames (bypass set is then IP literals only)
 'use strict';
 
@@ -18,7 +19,7 @@ import { country_cached } from 'xray_mosdns.geoip';
 let opt = {
 	out: '/var/etc/xray-mosdns',
 	confdir: null,
-	geoip: '/usr/share/v2ray/geoip.dat',
+	geoip: null,	// default: <global.geo_dir>/geoip.dat
 	lan: [],
 	resolve: true,
 };
@@ -104,6 +105,8 @@ for (let dev in opt.lan)
 
 // ---------------------------------------------------------------- generate
 const cfg = load(opt.confdir);
+if (!opt.geoip)
+	opt.geoip = `${cfg.global.geo_dir}/geoip.dat`;
 
 // the group watcher switches to the backup probe target by writing this file
 const PROBE_STATE = '/var/run/xray-mosdns-probe';

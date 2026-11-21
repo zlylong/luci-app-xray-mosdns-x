@@ -12,7 +12,11 @@ PKG_MAINTAINER:=zly
 
 LUCI_TITLE:=LuCI support for Xray + mosdns-x transparent proxy
 LUCI_DESCRIPTION:=Manage an Xray TProxy transparent proxy with mosdns-x DNS split, cache and ad blocking.
-LUCI_DEPENDS:=+luci-base +nftables +ip-full +resolveip +ucode +ucode-mod-fs +ucode-mod-uci +ucode-mod-ubus +ucode-mod-socket
+LUCI_DEPENDS:=+luci-base +nftables +ip-full +resolveip +ucode +ucode-mod-fs +ucode-mod-uci +ucode-mod-ubus +ucode-mod-socket \
+	+curl +unzip
+# the tproxy expression needs this module; as an install-time dependency it
+# comes from the kmods feed, without making the SDK build a kernel module
+LUCI_EXTRA_DEPENDS:=kmod-nft-tproxy
 LUCI_PKGARCH:=all
 
 include $(TOPDIR)/feeds/luci/luci.mk

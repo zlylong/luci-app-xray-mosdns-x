@@ -268,8 +268,8 @@ export function build(cfg, plan) {
 		// production = one JSON object per line, which is what the query log reader parses
 		log: { level: 'info', file: '/tmp/mosdns-x.log', production: d.query_log },
 		data_providers: [
-			{ tag: 'geosite', file: '/usr/share/v2ray/geosite.dat', auto_reload: true },
-			{ tag: 'geoip', file: '/usr/share/v2ray/geoip.dat', auto_reload: true },
+			{ tag: 'geosite', file: `${g.geo_dir}/geosite.dat`, auto_reload: true },
+			{ tag: 'geoip', file: `${g.geo_dir}/geoip.dat`, auto_reload: true },
 			// auto_reload: a blocklist update takes effect without restarting mosdns
 			...(ad_exception ? [
 				{ tag: 'adblock', file: `${cfg.adblock.dir}/block.txt`, auto_reload: true },

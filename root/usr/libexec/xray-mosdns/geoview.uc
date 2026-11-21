@@ -16,10 +16,12 @@
 'use strict';
 
 import { scan, fields, fmt_cidr } from 'xray_mosdns.geoip';
+import { cursor } from 'uci';
 
+const GEO_DIR = rtrim(cursor().get_first('xray-mosdns', 'global', 'geo_dir') || '/usr/share/v2ray', '/');
 const FILES = {
-	geosite: '/usr/share/v2ray/geosite.dat',
-	geoip: '/usr/share/v2ray/geoip.dat',
+	geosite: `${GEO_DIR}/geosite.dat`,
+	geoip: `${GEO_DIR}/geoip.dat`,
 };
 // v2ray Domain.Type
 const TYPES = [ 'keyword', 'regexp', 'domain', 'full' ];

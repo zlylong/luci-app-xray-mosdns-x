@@ -131,17 +131,21 @@ xray run -test -c /tmp/xm-test/chnroute/xray.json
 
 ## 依赖
 
-运行时（软件包未硬依赖，便于使用手工编译的 xray / mosdns-x）：
+需要自备、**不作为包依赖**的：
 
-- `xray`（Xray-core ≥ 1.8，TProxy tunnel inbound）——**不作为包依赖**，可使用手工编译版本
-  （手工 xray 与 feed 的 `xray-core` 包会争用 `/usr/bin/xray`，因此默认不声明依赖）
+- `xray`（Xray-core ≥ 1.8，TProxy tunnel inbound），可使用手工编译版本
+  （手工 xray 与 feed 的 `xray-core` 包会争用 `/usr/bin/xray`，因此不声明依赖）
 - `mosdns-x`（pmkol/mosdns-x，mosdns v4 配置格式；需要其 `nftset` 插件和 `_new_empty_response` 等预设）
-- `nftables` + `kmod-nft-tproxy` + `ip-full`（nftables/ip-full 已声明为包依赖；
-  `kmod-nft-tproxy` 需单独安装，避免 SDK/CI 触发内核编译）
-- `ucode` + `ucode-mod-uci` / `ucode-mod-fs` / `ucode-mod-ubus`（生成器；LuCI 本身已依赖）、
-  `ucode-mod-socket`（节点测速）；均已声明为包依赖
-- `curl`（组件更新、连通性检测、经代理下载拦截列表；未声明为包依赖）
-- `/usr/share/v2ray/geosite.dat`、`geoip.dat`（Loyalsoldier / v2ray 数据）
+- `geosite.dat`、`geoip.dat`（Loyalsoldier / v2ray 数据），放在 `global.geo_dir`（默认 `/usr/share/v2ray`），
+  “更新”页可以下载。Xray 也从这个目录读取（启动时设置 `XRAY_LOCATION_ASSET`）
+
+已声明为包依赖的（默认固件里大多没有）：
+
+- `nftables`、`ip-full`；`kmod-nft-tproxy` 为安装时依赖（`LUCI_EXTRA_DEPENDS`），由 apk 从 kmods 源安装，
+  不会让 SDK/CI 编译内核模块
+- `ucode` + `ucode-mod-uci` / `ucode-mod-fs` / `ucode-mod-ubus`（生成器）、`ucode-mod-socket`（节点测速）
+- `curl`（组件更新、连通性检测、经代理下载拦截列表）、`unzip`（组件更新）、`resolveip`
+- 分享链接里的 base64 由 ucode 解码，不需要 `base64` 命令
 
 ## 代码仓库与 CI
 
@@ -234,6 +238,7 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-<版本>-r1.apk
 | global | ipv6_enabled | 启用 IPv6 TProxy（实验性） |
 | node | type/address/port/uuid/... | vless / vmess / trojan / shadowsocks / hysteria2 节点 |
 | global | api_port | Xray 本地统计 API 端口（默认 10085，用于节点流量） |
+| global | geo_dir | geosite.dat / geoip.dat 所在目录（默认 `/usr/share/v2ray`），mosdns-x、内核集合、Xray 和更新页共用 |
 | rule | rule_type/value/outbound | 分流规则，从上到下匹配：domain/ip/port/network → main/节点/balance/failover/direct/block；`value` 是列表 |
 | rule | builtin_ads / builtin_cn_domain / builtin_cn_ip / builtin_noncn / builtin_gfw | 预置规则行，和普通规则完全一样，“快速预设”只是开关它们 |
 

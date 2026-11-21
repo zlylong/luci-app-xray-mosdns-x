@@ -88,6 +88,8 @@ export function load(confdir) {
 			lan_ifaces: words(g.lan_ifaces),
 			lan_devices: list(g.lan_devices),
 			bypass_ips: ip_list(g.bypass_ips, 'bypass_ips'),
+			// geosite.dat / geoip.dat, for mosdns, the kernel sets and Xray alike
+			geo_dir: rtrim(str(g.geo_dir, '/usr/share/v2ray'), '/') || '/',
 		},
 		dns: {
 			listen_port: port(d.listen_port, 5335, 'dns.listen_port'),
@@ -123,6 +125,9 @@ export function load(confdir) {
 
 	if (!match(cfg.global.probe_interval, /^[0-9]+[smh]$/))
 		fail(`invalid probe_interval '${cfg.global.probe_interval}' (use e.g. 30s, 1m)`);
+	// goes into the Xray environment and the generated files
+	if (!match(cfg.global.geo_dir, /^\/[A-Za-z0-9_.\/-]*$/))
+		fail(`invalid geo_dir '${cfg.global.geo_dir}' (an absolute directory path)`);
 
 	if (!ipver(cfg.dns.bootstrap))
 		fail(`dns.bootstrap must be an IP address, got '${cfg.dns.bootstrap}'`);
