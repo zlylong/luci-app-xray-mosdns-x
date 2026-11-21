@@ -12,10 +12,12 @@ PORT=47231
 rc=0
 rm -rf "$OUT"; mkdir -p "$OUT"
 
-# $1 result name, then the command; stdout is the result
+# $1 result name (.json unless it has an extension), then the command;
+# stdout is the result
 run() {
 	name=$1; shift
-	if "$@" > "$OUT/$name.json" 2> "$OUT/$name.err"; then
+	case $name in *.*) f=$name ;; *) f=$name.json ;; esac
+	if "$@" > "$OUT/$f" 2> "$OUT/$name.err"; then
 		echo "script $name: ok"
 	else
 		echo "script $name: exit $?"; cat "$OUT/$name.err"; rc=1
@@ -38,6 +40,9 @@ echo "$PORT" > "$OUT/port"
 
 [ -f "$CONF" ] && cp "$CONF" "$OUT/conf.saved"
 cat > "$CONF" <<EOF
+config global 'global'
+	option xray_bin '/opt/bin/xray-core'
+
 config node 'n1'
 	option type 'vless'
 	option address '127.0.0.1'
@@ -76,6 +81,46 @@ run update-versions env UPD_TEST_DIR="$OUT/upd" "$LX/update.sh" versions
 # jstr on its own, with every character that needs escaping
 eval "$(grep '^jstr()' "$LX/update.sh")"
 jstr "$(printf 'quote " backslash \\ tab \t newline \n end')" > "$OUT/jstr.json"
+
+# log.sh against a stand-in for logread and a mosdns log file; xray_bin is
+# /opt/bin/xray-core in the config above
+cat > "$OUT/syslog.txt" <<'EOF'
+Sat Nov 21 13:00:00 2026 daemon.info procd: Instance xray-mosdns::xray s in a crash loop 6 crashes, 0 seconds since last crash
+Sat Nov 21 13:00:01 2026 daemon.err xray-core[101]: Xray started
+Sat Nov 21 13:00:02 2026 daemon.err xray[102]: some other xray binary
+Sat Nov 21 13:00:03 2026 daemon.err mosdns[201]: failed to load config
+Sat Nov 21 13:00:04 2026 daemon.info procd: Instance xray-mosdns::mosdns s in a crash loop 6 crashes, 0 seconds since last crash
+Sat Nov 21 13:00:05 2026 user.notice xray-mosdns: nft table rebuilt
+Sat Nov 21 13:00:06 2026 user.notice xray-mosdns-gen: ERROR: bad config
+Sat Nov 21 13:00:07 2026 daemon.err groups.uc[301]: watcher warning
+Sat Nov 21 13:00:08 2026 daemon.err dns-watchdog.sh[401]: watchdog warning
+Sat Nov 21 13:00:09 2026 daemon.info procd: Instance xray-mosdns::dnswatch s in a crash loop 6 crashes, 0 seconds since last crash
+Sat Nov  1 13:00:10 2026 daemon.info dnsmasq[501]: xray-mosdns: not ours
+Sat Nov 21 13:00:11 2026 daemon.info procd: Instance other::xray s in a crash loop 6 crashes, 0 seconds since last crash
+Sat Nov 21 13:00:12 2026 kern.info kernel: [    1.000000] xray-mosdns: not ours either
+not a log line
+EOF
+printf '#!/bin/sh\ncat %s/syslog.txt\n' "$OUT" > "$OUT/fake-logread"
+chmod +x "$OUT/fake-logread"
+cat > "$OUT/mosdns-x.log" <<'EOF'
+2026-11-21T13:00:00.000+0800	INFO	server started
+{"level":"info","ts":1763730000.5,"logger":"cache","msg":"cache hit rate","rate":0.5}
+{"level":"info","ts":1763730001,"msg":"proxy","qname":"example.com.","qtype":1,"client":"192.168.1.2"}
+{"level":"warn","ts":1763730002.25,"msg":"upstream error","error":"timeout"}
+EOF
+logsh() { env TZ=UTC LOGREAD="$OUT/fake-logread" MOSDNS_LOG="$OUT/mosdns-x.log" "$LX/log.sh" "$@"; }
+
+run log-xray.txt   logsh xray
+run log-mosdns.txt logsh mosdns
+run log-app.txt    logsh app
+run log-all.txt    logsh
+run log-legacy.txt logsh 300
+run log-tail.txt   logsh app 2
+if logsh nonsense >/dev/null 2>&1; then
+	echo "script log-bad: an unknown source was accepted"; rc=1
+else
+	echo "script log-bad: ok"
+fi
 
 kill "$LISTENER" 2>/dev/null
 if [ -f "$OUT/conf.saved" ]; then mv "$OUT/conf.saved" "$CONF"; else rm -f "$CONF"; fi
