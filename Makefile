@@ -19,6 +19,24 @@ LUCI_DEPENDS:=+luci-base +nftables +ip-full +resolveip +ucode +ucode-mod-fs +uco
 LUCI_EXTRA_DEPENDS:=kmod-nft-tproxy
 LUCI_PKGARCH:=all
 
+# Stopping on removal and starting after an upgrade are done by the default
+# package scripts (the init script's stop clears the nft table and routes).
+# What they do not know about are the daily jobs this package adds to root's
+# crontab; on an upgrade the scripts are still there and the jobs stay.
+define Package/$(PKG_NAME)/postrm
+#!/bin/sh
+[ -n "$${IPKG_INSTROOT}" ] && exit 0
+[ -e /usr/libexec/xray-mosdns/update.sh ] && exit 0
+if grep -qs '# xray-mosdns-' /etc/crontabs/root; then
+	sed -i '/# xray-mosdns-/d' /etc/crontabs/root
+	/etc/init.d/cron restart 2>/dev/null
+fi
+# stop has cleared the table already; in case it could not
+nft delete table inet xray-mosdns 2>/dev/null
+rm -rf /var/etc/xray-mosdns /var/etc/xray-mosdns.new /var/run/xray-mosdns.error
+exit 0
+endef
+
 include $(TOPDIR)/feeds/luci/luci.mk
 
 # call BuildPackage - OpenWrt buildroot signature

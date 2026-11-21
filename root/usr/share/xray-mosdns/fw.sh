@@ -46,6 +46,20 @@ add_route() {
 	return 1
 }
 
+# $1 family flag. Another program using the same mark or routing table
+# makes the two step on each other: say so in the log (the values can be
+# changed under System > Ports and paths).
+warn_shared() {
+	hex=$(printf '0x%x' "$FWMARK")
+	others=$(ip "$1" rule show 2>/dev/null | grep -vE "^$PREF:" | grep -E "fwmark $hex( |/)|lookup $ROUTE_TABLE( |\$)")
+	[ -n "$others" ] && logger -p daemon.warn -t xray-mosdns \
+		"fwmark $FWMARK / table $ROUTE_TABLE are also used by: $(printf '%s' "$others" | tr '\n\t' '; ')"
+	others=$(ip "$1" route show table "$ROUTE_TABLE" 2>/dev/null | grep -v '^local default dev lo')
+	[ -n "$others" ] && logger -p daemon.warn -t xray-mosdns \
+		"routing table $ROUTE_TABLE also holds: $(printf '%s' "$others" | head -3 | tr '\n' ';')"
+	return 0
+}
+
 # remove the routing set up by a previous apply (which may have used other values)
 clear_routes() {
 	old_mark=$FWMARK; old_table=$ROUTE_TABLE
@@ -112,6 +126,7 @@ apply_fw() {
 	if [ -f "$STATE" ] && [ "$(cat "$STATE")" != "$FWMARK $ROUTE_TABLE" ]; then
 		clear_routes
 	fi
+	warn_shared -4
 	add_route -4 || exit 1
 	if [ "$IPV6_EN" = "1" ]; then
 		add_route -6 || exit 1
