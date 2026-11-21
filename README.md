@@ -24,6 +24,7 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
   非新建连接                            ──► 内核直接转发
   新连接按目的地址判定一次：
     保留地址 / 节点地址 / bypass_ips   ──► 直连
+    同时在 direct4_dns 和 proxy4_dns   ──► TProxy，Xray 按嗅探到的域名判定（开启嗅探时）
     direct4_dns（域名规则解析出的地址）  ──► 直连
     proxy4_dns                          ──► TProxy :12345 ──► Xray
     ipg4_0 … ipg4_7（IP 规则，按规则顺序） ──► 直连或 TProxy
