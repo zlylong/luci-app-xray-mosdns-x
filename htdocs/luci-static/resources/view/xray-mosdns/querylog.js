@@ -101,7 +101,7 @@ return view.extend({
 
 		if (!enabled)
 			page.push(E('p', { 'class': 'alert-message warning' },
-				_('查询日志没有开启。到“DNS”页的“日志”标签里打开“记录查询”，保存并应用后这里才会有内容。')));
+				_('查询日志没有开启。到“DNS → 设置”的“日志”标签里打开“记录查询”，保存并应用后这里才会有内容。')));
 
 		page.push(E('div', { 'class': 'cbi-section' }, [
 			E('div', {}, [

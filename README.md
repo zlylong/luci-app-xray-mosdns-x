@@ -214,7 +214,7 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-<版本>-r1.apk
 | dns | remote_dns | 国外上游列表：IP（TCP 53）或 tcp:// tls:// https:// 地址，全部经代理 |
 | dns | block_mode | 拦截方式：nxdomain（默认）/ zero（返回 0.0.0.0 和 ::） |
 | dns | min_ttl | 最小 TTL，0 = 不改动（默认） |
-| dns | query_log | 记录每次查询，供“查询日志”页查看（默认 0） |
+| dns | query_log | 记录每次查询，供“DNS → 查询日志”查看（默认 0） |
 | dns | filter_proxy_ipv6 | 代理域名不返回 AAAA（默认 1） |
 | dns | filter_direct_ipv6 | 直连域名不返回 AAAA（默认 0） |
 | dns | domestic_dns | 国内 DoH/DoT/明文上游列表 |

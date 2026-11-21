@@ -94,7 +94,7 @@ return view.extend({
 		o.default = 'nxdomain';
 
 		o = s.taboption('logtab', form.Flag, 'query_log', _('记录查询'),
-			_('把每一次查询写进 /tmp/mosdns-x.log，供“查询日志”页查看。日志在内存里，超过 4 MB 时只保留最新的 4000 行，重启后清空。'));
+			_('把每一次查询写进 /tmp/mosdns-x.log，供“DNS → 查询日志”查看。日志在内存里，超过 4 MB 时只保留最新的 4000 行，重启后清空。'));
 		o.default = '0';
 
 		return m.render();
