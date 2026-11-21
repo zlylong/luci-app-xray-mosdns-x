@@ -3,7 +3,8 @@
 # usage: fw.sh apply [flush-dns] | clear | status
 #
 # apply is safe to run repeatedly: nft.rules replaces chains and static sets
-# in a single transaction, so there is no window without rules.
+# in a single transaction, so there is no window without rules. A failed
+# apply leaves the loaded table as it was.
 OUT=/var/etc/xray-mosdns
 STATE="$OUT/.fw-state"
 TABLE="inet xray-mosdns"
@@ -45,19 +46,43 @@ clear_fw() {
 	clear_routes
 }
 
+# nft.rules updates the loaded table in place. A set whose definition changed
+# (e.g. after an upgrade) cannot be redeclared that way, so the table is then
+# rebuilt: deleted and recreated in one transaction, which keeps the old
+# rules in force until the new ones are complete and leaves them untouched
+# if the new ones are rejected.
+load_rules() {
+	nft -f "$OUT/nft.rules" 2>/dev/null && return 0
+
+	batch="$OUT/.nft-rebuild"
+	{
+		echo "add table $TABLE"
+		echo "delete table $TABLE"
+		cat "$OUT/nft.rules"
+		# with the DNS watchdog, nft.rules leaves the redirect chains to it:
+		# carry an active redirect over rather than hand LAN DNS to dnsmasq
+		# until the watchdog's next probe
+		if ! grep -q "^flush chain $TABLE dns_redirect\$" "$OUT/nft.rules" &&
+			[ -f "$OUT/nft-dns-on.rules" ] &&
+			nft list chain $TABLE dns_redirect 2>/dev/null | grep -q 'redirect to'; then
+			cat "$OUT/nft-dns-on.rules"
+		fi
+	} > "$batch"
+	if err=$(nft -f "$batch" 2>&1); then
+		rm -f "$batch"
+		logger -t xray-mosdns "nft table rebuilt; addresses learned from DNS start over"
+		return 0
+	fi
+	# $batch is kept: the line numbers in the error refer to it
+	echo "failed to load nft rules: $err" >&2
+	logger -t xray-mosdns "failed to load nft rules: $err"
+	return 1
+}
+
 apply_fw() {
 	[ -f "$OUT/nft.rules" ] || { echo "missing $OUT/nft.rules" >&2; exit 1; }
 
-	if ! err=$(nft -f "$OUT/nft.rules" 2>&1); then
-		# a set whose definition changed (e.g. after an upgrade) cannot be
-		# redeclared in place: rebuild the table once
-		nft delete table $TABLE 2>/dev/null || true
-		nft -f "$OUT/nft.rules" || {
-			echo "failed to load nft rules: $err" >&2
-			logger -t xray-mosdns "failed to load nft rules: $err"
-			exit 1
-		}
-	fi
+	load_rules || exit 1
 	# per-device chains that the current ruleset no longer uses
 	for c in $(nft list table $TABLE 2>/dev/null | sed -n 's/^[[:space:]]*chain \(dev_[0-9]*\) {.*/\1/p'); do
 		grep -q "^add chain $TABLE $c\$" "$OUT/nft.rules" || nft delete chain $TABLE "$c" 2>/dev/null || true
