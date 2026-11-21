@@ -83,8 +83,10 @@ start_service() {
 	# Without that job it still runs, to keep the mosdns log file bounded.
 	wd_mode=log-only
 	[ "$(get_opt '@dns[0].redirect')" != "0" ] && [ "$(get_opt '@dns[0].fallback')" != "0" ] && wd_mode=manage
+	# helpers are started by their own path, not through an interpreter, so
+	# that procd logs their output under their name (log.sh sorts by it)
 	procd_open_instance dnswatch
-	procd_set_param command /bin/sh /usr/libexec/xray-mosdns/dns-watchdog.sh "$wd_mode"
+	procd_set_param command /usr/libexec/xray-mosdns/dns-watchdog.sh "$wd_mode"
 	procd_set_param respawn 3600 5 0
 	procd_set_param stderr 1
 	procd_close_instance
@@ -92,7 +94,7 @@ start_service() {
 	# keeps "ordered" groups on their first healthy member and re-applies pins
 	if grep -q '"tag"' "$OUT/groups.json" 2>/dev/null; then
 		procd_open_instance groups
-		procd_set_param command /usr/bin/ucode /usr/libexec/xray-mosdns/groups.uc watch
+		procd_set_param command /usr/libexec/xray-mosdns/groups.uc watch
 		procd_set_param file "$OUT/groups.json"
 		procd_set_param respawn 3600 5 5
 		procd_set_param stderr 1

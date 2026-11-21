@@ -6,6 +6,7 @@ usage: tests/check.py <outdir>
 import json
 import os
 import sys
+import time
 
 import yaml
 
@@ -316,6 +317,26 @@ else:
     u = res("update-versions")
     check(u.get("ok") is True and u.get("xray") == "not installed" and u.get("mosdns") == "not installed", f"update.sh versions: {u}")
     check(res("jstr") == 'quote " backslash \\ tab \t newline \n end', "update.sh jstr: escapes quotes, backslashes and control characters")
+
+    def txt(name):
+        return open(f"{sd}/{name}.txt").read().splitlines()
+
+    def utc(ts):
+        return time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(ts))
+
+    sl = open(f"{sd}/syslog.txt").read().splitlines()
+    check(txt("log-xray") == sl[0:2], f"log xray: procd's notes on the instance and the configured binary's output only: {txt('log-xray')}")
+    lm = txt("log-mosdns")
+    check(lm[0] == "== 系统日志 ==" and lm[1:3] == sl[3:5] and lm[3].startswith("== ") and lm[3].endswith("/scripts/mosdns-x.log =="),
+          f"log mosdns: its system log lines first, then the file: {lm[:4]}")
+    check(lm[4:] == ["2026-11-21T13:00:00.000+0800\tINFO\tserver started",
+                     f"{utc(1763730000)} INFO cache: cache hit rate rate=0.5",
+                     f"{utc(1763730002)} WARN: upstream error error=timeout"],
+          f"log mosdns: plain lines as they are, JSON lines readable, query lines left out: {lm[4:]}")
+    check(txt("log-app") == sl[5:10], f"log app: the service's tags, its helpers by name, procd's notes on them: {txt('log-app')}")
+    check(txt("log-all") == sl[0:2] + sl[3:10], "log: without a source, all three in order, nothing else")
+    check(txt("log-legacy") == txt("log-all"), "log: `log.sh <lines>` from older pages still works")
+    check(txt("log-tail") == sl[8:10], "log: the line count keeps the newest lines")
 
 if failed:
     print("\n".join("FAIL: " + f for f in failed))
