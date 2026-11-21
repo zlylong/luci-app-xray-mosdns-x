@@ -133,8 +133,8 @@ xray run -test -c /tmp/xm-test/chnroute/xray.json
 - `mosdns-x`（pmkol/mosdns-x，mosdns v4 配置格式；需要其 `nftset` 插件和 `_new_empty_response` 等预设）
 - `nftables` + `kmod-nft-tproxy` + `ip-full`（nftables/ip-full 已声明为包依赖；
   `kmod-nft-tproxy` 需单独安装，避免 SDK/CI 触发内核编译）
-- `ucode` + `ucode-mod-uci` / `ucode-mod-fs` / `ucode-mod-ubus`（生成器；LuCI 本身已依赖）
-- `python3`（仅概览页的节点流量和节点测速使用，未声明为包依赖）
+- `ucode` + `ucode-mod-uci` / `ucode-mod-fs` / `ucode-mod-ubus`（生成器；LuCI 本身已依赖）、
+  `ucode-mod-socket`（节点测速）；均已声明为包依赖
 - `curl`（组件更新、连通性检测、经代理下载拦截列表；未声明为包依赖）
 - `/usr/share/v2ray/geosite.dat`、`geoip.dat`（Loyalsoldier / v2ray 数据）
 
