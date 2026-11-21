@@ -16,8 +16,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      ROOTFS_URL: https://downloads.immortalwrt.org/releases/25.12.2/targets/x86/64/immortalwrt-25.12.2-x86-64-rootfs.tar.gz
+      ROOTFS: releases/25.12.2/targets/x86/64/immortalwrt-25.12.2-x86-64-rootfs.tar.gz
       ROOTFS_SHA256: 29b6a86c9bc14a10dc1769f0c4afe33092ce669f667a5b7636d25271aff6a3cb
+      # tried in order; the checksum makes a mirror as good as the original,
+      # which can be very slow from here
+      ROOTFS_MIRRORS: >-
+        https://mirrors.cernet.edu.cn/immortalwrt
+        https://mirror.nju.edu.cn/immortalwrt
+        https://downloads.immortalwrt.org
       R: /tmp/rootfs
     steps:
       - name: Checkout
@@ -25,8 +31,18 @@ jobs:
 
       - name: Unpack the rootfs
         run: |
-          curl -fsSL --retry 3 -o /tmp/rootfs.tar.gz "$ROOTFS_URL"
-          echo "$ROOTFS_SHA256  /tmp/rootfs.tar.gz" | sha256sum -c -
+          ok=
+          for m in $ROOTFS_MIRRORS; do
+            echo "fetching from $m"
+            # give up on a mirror that stalls instead of holding the job
+            if curl -fsSL --retry 2 --connect-timeout 15 --speed-limit 20480 --speed-time 30 \
+                --max-time 300 -o /tmp/rootfs.tar.gz "$m/$ROOTFS" &&
+              echo "$ROOTFS_SHA256  /tmp/rootfs.tar.gz" | sha256sum -c -; then
+              ok=1
+              break
+            fi
+          done
+          [ -n "$ok" ] || { echo "rootfs: no mirror delivered it" >&2; exit 1; }
           rm -rf "$R" && mkdir -p "$R"
           tar -xzf /tmp/rootfs.tar.gz -C "$R"
           # the scripts redirect to /dev/null, which a booted system creates
