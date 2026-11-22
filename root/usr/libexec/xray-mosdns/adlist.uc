@@ -133,7 +133,9 @@ function lists() {
 // One writer of the list directory at a time: an exclusive flock on LOCK,
 // taken without waiting, so that taking it and finding it free are one
 // step. It goes with the process, one that crashed included.
-let held = null, lock_error = null;
+// lock_busy: another process has it (an update running); else lock_error
+// says why it could not be taken
+let held = null, lock_error = null, lock_busy = false;
 function lock() {
 	if (held)
 		return true;
@@ -143,12 +145,14 @@ function lock() {
 		system([ 'mkdir', '-p', dir ]);
 	const f = fs.open(LOCK, 'a');
 	if (!f) {
-		lock_error = `cannot open ${LOCK}: ${fs.error()}`;
+		lock_error = `cannot open ${LOCK}: ${fs.error() ?? ('there is a ' + (fs.lstat(LOCK)?.type ?? 'nothing') + ' in its place')}`;
+		lock_busy = false;
 		return false;
 	}
 	if (!f.lock('xn')) {
 		f.close();
 		lock_error = 'an update is already running';
+		lock_busy = true;
 		return false;
 	}
 	held = f;
@@ -380,7 +384,13 @@ function sync_catalog(cat) {
 }
 
 // refresh the catalogue and re-sync; used by the page's button
+// It rewrites subscriptions and the state an update writes too: not while
+// one runs (the page says so and leaves it for later).
 function cmd_catalog_sync() {
+	if (!lock()) {
+		out({ ok: false, busy: lock_busy, error: lock_busy ? 'a blocklist update is running' : lock_error });
+		return 1;
+	}
 	const cat = refresh_catalog();
 	if (!cat) {
 		out({ ok: false, error: 'could not download the catalogue' });
@@ -593,12 +603,14 @@ function cmd_migrate() {
 // At every start, before mosdns: it does not start at all when a list it
 // reads is missing (the config has them as soon as a subscription is
 // enabled, as config.uc counts them), and nothing would start it again
-// once the list is there. Missing merged lists (or empty ones while the
-// lists there have data) are made from the lists there are now, which
-// needs no download; while an update runs, which writes them itself, empty
-// ones stand in (never over a file that is there) for it to rewrite. A
-// subscribed list with no data yet is fetched in the background. What
-// cannot be fixed so is printed on stderr.
+// once the list is there. Merged lists that are not what the lists there
+// make (missing, empty or cut short, or from before a list was turned off:
+// their size is the sum of the lists' sizes) are made again, which needs
+// no download. While an update runs, which writes them itself, empty ones
+// stand in for missing ones (never over a file that is there) for it to
+// rewrite. A subscribed list with no data yet is fetched in the
+// background. Whatever goes wrong is printed on stderr (the start script
+// puts it on the overview).
 function cmd_ensure() {
 	const cfg = settings();
 	let wanted = 0;
@@ -607,27 +619,37 @@ function cmd_ensure() {
 		return 0;
 	const all = lists();
 	const live = (kind) => `${cfg.dir}/${kind}.txt`;
-	// missing, or empty while the lists there have data (an empty stand-in
-	// an earlier version made): made again
-	const data = (kind) => length(filter(all, l => (fs.stat(`${cfg.dir}/${l.id}.${kind}`)?.size ?? 0) > 0)) > 0;
-	const missing = filter([ 'block', 'allow' ], k => fs.lstat(live(k))?.type != 'file'
-		|| (fs.lstat(live(k)).size == 0 && data(k)));
-	if (length(missing)) {
+	const size = (kind) => {
+		let n = 0;
+		for (let l in all)
+			n += fs.stat(`${cfg.dir}/${l.id}.${kind}`)?.size ?? 0;
+		return n;
+	};
+	const stale = filter([ 'block', 'allow' ], k => fs.lstat(live(k))?.type != 'file' || fs.lstat(live(k)).size != size(k));
+	if (length(stale)) {
 		system([ 'mkdir', '-p', cfg.dir ]);
 		let err = null;
 		if (lock()) {
 			err = merge(cfg, all);
 			unlock();
 		}
-		else
-			for (let k in missing)
+		else {
+			// an update running makes them itself; a lock that cannot be
+			// taken at all is a fault, said as such
+			if (!lock_busy)
+				err = lock_error;
+			for (let k in stale)
 				if (fs.lstat(live(k)) == null)
 					fs.open(live(k), 'wx')?.close();
-		for (let k in missing)
-			if (fs.lstat(live(k))?.type != 'file') {
-				warn(`${live(k)} is missing and cannot be made${err ? ': ' + err : ''}\n`);
-				break;
-			}
+		}
+		if (err)
+			warn(`cannot make the merged lists in ${cfg.dir}: ${err}\n`);
+		else
+			for (let k in stale)
+				if (fs.lstat(live(k))?.type != 'file') {
+					warn(`${live(k)} is missing and cannot be made\n`);
+					break;
+				}
 	}
 	for (let l in all)
 		if (!fs.access(`${cfg.dir}/${l.id}.block`))

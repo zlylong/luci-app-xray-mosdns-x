@@ -166,7 +166,10 @@ return baseclass.extend({
 		function syncCatalog() {
 			return xm.exec('adlist.uc', [ 'catalog-sync' ]).then(function(r) {
 				if (r.ok === false) {
-					ui.addNotification(null, E('p', {}, _('列表库下载失败，继续使用现有的目录。')), 'warning');
+					/* an update running is not a failure: it is done the same way afterwards */
+					ui.addNotification(null, E('p', {}, r.busy
+						? _('拦截列表正在更新，更新完成后再同步列表库。')
+						: _('列表库下载失败，继续使用现有的目录。')), r.busy ? 'info' : 'warning');
 					return;
 				}
 				var flagged = Object.keys(r.flags || {}).length;

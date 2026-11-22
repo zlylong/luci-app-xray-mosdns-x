@@ -42,6 +42,22 @@ if grep -qs '# xray-mosdns-' /etc/crontabs/root; then
 fi
 # stop has cleared the table already; in case it could not
 nft delete table inet xray-mosdns 2>/dev/null
+# A blocklist update started in the background (not by procd, so stop has
+# left it) holds the lock and would go on writing what goes below: it,
+# and what it started with the lock open, goes first. The lock file can
+# then go too.
+lock=/var/run/xray-mosdns-adlist.lock
+# /var is a link to /tmp: a descriptor shows where the file really is
+real=$$(readlink -f "$$lock" 2>/dev/null)
+for p in /proc/[0-9]*; do
+	for fd in "$$p"/fd/*; do
+		l=$$(readlink "$$fd" 2>/dev/null)
+		if [ -n "$$l" ] && { [ "$$l" = "$$lock" ] || [ "$$l" = "$$real" ]; }; then
+			kill "$${p#/proc/}" 2>/dev/null
+			break
+		fi
+	done
+done
 dir=$$(uci -q get 'xray-mosdns.@adblock[0].dir')
 case "$$dir" in
 	# ours whole, or one adlist.uc did not use either (it falls back then)
