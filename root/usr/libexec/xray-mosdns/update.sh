@@ -46,9 +46,35 @@ geo_marker_read() { f=$(geo_marker); [ -f "$f" ] && head -1 "$f" || true; }
 geo_marker_write() { f=$(geo_marker); mkdir -p "$(dirname "$f")"; printf '%s\n%s\n' "$1" "$(date +%Y-%m-%dT%H:%M:%S)" > "$f"; }
 
 cron_file() { echo "$ROOT/etc/crontabs/root"; }
+# $1 hour, $2 day of the week (0 = Sunday ... 6) or * for every day
 cron_line() {
-	hour=$1
-	printf '%s %s * * * /usr/libexec/xray-mosdns/update.sh geo-auto >>/tmp/xray-mosdns-geo-update.log 2>&1 # xray-mosdns-geo-auto' "0" "$hour"
+	printf '0 %s * * %s /usr/libexec/xray-mosdns/update.sh geo-auto >>/tmp/xray-mosdns-geo-update.log 2>&1 # xray-mosdns-geo-auto' "$1" "$2"
+}
+
+# the scheduled update's hour (0-23, default 4) and day of the week (0-6, or
+# * for every day: the default, and what configs without the option mean)
+geo_hour() {
+	h=$(ug '@global[0].geo_update_hour')
+	case "$h" in ''|*[!0-9]*) h=4 ;; esac
+	[ "$h" -ge 0 ] 2>/dev/null && [ "$h" -le 23 ] || h=4
+	echo "$h"
+}
+geo_day() {
+	d=$(ug '@global[0].geo_update_day')
+	case "$d" in [0-6]) echo "$d" ;; *) echo '*' ;; esac
+}
+day_name() {
+	case "$1" in
+		0) echo 每周日 ;; 1) echo 每周一 ;; 2) echo 每周二 ;; 3) echo 每周三 ;;
+		4) echo 每周四 ;; 5) echo 每周五 ;; 6) echo 每周六 ;; *) echo 每天 ;;
+	esac
+}
+
+# this package's installed version (apk, or opkg on older releases)
+app_version() {
+	v=$(apk info -e -v luci-app-xray-mosdns-x 2>/dev/null | head -1 | sed -n 's/^luci-app-xray-mosdns-x-//p')
+	[ -n "$v" ] || v=$(opkg status luci-app-xray-mosdns-x 2>/dev/null | sed -n 's/^Version: *//p' | head -1)
+	echo "$v"
 }
 
 KEEP_BACKUPS=3
@@ -111,8 +137,8 @@ cmd_versions() {
 	mv=$("$mb" version 2>/dev/null | head -1)
 	[ -n "$mv" ] || mv="not installed"
 	gd=$(v2ray_dir)
-	printf '{"ok":true,"xray":%s,"mosdns":%s,"geosite":%s,"geoip":%s,"geo_version":%s}\n' \
-		"$(jstr "$xv")" "$(jstr "$mv")" \
+	printf '{"ok":true,"app":%s,"xray":%s,"mosdns":%s,"geosite":%s,"geoip":%s,"geo_version":%s}\n' \
+		"$(jstr "$(app_version)")" "$(jstr "$xv")" "$(jstr "$mv")" \
 		"$(jstr "$(geo_size "$gd/geosite.dat")")" "$(jstr "$(geo_size "$gd/geoip.dat")")" \
 		"$(jstr "$(geo_marker_read)")"
 }
@@ -139,15 +165,15 @@ cmd_check() {
 	xr=$(remote_tag XTLS/Xray-core)
 	mr=$(remote_tag pmkol/mosdns-x)
 	gr=$(remote_tag Loyalsoldier/v2ray-rules-dat)
-	printf '{"ok":true,"local":{"xray":%s,"xray_num":%s,"mosdns":%s,"mosdns_path":%s,"mosdns_kind":%s,"mosdns_date":%s,"geosite":%s,"geoip":%s,"geo_version":%s},"remote":{"xray":%s,"xray_num":%s,"mosdns":%s,"mosdns_date":%s,"geo":%s,"geo_auto":%s,"geo_hour":%s}}\n' \
-		"$(jstr "$xv")" "$(jstr "$(xray_num "$xv")")" \
+	printf '{"ok":true,"local":{"app":%s,"xray":%s,"xray_num":%s,"mosdns":%s,"mosdns_path":%s,"mosdns_kind":%s,"mosdns_date":%s,"geosite":%s,"geoip":%s,"geo_version":%s},"remote":{"xray":%s,"xray_num":%s,"mosdns":%s,"mosdns_date":%s,"geo":%s,"geo_auto":%s,"geo_hour":%s,"geo_day":%s}}\n' \
+		"$(jstr "$(app_version)")" "$(jstr "$xv")" "$(jstr "$(xray_num "$xv")")" \
 		"$(jstr "$mv")" "$(jstr "$mb")" "$(jstr "$(mosdns_kind "$mv")")" "$(jstr "$(mosdns_date "$mv")")" \
 		"$(jstr "$(geo_size "$gd/geosite.dat")")" "$(jstr "$(geo_size "$gd/geoip.dat")")" \
 		"$(jstr "$(geo_marker_read)")" \
 		"$(jstr "$xr")" "$(jstr "$(printf '%s' "$xr" | sed 's/^v//')")" \
 		"$(jstr "$mr")" "$(jstr "$(printf '%s' "$mr" | sed 's/^v//')")" \
 		"$(jstr "$gr")" \
-		"$(jstr "$(ug '@global[0].geo_auto_update')")" "$(jstr "$(ug '@global[0].geo_update_hour')")"
+		"$(jstr "$(ug '@global[0].geo_auto_update')")" "$(jstr "$(geo_hour)")" "$(jstr "$(geo_day)")"
 }
 
 cmd_geo() {
@@ -199,9 +225,7 @@ cmd_geo_auto() {
 }
 
 cmd_cron_install() {
-	hour=$(ug '@global[0].geo_update_hour')
-	case "$hour" in ''|*[!0-9]*) hour=4 ;; esac
-	[ "$hour" -ge 0 ] 2>/dev/null && [ "$hour" -le 23 ] || hour=4
+	hour=$(geo_hour); day=$(geo_day)
 	cf=$(cron_file)
 	mkdir -p "$(dirname "$cf")"
 	backup_file "$cf" >/dev/null
@@ -210,9 +234,9 @@ cmd_cron_install() {
 	else
 		: > "$cf"
 	fi
-	printf '\n%s\n' "$(cron_line "$hour")" >> "$cf"
+	printf '\n%s\n' "$(cron_line "$hour" "$day")" >> "$cf"
 	[ -n "$ROOT" ] || /etc/init.d/cron restart >/dev/null 2>&1 || true
-	ok "geo 定时更新已启用（每天 ${hour}:00）"
+	ok "geo 定时更新已启用（$(day_name "$day") ${hour}:00）"
 }
 
 cmd_cron_remove() {
@@ -229,8 +253,8 @@ cmd_cron_status() {
 	cf=$(cron_file)
 	on=0
 	[ -f "$cf" ] && grep -q '# xray-mosdns-geo-auto' "$cf" && on=1
-	printf '{"ok":true,"enabled":%s,"hour":%s,"marker":%s}\n' "$on" \
-		"$(jstr "$(ug '@global[0].geo_update_hour')")" "$(jstr "$(geo_marker_read)")"
+	printf '{"ok":true,"enabled":%s,"hour":%s,"day":%s,"marker":%s}\n' "$on" \
+		"$(jstr "$(geo_hour)")" "$(jstr "$(geo_day)")" "$(jstr "$(geo_marker_read)")"
 }
 
 cmd_xray() {

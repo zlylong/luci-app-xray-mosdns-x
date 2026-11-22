@@ -323,7 +323,16 @@ else:
     check(res("traffic-down") == {"nodes": [], "error": "xray_not_running"}, "traffic: API unreachable, no xray process")
 
     u = res("update-versions")
-    check(u.get("ok") is True and u.get("xray") == "not installed" and u.get("mosdns") == "not installed", f"update.sh versions: {u}")
+    check(u.get("ok") is True and u.get("xray") == "not installed" and u.get("mosdns") == "not installed" and isinstance(u.get("app"), str), f"update.sh versions: {u}")
+    check(res("update-versions-apk").get("app") == "9.9.9-r1" and res("update-versions-opkg").get("app") == "8.8.8-r2",
+          f"update.sh versions: this package's version from apk, or from opkg: {res('update-versions-apk').get('app')} {res('update-versions-opkg').get('app')}")
+    check(res("cron-weekly").get("message") == "geo 定时更新已启用（每周一 6:00）"
+          and open(f"{sd}/cron-weekly.txt").read().splitlines() == ["0 6 * * 1 /usr/libexec/xray-mosdns/update.sh geo-auto >>/tmp/xray-mosdns-geo-update.log 2>&1 # xray-mosdns-geo-auto"]
+          and res("cron-weekly-status") == {"ok": True, "enabled": 1, "hour": "6", "day": "1", "marker": ""},
+          f"geo schedule: weekly on the configured day and hour: {res('cron-weekly')} {res('cron-weekly-status')}")
+    check(res("cron-junk").get("message") == "geo 定时更新已启用（每天 4:00）"
+          and open(f"{sd}/cron-junk.txt").read().splitlines() == ["0 4 * * * /usr/libexec/xray-mosdns/update.sh geo-auto >>/tmp/xray-mosdns-geo-update.log 2>&1 # xray-mosdns-geo-auto"],
+          f"geo schedule: junk day/hour mean every day at 4, the line replaced: {open(f'{sd}/cron-junk.txt').read()!r}")
     check(res("jstr") == 'quote " backslash \\ tab \t newline \n end', "update.sh jstr: escapes quotes, backslashes and control characters")
 
     def txt(name):

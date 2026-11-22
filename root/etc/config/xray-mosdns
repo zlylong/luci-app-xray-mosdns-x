@@ -43,9 +43,11 @@ config global 'global'
 	option ipv6_enabled '0'
 	# traffic no rule claims: proxy (via 分流总节点) | direct
 	option default_action 'proxy'
-	# scheduled geo data update (cron): 0/1 and hour of day
+	# scheduled geo data update (cron): 0/1, hour of day, and day of the
+	# week (0 = Sunday ... 6) or * for every day
 	option geo_auto_update '0'
 	option geo_update_hour '4'
+	option geo_update_day '*'
 	# extra destination CIDRs/IPs that must never be tproxy'ed
 	list bypass_ips ''
 

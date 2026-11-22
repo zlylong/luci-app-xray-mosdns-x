@@ -4,6 +4,17 @@
 'require ui';
 'require xray-mosdns.common as xm';
 
+/* cron day of the week (0 = Sunday), '*' = every day */
+var DAYS = [ [ '*', _('每天') ], [ '1', _('每周一') ], [ '2', _('每周二') ], [ '3', _('每周三') ],
+	[ '4', _('每周四') ], [ '5', _('每周五') ], [ '6', _('每周六') ], [ '0', _('每周日') ] ];
+
+function dayName(d) {
+	for (var i = 0; i < DAYS.length; i++)
+		if (DAYS[i][0] === String(d))
+			return DAYS[i][1];
+	return _('每天');
+}
+
 function mosdnsText(l) {
 	var text = l.mosdns || '-';
 	if (l.mosdns_kind && l.mosdns_kind !== 'mosdns-x')
@@ -42,6 +53,8 @@ return view.extend({
 			}
 			var mosDiff = (l.mosdns_kind !== 'mosdns-x') ? !!r.mosdns : (!!r.mosdns_date && l.mosdns_date !== r.mosdns_date);
 			var rows = [
+				/* this package: updated by installing a new release, not from here */
+				[ _('本插件（luci-app-xray-mosdns-x）'), l.app || _('未知'), '-', '-' ],
 				[ 'Xray', l.xray, r.xray, st(!!r.xray_num && l.xray_num !== r.xray_num) ],
 				[ 'mosdns-x', mosdnsText(l), r.mosdns, st(mosDiff) ],
 				[ _('geo 数据'), '%s（%s / %s）'.format(l.geo_version || _('未记录'), xm.fmtBytes(l.geosite), xm.fmtBytes(l.geoip)),
@@ -63,7 +76,7 @@ return view.extend({
 
 		function renderCron(c) {
 			cronState.replaceChildren(c && c.enabled
-				? xm.badge(_('已启用，每天 %s:00').format(c.hour || '?'), 'ok')
+				? xm.badge(_('已启用，%s %s:00').format(dayName(c.day), c.hour || '?'), 'ok')
 				: xm.badge(_('未启用')));
 		}
 
@@ -105,10 +118,15 @@ return view.extend({
 		for (var h = 0; h < 24; h++)
 			hourSel.appendChild(E('option', { 'value': String(h) }, '%d:00'.format(h)));
 		hourSel.value = String(uci.get(xm.CONF, 'global', 'geo_update_hour') || '4');
+		var daySel = E('select', { 'class': 'cbi-input-select', 'style': 'width:auto' },
+			DAYS.map(function(d) { return E('option', { 'value': d[0] }, d[1]); }));
+		var day = uci.get(xm.CONF, 'global', 'geo_update_day');
+		daySel.value = /^[0-6]$/.test(day || '') ? day : '*';
 
 		function saveSchedule() {
 			uci.set(xm.CONF, 'global', 'geo_auto_update', autoChk.checked ? '1' : '0');
 			uci.set(xm.CONF, 'global', 'geo_update_hour', hourSel.value);
+			uci.set(xm.CONF, 'global', 'geo_update_day', daySel.value);
 			return uci.save().then(function() { return uci.apply(); }).then(function() {
 				return xm.exec('update.sh', [ autoChk.checked ? 'cron-install' : 'cron-remove' ]);
 			}).then(function(out) {
@@ -143,11 +161,11 @@ return view.extend({
 				E('div', { 'class': 'cbi-value' }, [
 					E('label', { 'class': 'cbi-value-title', 'for': 'xm-geo-auto' }, _('自动更新')),
 					E('div', { 'class': 'cbi-value-field' }, [
-						autoChk, ' ', _('每天'), ' ', hourSel, ' ',
+						autoChk, ' ', daySel, ' ', hourSel, ' ',
 						btn(_('保存计划'), saveSchedule), cronState
 					])
 				])
-			], _('与最新 release 版本相同时跳过下载。'))
+			], _('按设定的时间检查，与最新 release 版本相同时跳过下载。geo 数据通常每天发布一次，每周更新一次一般就够用。'))
 		]);
 	},
 
