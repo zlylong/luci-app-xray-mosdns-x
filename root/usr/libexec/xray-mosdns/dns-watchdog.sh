@@ -95,8 +95,22 @@ watch_xray() {
 		fi
 	else
 		xfail=$((xfail + 1))
+		if "$FW" gated; then
+			# Out of the path already. A LAN DNS redirect back in the meantime
+			# (put back by hand, say) would send names to a mosdns that cannot
+			# reach its foreign upstreams: gating again takes it off. Only then:
+			# a gate that holds costs one look at the chain per round.
+			active || return 0
+			if e=$("$FW" gate 2>&1); then
+				gate_err=""
+				logger -p daemon.warn -t xray-mosdns "LAN DNS redirect found while the transparent proxy is out of the path: handed back to dnsmasq"
+			elif [ "$e" != "$gate_err" ]; then
+				gate_err=$e
+				logger -p daemon.err -t xray-mosdns "$e"
+			fi
+			return 0
+		fi
 		[ "$xfail" -ge "$XFAILS" ] || return 0
-		"$FW" gated && return 0
 		if e=$("$FW" gate 2>&1); then
 			gate_err=""
 			logger -p daemon.warn -t xray-mosdns "Xray is not listening on :$TPORT: transparent proxy taken out, LAN DNS with dnsmasq, traffic goes out directly until it is back"

@@ -54,7 +54,8 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
   发生变化的进程；生成失败、或启动前检查（二进制、geo 数据缺失等）失败时保留上一份可用配置继续运行，
   概览页显示原因。生成的配置旁边有一份 `runtime.env`，记下这份配置用的端口、防火墙标记、二进制路径等；
   防火墙脚本、看门狗、节点组看护、状态页、流量和连通性检查都按它工作，所以没有生效的 UCI 修改不会让它们和
-  运行中的配置对不上。新的一套文件要么全部换上，要么整套留在旧的
+  运行中的配置对不上。新的一套文件要么全部换上，要么整套留在旧的；旧的一套也无法完整放回时服务停止并说明原因。
+  启动、重载和停止互相排队，不会同时进行
 - 国外 DNS 通过 Xray 的内部 SOCKS inbound 经代理解析；从这个 inbound 进来的流量固定走总节点，不受规则表和默认出口影响。
   可以配置多个国外上游（IP 或 tcp/tls/https 地址）
 - AAAA 过滤同时作用于 HTTPS 记录（类型 65）查询，它同样能带出 IPv6 地址
@@ -245,7 +246,7 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-<版本>-r1.apk
 | group | failback | 仅 ordered：0（默认）切换后只有当前成员不可用才再切；1 前面的成员恢复后立即切回 |
 | global | probe_url / probe_interval | 节点组的探测地址与间隔，默认 gstatic generate_204 / 1m |
 | global | probe_url_backup | 备用探测地址（可选）：所有组的全部成员同时探测失败时自动换用 |
-| adblock | dir / auto_update / update_hour | 拦截列表的存放目录（可以和别的程序共用：更新和卸载只删除本插件写的文件）、是否每天自动更新、更新钟点 |
+| adblock | dir / auto_update / update_hour | 拦截列表的存放目录、是否每天自动更新、更新钟点。/etc/xray-mosdns 以外的目录可以和别的程序共用：列表放在其中的 xray-mosdns 子目录里（≤0.9.8 放在目录顶层的会在启动时搬进去），卸载时只删除这个子目录 |
 | adlist | enabled / name / url | 一条订阅：AdGuard 规则、hosts 或纯域名格式的列表地址 |
 | adlist | catalog_id | 来自 AdGuard 列表库的订阅记录的目录编号；有它时 name 和 url 跟随目录 |
 | device | mac / network / outbound | 按设备分流：MAC 地址列表；tcp,udp / udp / tcp；main / direct / 节点 / 节点组 |

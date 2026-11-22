@@ -182,10 +182,14 @@ echo "script fw-gate: done"
 SW="$REPO/root/usr/share/xray-mosdns/switch.sh"
 X="$OUT/sw"
 mkdir -p "$X/bin"
-# stand-in for mv: refuses a move with FAKE_MV_FAIL in a path
+# stand-in for mv: refuses a move with one of the words of FAKE_MV_FAIL in a path
 cat > "$X/bin/mv" <<'EOF'
 #!/bin/sh
-for a in "$@"; do case "$a" in *"$FAKE_MV_FAIL"*) echo "mv: stand-in refuses $a" >&2; exit 1 ;; esac; done
+for a in "$@"; do
+	for p in $FAKE_MV_FAIL; do
+		case "$a" in *"$p"*) echo "mv: stand-in refuses $a" >&2; exit 1 ;; esac
+	done
+done
 exec busybox mv "$@"
 EOF
 chmod +x "$X/bin/mv"
@@ -205,6 +209,10 @@ sw_state() { # $1 name, $2 exit status
 sw_seed; sh "$SW" "$X/new" "$X/out" 2> "$OUT/switch-ok.err"; sw_state ok $?
 # the second file cannot be moved: the first goes back
 sw_seed; PATH="$X/bin:$PATH" FAKE_MV_FAIL=b.yaml sh "$SW" "$X/new" "$X/out" 2> "$OUT/switch-fail.err"; sw_state fail $?
+# ... and the old first file cannot be put back either: neither set is whole
+sw_seed; PATH="$X/bin:$PATH" FAKE_MV_FAIL="b.yaml .prev/a.json" sh "$SW" "$X/new" "$X/out" 2> "$OUT/switch-broken.err"
+sw_state broken $?
+echo "prev-files $(ls -A "$X/out/.prev" 2>/dev/null | tr '\n' ' ')" >> "$OUT/switch-broken.txt"
 echo "script switch: done"
 
 # ---------------------------------------------------------------- groups.uc, status.sh
@@ -301,27 +309,48 @@ upd() { env UPD_TEST_DIR="$ROOT" TMPDIR="$U/tmp" sh "$UPD" "$@"; }
 echo "script update: done"
 
 # ---------------------------------------------------------------- adlist.uc
-AD="$OUT/adlists"
+# A directory set in the options, shared with another program: our files
+# go into its xray-mosdns/ subdirectory. It starts the way 0.9.8 left it,
+# our lists at the top (one of them no longer subscribed).
+AD="$OUT/adlists"; ADS="$AD/xray-mosdns"
 mkdir -p "$AD"
-printf '||ads.test^\n||more-ads.test^\n@@||fine.test^\n' > "$F/list1.txt"
-# a directory shared with another program, and a list this one subscribed to before
+list1() { # $1 = one more rule, so that each update changes the merged list
+	printf '||ads.test^\n||more-ads.test^\n%b@@||fine.test^\n' "${1:+||$1^\n}" > "$F/list1.txt"
+}
+list1
 echo theirs > "$AD/mine.block"; echo theirs > "$AD/mine.allow"
+echo old > "$AD/l1.block"; echo old > "$AD/l1.allow"; echo old > "$AD/block.txt"; echo old > "$AD/allow.txt"
 echo old > "$AD/gone1.block"; echo old > "$AD/gone1.allow"
-printf '{"lists":{"gone1":{"name":"gone1","rules":1}},"total":1}' > "$AD/state.json"
+printf '{"lists":{"l1":{"name":"l1","rules":1},"gone1":{"name":"gone1","rules":1}},"total":2}' > "$AD/state.json"
 printf "config adblock\n\toption dir '%s'\nconfig adlist 'l1'\n\toption url 'https://lists.test/list1.txt'\n" "$AD" > "$CONF"
 adl() { ucode "$REPO/root/usr/libexec/xray-mosdns/adlist.uc" "$@" 2>&1; }
+same() { cmp -s "$1" "$2" && echo yes || echo no; }
 {
 	echo "update1 $(adl update)"
-	echo "files1 $(ls -A "$AD" | tr '\n' ' ')"
-	cp "$AD/block.txt" "$OUT/block.before"
-	# the merged list cannot be written: the one in use stays
-	mkdir "$AD/.block.tmp"
+	echo "top1 $(ls -A "$AD" | tr '\n' ' ')"
+	echo "sub1 $(ls -A "$ADS" | tr '\n' ' ')"
+	# another program's lists and state under the same names at the top
+	echo theirs-block > "$AD/block.txt"; echo theirs-allow > "$AD/allow.txt"; echo '{"theirs":1}' > "$AD/state.json"
+	cp "$AD/block.txt" "$OUT/theirs.block"
+	list1 new1.test
 	echo "update2 $(adl update)"
-	echo "kept2 $(cmp -s "$OUT/block.before" "$AD/block.txt" && echo yes || echo no)"
-	echo "status2 $(adl status)"
-	rmdir "$AD/.block.tmp"
+	echo "theirs2 $(same "$OUT/theirs.block" "$AD/block.txt") $(cat "$AD/allow.txt") $(cat "$AD/state.json")"
+	echo "new2 $(grep -c new1.test "$ADS/block.txt")"
+	cp "$ADS/block.txt" "$OUT/block.before"
+	# the merged block list cannot be written: both lists in use stay
+	mkdir "$ADS/.block.tmp"; list1 new2.test
 	echo "update3 $(adl update)"
+	echo "kept3 $(same "$OUT/block.before" "$ADS/block.txt")"
 	echo "status3 $(adl status)"
+	rmdir "$ADS/.block.tmp"
+	# the exception list cannot be replaced: the block list is not replaced either
+	rm -f "$ADS/allow.txt"; mkdir "$ADS/allow.txt"; list1 new3.test
+	echo "update4 $(adl update)"
+	echo "kept4 $(same "$OUT/block.before" "$ADS/block.txt") $(ls -A "$ADS" | grep -c '\.prev$')"
+	rmdir "$ADS/allow.txt"
+	echo "update5 $(adl update)"
+	echo "new5 $(grep -c new3.test "$ADS/block.txt") $([ -f "$ADS/allow.txt" ] && echo allow)"
+	echo "status5 $(adl status)"
 } > "$OUT/adlist.txt"
 echo "script adlist: done"
 
@@ -332,27 +361,44 @@ S="$OUT/shared"
 mkdir -p /etc/crontabs /etc/xray-mosdns/adlists /root/pw-backup/xray-mosdns-update "$S"
 printf '0 4 * * * /usr/libexec/xray-mosdns/update.sh geo-auto # xray-mosdns-geo-auto\n17 5 * * * x # xray-mosdns-adlist\n0 1 * * * keep-me\n' > /etc/crontabs/root
 touch /etc/xray-mosdns/adlists/block.txt /root/pw-backup/xray-mosdns-update/xray.1
-# the blocklist options in an anonymous section, one named and one
-# anonymous subscription; the directory also holds another program's lists
-printf "config adblock\n\toption dir '%s'\nconfig adlist 'l1'\n\toption url 'https://a.test/1'\nconfig adlist\n\toption url 'https://a.test/2'\n" "$S" > "$CONF"
+# The blocklist options in an anonymous section, one named and one
+# anonymous subscription. The directory is shared with another program; it
+# has our subdirectory (with the files of a list unsubscribed since the
+# last update) and, at the top, what 0.9.8 left there.
+adconf() { # $1 = directory
+	printf "config adblock\n\toption dir '%s'\nconfig adlist 'l1'\n\toption url 'https://a.test/1'\nconfig adlist\n\toption url 'https://a.test/2'\n" "$1" > "$CONF"
+}
+adconf "$S"
 anon=$(uci -q -X show xray-mosdns | sed -n 's/^xray-mosdns\.\(cfg[0-9a-f]*\)=adlist$/\1/p')
-for f in block.txt allow.txt state.json .block.tmp l1.block l1.allow .l1.raw "$anon.block" "$anon.allow" mine.txt mine.block mine.allow; do
+mkdir -p "$S/xray-mosdns"
+for f in block.txt allow.txt state.json l1.block gone2.block .gone2.raw; do touch "$S/xray-mosdns/$f"; done
+for f in block.txt allow.txt .block.tmp l1.block l1.allow .l1.raw "$anon.block" "$anon.allow" mine.txt mine.block mine.allow; do
 	touch "$S/$f"
 done
+printf '{"lists":{"l1":{"name":"l1"}}}' > "$S/state.json"
+# another shared directory: there the generic names at the top are the other program's
+S2="$OUT/shared2"
+mkdir -p "$S2/xray-mosdns"
+touch "$S2/xray-mosdns/block.txt" "$S2/block.txt" "$S2/allow.txt" "$S2/l1.block"
+echo '{"theirs":1}' > "$S2/state.json"
 mkdir -p "$FAKE_NFT_STATE"
-pr_state() {
+pr_state() { # $1 = shared directory
 	echo "cron-ours $(grep -c '# xray-mosdns-' /etc/crontabs/root) cron-other $(grep -c keep-me /etc/crontabs/root)"
 	echo "etc-dir $([ -d /etc/xray-mosdns ] && echo present || echo gone) backups $([ -d /root/pw-backup/xray-mosdns-update ] && echo present || echo gone) table $([ -d "$FAKE_NFT_STATE" ] && echo present || echo gone)"
-	echo "shared $(ls -A "$S" | sed "s/^$anon\./ANON./" | sort | tr '\n' ' ')"
+	echo "shared $(ls -A "$1" | sed "s/^$anon\./ANON./" | sort | tr '\n' ' ')"
+	[ -d "$1/xray-mosdns" ] && echo "sub $(ls -A "$1/xray-mosdns" | sort | tr '\n' ' ')"
 }
 {
 	# an upgrade: the package's scripts are still there
 	mkdir -p /usr/libexec/xray-mosdns; touch /usr/libexec/xray-mosdns/update.sh
 	sh "$OUT/postrm" >/dev/null 2>&1
-	echo "[upgrade]"; pr_state
+	echo "[upgrade]"; pr_state "$S"
 	rm -f /usr/libexec/xray-mosdns/update.sh; rmdir /usr/libexec/xray-mosdns
 	sh "$OUT/postrm" >/dev/null 2>&1
-	echo "[removal]"; pr_state
+	echo "[removal]"; pr_state "$S"
+	adconf "$S2"
+	sh "$OUT/postrm" >/dev/null 2>&1
+	echo "[removal-theirs]"; pr_state "$S2"
 } > "$OUT/postrm.txt"
 sed -i '/keep-me/d' /etc/crontabs/root
 echo "script postrm: done"

@@ -267,7 +267,7 @@ return baseclass.extend({
 		o.depends('auto_update', '1');
 
 		o = ss.option(form.Value, 'dir', _('存放目录'),
-			_('转换后的列表保存在这里。大的列表有十几 MB，闪存空间紧张时可以改到 U 盘之类的位置；放在 /tmp 下重启后需要重新下载。'));
+			_('转换后的列表保存在这里。大的列表有十几 MB，闪存空间紧张时可以改到 U 盘之类的位置；放在 /tmp 下重启后需要重新下载。/etc/xray-mosdns 以外的目录可以和别的程序共用：列表放在其中的 xray-mosdns 子目录里，卸载时只删除这个子目录。'));
 		o.default = '/etc/xray-mosdns/adlists';
 
 		renderStatus();

@@ -282,6 +282,10 @@ export function load(confdir) {
 	let ad_dir = rtrim(str(ab.dir, '/etc/xray-mosdns/adlists'), '/');
 	if (!match(ad_dir, /^\/[A-Za-z0-9_.\/-]+$/) || index(ad_dir, '..') >= 0)
 		ad_dir = '/etc/xray-mosdns/adlists';
+	// a directory of its own under /etc/xray-mosdns; one set elsewhere may be
+	// shared, and the lists are in their own subdirectory there (adlist.uc)
+	if (ad_dir != '/etc/xray-mosdns' && index(ad_dir, '/etc/xray-mosdns/') != 0)
+		ad_dir += '/xray-mosdns';
 	cfg.adblock = {
 		dir: ad_dir,
 		lists: length(filter(sections(all, 'adlist'), s => bool(s.enabled, true) && str(s.url, null) != null)),
