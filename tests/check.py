@@ -484,7 +484,7 @@ else:
     check(adj("migrate1").get("ok") is True and ad.get("top1m") == "mine.allow mine.block xray-mosdns "
           and ad.get("sub1m") == "allow.txt block.txt gone1.allow gone1.block l1.allow l1.block state.json "
           and adj("migrate1b").get("ok") is True,
-          f"adlist migrate: what 0.9.8 kept at the top goes (moved, or dropped where the subdirectory has newer), "
+          f"adlist migrate: what 0.9.7 kept at the top goes (moved, or dropped where the subdirectory has newer), "
           f"another program's files stay, a second run does nothing {ad.get('top1m')} | {ad.get('sub1m')}")
     check(ad.get("sub2u") == "allow.txt block.txt l1.allow l1.block state.json ",
           f"adlist update: a list no longer subscribed goes from the subdirectory {ad.get('sub2u')}")
@@ -601,7 +601,7 @@ else:
     check("cron-ours 0 cron-other 1" in removal and "etc-dir gone backups gone table gone" in removal
           and removal.strip().endswith("shared mine.allow mine.block mine.txt"),
           f"postrm: removal takes our cron lines, data, backups, our subdirectory whole (a list unsubscribed since the "
-          f"last update too) and what 0.9.8 left at the top (named or anonymous subscriptions, and a list only its state names); another program's files stay {removal}")
+          f"last update too) and what 0.9.7 left at the top (named or anonymous subscriptions, and a list only its state names); another program's files stay {removal}")
     check(theirs.strip().endswith("shared allow.txt block.txt l1.block state.json"),
           f"postrm: block.txt / allow.txt / state.json at the top that are not ours stay {theirs}")
 

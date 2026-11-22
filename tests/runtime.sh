@@ -316,7 +316,7 @@ echo "script update: done"
 
 # ---------------------------------------------------------------- adlist.uc
 # A directory set in the options, shared with another program: our files
-# go into its xray-mosdns/ subdirectory. It starts the way 0.9.8 left it,
+# go into its xray-mosdns/ subdirectory. It starts the way 0.9.7 left it,
 # our lists at the top (one of them no longer subscribed).
 AD="$OUT/adlists"; ADS="$AD/xray-mosdns"
 mkdir -p "$AD"
@@ -520,7 +520,7 @@ touch /etc/xray-mosdns/adlists/block.txt /root/pw-backup/xray-mosdns-update/xray
 # The blocklist options in an anonymous section, one named and one
 # anonymous subscription. The directory is shared with another program; it
 # has our subdirectory (with the files of a list unsubscribed since the
-# last update) and, at the top, what 0.9.8 left there.
+# last update) and, at the top, what 0.9.7 left there.
 adconf() { # $1 = directory
 	printf "config adblock\n\toption dir '%s'\nconfig adlist 'l1'\n\toption url 'https://a.test/1'\nconfig adlist\n\toption url 'https://a.test/2'\n" "$1" > "$CONF"
 }
@@ -528,7 +528,7 @@ adconf "$S"
 anon=$(uci -q -X show xray-mosdns | sed -n 's/^xray-mosdns\.\(cfg[0-9a-f]*\)=adlist$/\1/p')
 mkdir -p "$S/xray-mosdns"
 for f in block.txt allow.txt state.json l1.block gone2.block .gone2.raw; do touch "$S/xray-mosdns/$f"; done
-# gone3: a list 0.9.8 wrote, unsubscribed since; only its state names it
+# gone3: a list 0.9.7 wrote, unsubscribed since; only its state names it
 for f in block.txt allow.txt .block.tmp l1.block l1.allow .l1.raw "$anon.block" "$anon.allow" gone3.block .gone3.raw \
 	mine.txt mine.block mine.allow; do
 	touch "$S/$f"

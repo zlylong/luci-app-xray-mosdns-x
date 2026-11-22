@@ -5,7 +5,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-xray-mosdns-x
-PKG_VERSION:=0.9.7
+PKG_VERSION:=1.0.0
 PKG_RELEASE:=1
 PKG_LICENSE:=MIT
 PKG_MAINTAINER:=zly
@@ -29,7 +29,7 @@ LUCI_PKGARCH:=all
 # there and everything stays. A blocklist directory outside
 # /etc/xray-mosdns may be shared: adlist.uc keeps everything in its own
 # subdirectory there, xray-mosdns/, and that goes whole. What a version up
-# to 0.9.8 left at the top of it goes by name (the merged lists, the state,
+# to 0.9.7 left at the top of it goes by name (the merged lists, the state,
 # per subscription in UCI or list in that state <id>.block / .allow and
 # temporaries), and only when the state file there is ours.
 define Package/$(PKG_NAME)/postrm
