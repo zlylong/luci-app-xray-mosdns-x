@@ -241,7 +241,12 @@ return baseclass.extend({
 			_('http 或 https 地址。支持 AdGuard 规则（||example.com^）、hosts 文件和纯域名列表三种写法。'));
 		o.rmempty = false;
 		o.validate = function(sid, v) {
-			return /^https?:\/\/[^\s'"\\]+$/.test(v || '') ? true : _('需要是 http:// 或 https:// 开头的地址');
+			/* The package build minifies this file (jsmin): a regex has to follow
+			   ( = , and the like, not a keyword such as return, or it is read as a
+			   division; and with no quote or backslash written as such in it, a
+			   misread regex cannot start a string either. tests/jslint.py checks. */
+			var ok = (/^https?:\/\/[^\s\x27\x22\x5c]+$/).test(v || '');
+			return ok ? true : _('需要是 http:// 或 https:// 开头的地址');
 		};
 		o.textvalue = function(sid) {
 			var u = uci.get(xm.CONF, sid, 'url') || '';
