@@ -107,7 +107,7 @@ check(plugin(m, "query_is_node")["args"]["domain"] == ["full:hk1.example.net"], 
 check(plugin(m, "rule_1")["args"]["domain"] == ["provider:geosite:netflix", "full:api.example.com", "keyword:tracker"], "domain syntax conversion")
 check(plugin(m, "local_seq")["args"]["exec"] == ["cache", "forward_local"], "cache must sit inside the sequence so nftset runs on hits")
 check(plugin(m, "forward_remote")["args"]["upstream"] == [{"addr": "tcp://1.1.1.1:53", "socks5": "127.0.0.1:1070", "idle_timeout": 10, "enable_pipeline": True}], "default foreign upstream")
-check(m["log"].get("production") is False and "_query_summary" not in plugin(m, "main_sequence")["args"]["exec"] and plugin(m, "min_ttl") is None and plugin(m, "block_zero") is None, "defaults: no query log, no TTL floor, NXDOMAIN blocking")
+check(m["log"].get("production") is False and "_query_summary" not in plugin(m, "main_sequence")["args"]["exec"] and plugin(m, "query_is_ipv4_only") is None and plugin(m, "min_ttl") is None and plugin(m, "block_zero") is None, "defaults: no query log, no TTL floor, NXDOMAIN blocking")
 check("disabled.example" not in json.dumps(m), "disabled rule leaked into mosdns")
 check(m["servers"][0]["listeners"][0]["addr"] == ":5335", "redirect mode listens on the wildcard address")
 pre = chain(n, "prerouting")
@@ -240,6 +240,12 @@ check(plugin(m, "min_ttl")["args"] == {"minimal_ttl": 120} and plugin(m, "local_
 ups = plugin(m, "forward_remote")["args"]["upstream"]
 check([u["addr"] for u in ups] == ["tcp://8.8.8.8:53", "https://1.1.1.1/dns-query", "tls://dns.google"] and all(u["socks5"] == "127.0.0.1:1070" for u in ups), "several foreign upstreams, all through the proxy, junk dropped")
 check("bootstrap" in ups[2] and "bootstrap" not in ups[1] and ups[0].get("enable_pipeline") is True and "enable_pipeline" not in ups[1], "host-name upstream gets a bootstrap resolver; pipelining only for plain TCP")
+# IPv4-only names: AAAA/HTTPS answered empty right after the static entries, before
+# any other branch; bare names mean the name and its subdomains, junk dropped
+check(plugin(m, "query_is_ipv4_only") == {"tag": "query_is_ipv4_only", "type": "query_matcher",
+                                          "args": {"domain": ["domain:hs.example.com", "full:exact.example.org", "keyword:home"]}}
+      and gmain[gmain.index("hosts") + 1] == {"if": "query_is_ipv4_only && query_is_ipv6", "exec": ["_new_empty_response", "_return"]},
+      f"dns.ipv4_only: a matcher and an empty answer for AAAA/HTTPS, behind hosts: {gmain[:5]}")
 # the preset summary node first: it wraps everything behind it, so every query is logged
 check(m["log"]["production"] is True and gmain[0] == "_query_summary" and gmain.count("_query_summary") == 1, "query log: JSON log lines, the preset summary node first in the main sequence")
 # mosdns-x v26.05.25 panics while loading any plugin of type query_summary
