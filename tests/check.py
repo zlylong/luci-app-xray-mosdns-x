@@ -216,6 +216,8 @@ check(chain(n, "dns_redirect") == ['iifname { "br-lan" } meta l4proto { tcp, udp
 oc = chain(n, "output")
 check(oc[0] == 'meta mark 0xff return comment "sent by Xray or mosdns"' and oc[1] == "meta l4proto != tcp return", "router: own packets of Xray/mosdns are skipped first, then only TCP is considered")
 check("meta l4proto { tcp, udp } th dport 53 return" in oc and oc.index("ct mark & 0x1 == 0x1 goto out_mark") < oc.index("ct state != new return") < oc.index("ip daddr @bypass4 return"), "router: DNS exempt, then per-flow shortcut, then classification")
+check(oc.index('ct direction reply return comment "Xray answering a LAN client"') < oc.index("ct mark & 0x1 == 0x1 goto out_mark"),
+      "router: replies (Xray answering LAN clients, whose flows prerouting marked) keep their route")
 check(oc[-1] == "goto out_mark" and "ip daddr @proxy4_dns goto out_mark" in oc, "router: same classification as the LAN, with a marking verdict")
 check(oc.index(f"ip daddr @direct4_dns ip daddr @proxy4_dns goto out_mark {SHARED}") < oc.index("ip daddr @direct4_dns return"),
       "router: an address in both DNS sets is marked for Xray too")
