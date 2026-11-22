@@ -44,20 +44,39 @@ fi
 nft delete table inet xray-mosdns 2>/dev/null
 # A blocklist update started in the background (not by procd, so stop has
 # left it) holds the lock and would go on writing what goes below: it,
-# and what it started with the lock open, goes first. The lock file can
-# then go too.
+# and what it started (curl, cat: they inherit the open lock), go first,
+# and are gone before anything is removed: asked to stop, then, after up
+# to 5 seconds, made to. The lock file can then go too.
 lock=/var/run/xray-mosdns-adlist.lock
 # /var is a link to /tmp: a descriptor shows where the file really is
 real=$$(readlink -f "$$lock" 2>/dev/null)
-for p in /proc/[0-9]*; do
-	for fd in "$$p"/fd/*; do
-		l=$$(readlink "$$fd" 2>/dev/null)
-		if [ -n "$$l" ] && { [ "$$l" = "$$lock" ] || [ "$$l" = "$$real" ]; }; then
-			kill "$${p#/proc/}" 2>/dev/null
-			break
-		fi
+holders() {
+	for p in /proc/[0-9]*; do
+		for fd in "$$p"/fd/*; do
+			l=$$(readlink "$$fd" 2>/dev/null)
+			if [ -n "$$l" ] && { [ "$$l" = "$$lock" ] || [ "$$l" = "$$real" ]; }; then
+				echo "$${p#/proc/}"
+				break
+			fi
+		done
 	done
-done
+}
+pids=$$(holders)
+if [ -n "$$pids" ]; then
+	kill $$pids 2>/dev/null
+	i=0
+	while [ $$i -lt 5 ] && [ -n "$$(holders)" ]; do
+		sleep 1
+		i=$$((i + 1))
+	done
+	pids=$$(holders)
+	[ -n "$$pids" ] && kill -9 $$pids 2>/dev/null
+	i=0
+	while [ $$i -lt 3 ] && [ -n "$$(holders)" ]; do
+		sleep 1
+		i=$$((i + 1))
+	done
+fi
 dir=$$(uci -q get 'xray-mosdns.@adblock[0].dir')
 case "$$dir" in
 	# ours whole, or one adlist.uc did not use either (it falls back then)
