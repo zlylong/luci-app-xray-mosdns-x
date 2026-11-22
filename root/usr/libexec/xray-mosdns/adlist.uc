@@ -115,12 +115,6 @@ function migrate(cfg) {
 	return failed;
 }
 
-function cmd_migrate() {
-	const failed = migrate(settings());
-	out({ ok: !length(failed), failed });
-	return length(failed) ? 1 : 0;
-}
-
 function lists() {
 	let res = [];
 	uci.foreach(CONF, 'adlist', (s) => {
@@ -365,12 +359,28 @@ function cmd_catalog_sync() {
 
 // ---------------------------------------------------------------- update
 
+// A copy of a list in use, to put back if need be: a hard link where the
+// file system has them (no space taken), else a real copy (vfat and exfat,
+// as on most USB sticks, have no hard links). Paths are checked ones.
+function keep_copy(from, to) {
+	if (system(`ln -f '${from}' '${to}' 2>/dev/null`) == 0 && fs.lstat(to)?.inode == fs.lstat(from)?.inode)
+		return true;
+	if (fs.lstat(to)?.type == 'file')
+		fs.unlink(to);
+	if (system(`cp '${from}' '${to}' 2>/dev/null`) == 0 && fs.lstat(to)?.type == 'file'
+	    && fs.lstat(to).size == fs.lstat(from)?.size)
+		return true;
+	if (fs.lstat(to)?.type == 'file')
+		fs.unlink(to);
+	return false;
+}
+
 // block.txt / allow.txt are what mosdns loads; each is replaced in one
 // rename so a reload never sees half a file. Both are written in full
 // first: when either cannot be (a full flash cuts it short), both stay as
 // they were and the reason is returned. The same holds for the two
-// renames: the lists in use are kept as hard links until both new ones are
-// in place, and one that cannot be replaced puts the other back, so mosdns
+// renames: a copy of each list in use is kept until both new ones are in
+// place, and one that cannot be replaced puts the other back, so mosdns
 // never has a new block list with an old exception list or the reverse.
 function merge(cfg, all) {
 	const kinds = [ 'block', 'allow' ];
@@ -406,9 +416,8 @@ function merge(cfg, all) {
 			err = `cannot keep ${live(kind)} while replacing it: ${prev(kind)} is in the way`;
 		else if (p != null && !fs.unlink(prev(kind)))
 			err = `cannot keep ${live(kind)} while replacing it: ${fs.error()}`;
-		else if (fs.access(live(kind)) && (system([ 'ln', '-f', live(kind), prev(kind) ]) != 0
-		         || fs.lstat(prev(kind))?.inode != fs.lstat(live(kind))?.inode))
-			err = `cannot keep ${live(kind)} while replacing it`;
+		else if (fs.access(live(kind)) && !keep_copy(live(kind), prev(kind)))
+			err = `cannot keep a copy of ${live(kind)} while replacing it (is the disk full?)`;
 	}
 	let replaced = [], stuck = {};
 	for (let kind in kinds) {
@@ -523,11 +532,41 @@ function cmd_start() {
 	return 0;
 }
 
+// Exit status: 0 nothing (left) to move, 1 some files could not be moved
+// (their names on stderr), 2 not now: an update writes the same directory.
+// Either way the state stays at the top and the next start tries again.
+function cmd_migrate() {
+	const cfg = settings();
+	if (cfg.own || type(load(`${cfg.base}/state.json`, null)?.lists) != 'object') {
+		out({ ok: true, failed: [] });
+		return 0;
+	}
+	if (running()) {
+		system([ 'logger', '-t', 'xray-mosdns',
+			`blocklists: an update is running; moving the lists from ${cfg.base} into ${cfg.dir} is left to the next start` ]);
+		out({ ok: false, postponed: true });
+		return 2;
+	}
+	// and no update starts while the files move
+	fs.writefile(LOCK, fs.readlink('/proc/self') ?? '0');
+	const failed = migrate(cfg);
+	fs.unlink(LOCK);
+	if (length(failed))
+		warn(join(' ', failed), '\n');
+	out({ ok: !length(failed), failed });
+	return length(failed) ? 1 : 0;
+}
+
+// An update when a subscribed list has no data yet, or the merged lists
+// mosdns reads are missing (a move that did not finish, say).
 function cmd_ensure() {
 	const cfg = settings();
-	for (let l in lists())
+	const all = lists();
+	for (let l in all)
 		if (!fs.access(`${cfg.dir}/${l.id}.block`))
 			return cmd_start();
+	if (length(all) && (fs.lstat(`${cfg.dir}/block.txt`)?.type != 'file' || fs.lstat(`${cfg.dir}/allow.txt`)?.type != 'file'))
+		return cmd_start();
 	return 0;
 }
 
