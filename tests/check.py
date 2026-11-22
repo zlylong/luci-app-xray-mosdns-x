@@ -535,6 +535,14 @@ else:
           f"adlist ensure: a merged list cut short (not the lists' size) is made again {ad.get('ensure5-made')}")
     check("cannot make the merged lists" in (ad.get("ensure6") or "") and "cannot rewrite" in (ad.get("ensure6") or ""),
           f"adlist ensure: a merge that fails is said on stderr, not taken for done {ad.get('ensure6')!r}")
+    check(adj("ensure3b") == {"ok": True, "running": True} and (ad.get("ensure3b-kept") or "").startswith("yes ")
+          and not (ad.get("ensure3b-kept") or "").endswith(" 0"),
+          f"adlist ensure: a list's exceptions missing: the exceptions in use stay, the list is fetched "
+          f"{ad.get('ensure3b')} {ad.get('ensure3b-kept')}")
+    check(ad.get("catalog-tmp-left") == "0", f"adlist: a failed catalogue download leaves no file in /tmp {ad.get('catalog-tmp-left')}")
+    cn = adj("catalog-newer")
+    check(cn.get("ok") is True and cn.get("filters") == 2,
+          f"adlist catalog-sync: a catalogue an update fetched while it waited is newer and is the one used {ad.get('catalog-newer')}")
     check(ad.get("ensure8") == "" and ad.get("ensure8-made") == "yes",
           f"adlist ensure: a short holder of the lock (a catalogue sync, a move) is waited for, then the list made "
           f"{ad.get('ensure8')!r} {ad.get('ensure8-made')}")

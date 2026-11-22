@@ -331,8 +331,11 @@ function cmd_catalog() {
 function refresh_catalog() {
 	const me = fs.readlink('/proc/self') ?? `${time()}`;
 	const tmp = `/tmp/xray-mosdns-adlist-catalog.${me}.json`;
-	if (!download(REGISTRY, tmp))
+	if (!download(REGISTRY, tmp)) {
+		// curl may have written part of it
+		fs.unlink(tmp);
 		return null;
+	}
 	const d = load(tmp, null);
 	fs.unlink(tmp);
 	if (type(d?.filters) != 'array' || type(d?.groups) != 'array' || !length(d.filters))
@@ -406,7 +409,7 @@ function sync_catalog(cat) {
 // first, without the lock, so that what waits for it (the start) waits
 // for a moment at most.
 function cmd_catalog_sync() {
-	const cat = refresh_catalog();
+	let cat = refresh_catalog();
 	if (!cat) {
 		out({ ok: false, error: 'could not download the catalogue' });
 		return 1;
@@ -415,6 +418,13 @@ function cmd_catalog_sync() {
 		out({ ok: false, busy: lock_busy, error: lock_busy ? 'a blocklist update is running' : lock_error });
 		return 1;
 	}
+	// While this one downloaded, an update may have fetched the catalogue
+	// again and brought the subscriptions in line with it: that one is the
+	// newer, and the subscriptions are read again as they are now.
+	const cached = load(CATALOG, null);
+	if (type(cached?.filters) == 'array' && (cached.updated ?? 0) > (cat.updated ?? 0))
+		cat = cached;
+	uci.unload(CONF);
 	const res = sync_catalog(cat);
 	const cfg = settings();
 	let state = load(state_path(cfg), null);
@@ -649,7 +659,9 @@ function cmd_ensure() {
 	// finish) the lists there make less than the list in use has: that one
 	// stays until the update below has the data. Missing, it is made from
 	// what there is.
-	const complete = !length(filter(all, l => !fs.access(`${cfg.dir}/${l.id}.block`)));
+	// a list's data is both its files (an update always writes the two)
+	const has_data = (l) => fs.access(`${cfg.dir}/${l.id}.block`) && fs.access(`${cfg.dir}/${l.id}.allow`);
+	const complete = !length(filter(all, l => !has_data(l)));
 	const stale = filter([ 'block', 'allow' ], k => fs.lstat(live(k))?.type != 'file'
 		|| (complete && fs.lstat(live(k)).size != size(k)));
 	if (length(stale)) {
@@ -678,7 +690,7 @@ function cmd_ensure() {
 				}
 	}
 	for (let l in all)
-		if (!fs.access(`${cfg.dir}/${l.id}.block`))
+		if (!has_data(l))
 			return cmd_start();
 	return 0;
 }
