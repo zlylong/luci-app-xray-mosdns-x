@@ -311,7 +311,7 @@ case "\$url" in
 	*.dat.sha256sum) f=\${url##*/}; f=\${f%.sha256sum}; s=\$(sha256sum "$F/\$f" | cut -d' ' -f1); [ "\${BAD:-}" = "\$f" ] && s=\$zero; printf '%s  %s\n' "\$s" "\$f" ;;
 	*/geosite.dat|*/geoip.dat) emit "$F/\${url##*/}" ;;
 	*/lists.test/list1.txt) emit "$F/list1.txt" ;;
-	*/lists.test/swap-a.txt|*/lists.test/swap-b.txt) emit "$F/\${url##*/}" ;;
+	*/lists.test/swap-a.txt|*/lists.test/swap-b.txt) [ -n "\${FAIL_SWAP:-}" ] && exit 22; emit "$F/\${url##*/}" ;;
 	*/HostlistsRegistry/assets/filters.json)
 		[ -n "\${REGISTRY_OK:-}" ] || { [ -n "\$out" ] && echo '{"filt' > "\$out"; exit 22; }
 		[ -n "\${SLOW_REGISTRY:-}" ] && sleep "\$SLOW_REGISTRY"
@@ -517,6 +517,27 @@ merged() { echo "a=$(grep -c a-only "$AD4S/block.txt") b=$(grep -c b-only "$AD4S
 	echo "swap-legacy-status $(adl status)"
 	echo "swap-legacy-ensure $(adl ensure)"
 	echo "swap-legacy-kept $(same "$OUT/swap.after3" "$AD4S/block.txt") $(merged)"
+	# An update that fails throws nothing away (#84). State without addresses
+	# (as right after an upgrade) and neither list can be downloaded: both
+	# keep their data, it stays merged as it was, the state says what failed.
+	md5sum "$AD4S"/*.block | cut -d' ' -f1 > "$OUT/swap.files5"
+	echo "swap-fail-update $(FAIL_SWAP=1 adl update)"
+	echo "swap-fail-kept $(same "$OUT/swap.after3" "$AD4S/block.txt") $(md5sum "$AD4S"/*.block | cut -d' ' -f1 | cmp -s - "$OUT/swap.files5" && echo files-same || echo files-changed)"
+	echo "swap-fail-status $(adl status)"
+	echo "swap-update6 $(adl update)"
+	echo "swap-merged6 $(merged)"
+	# A list's files cannot be replaced (a directory where one goes): nothing
+	# replaced, an error for it rather than a success, the lists in use stay.
+	sa=$(uci -q -X show xray-mosdns | sed -n "s#^xray-mosdns\.\([^.=]*\)\.url='https://lists.test/swap-a.txt'\$#\1#p")
+	printf '||a-only.test^\n||a-new.test^\n' > "$F/swap-a.txt"
+	cp "$AD4S/block.txt" "$OUT/swap.before7"; cp "$AD4S/$sa.block" "$OUT/swap.a7"
+	rm -f "$AD4S/$sa.allow"; mkdir "$AD4S/$sa.allow"
+	echo "swap-rename-update $(adl update)"
+	echo "swap-rename-kept $(same "$OUT/swap.before7" "$AD4S/block.txt") $(same "$OUT/swap.a7" "$AD4S/$sa.block") $(ls -A "$AD4S" | grep -c '\.old$\|\.tmp$')"
+	echo "swap-rename-status $(adl status)"
+	rmdir "$AD4S/$sa.allow"
+	echo "swap-update8 $(adl update)"
+	echo "swap-merged8 $(grep -c a-new "$AD4S/block.txt")"
 } > "$OUT/adlist-swap.txt" 2>&1
 # One writer of the list directory at a time: an update holds the lock (here
 # the test does, with flock on fd 7). A move is left to the next start,

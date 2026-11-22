@@ -29,6 +29,10 @@
 // another address is not used: not merged, not counted as there, the list
 // is fetched again. State written before addresses were recorded counts as
 // another address (fetched again once).
+//
+// An update that fails for a list throws nothing away: what was there stays
+// and stays merged as it was, whatever address it came from, until a
+// download of the list's own address has been converted and put in place.
 'use strict';
 
 import * as fs from 'fs';
@@ -337,10 +341,63 @@ function state_path(cfg) {
 	return `${cfg.dir}/state.json`;
 }
 
+// a list's two files are there (as files: something else in the way is
+// not data that can be merged)
+function has_files(cfg, l) {
+	return fs.lstat(`${cfg.dir}/${l.id}.block`)?.type == 'file' && fs.lstat(`${cfg.dir}/${l.id}.allow`)?.type == 'file';
+}
+
 // a list's data is there, and is from its address (see the top)
 function has_data(cfg, state, l) {
-	return state?.lists?.[l.id]?.url == l.url
-		&& fs.access(`${cfg.dir}/${l.id}.block`) && fs.access(`${cfg.dir}/${l.id}.allow`);
+	return state?.lists?.[l.id]?.url == l.url && has_files(cfg, l);
+}
+
+// A list's two new files (written beside them) in place of its old ones:
+// both or neither. The old ones go aside first and come back when a new one
+// cannot be put in place. Returns null, or why not.
+function replace_data(cfg, l) {
+	const kinds = [ 'block', 'allow' ];
+	const cur = (k) => `${cfg.dir}/${l.id}.${k}`;
+	const tmp = (k) => `${cfg.dir}/.${l.id}.${k}.tmp`;
+	const old = (k) => `${cfg.dir}/.${l.id}.${k}.old`;
+	for (let k in kinds) {
+		const t = fs.lstat(cur(k))?.type;
+		if (t != null && t != 'file')
+			return `cannot replace ${cur(k)}: not a file`;
+		if (fs.lstat(old(k)) != null && !fs.unlink(old(k)))
+			return `cannot replace ${cur(k)}: ${old(k)} is in the way`;
+	}
+	let aside = [], placed = [], err = null;
+	for (let k in kinds) {
+		if (fs.lstat(cur(k)) == null)
+			continue;
+		if (!fs.rename(cur(k), old(k))) {
+			err = `cannot replace ${cur(k)}: ${fs.error()}`;
+			break;
+		}
+		push(aside, k);
+	}
+	for (let k in kinds) {
+		if (err)
+			break;
+		if (!fs.rename(tmp(k), cur(k)))
+			err = `cannot replace ${cur(k)}: ${fs.error()}`;
+		else
+			push(placed, k);
+	}
+	if (err) {
+		// back as it was
+		for (let k in placed)
+			if (!(k in aside))
+				fs.unlink(cur(k));
+		for (let k in aside)
+			if (!fs.rename(old(k), cur(k)))
+				err += `; ${cur(k)} could not be put back (it is in ${old(k)})`;
+		return err;
+	}
+	for (let k in aside)
+		fs.unlink(old(k));
+	return null;
 }
 
 // ---------------------------------------------------------------- catalogue
@@ -510,7 +567,7 @@ function merge(cfg, all) {
 	const tmp = (kind) => `${cfg.dir}/.${kind}.tmp`;
 	let err = null;
 	for (let kind in kinds) {
-		const files = map(filter(all, l => fs.access(`${cfg.dir}/${l.id}.${kind}`)), l => `${cfg.dir}/${l.id}.${kind}`);
+		const files = map(filter(all, l => fs.lstat(`${cfg.dir}/${l.id}.${kind}`)?.type == 'file'), l => `${cfg.dir}/${l.id}.${kind}`);
 		let want = 0;
 		for (let f in files)
 			want += fs.stat(f)?.size ?? 0;
@@ -586,33 +643,42 @@ function cmd_update() {
 	let lists_state = {};
 	let failed = 0;
 
+	// lists whose update failed: their data (from another address) stays
+	// merged as it was; `lost`: ones that had something there (merged into
+	// the lists in use) and have nothing that can be merged now
+	let kept = {}, lost = [];
 	for (let l in all) {
 		const raw = `${cfg.dir}/.${l.id}.raw`;
-		let entry = state.lists?.[l.id] ?? {};
-		if (entry.url != l.url) {
-			// what is there under this name is another list's: not kept as this one's
-			entry = {};
-			fs.unlink(`${cfg.dir}/${l.id}.block`);
-			fs.unlink(`${cfg.dir}/${l.id}.allow`);
-		}
+		const prev = state.lists?.[l.id] ?? {};
+		const had = fs.lstat(`${cfg.dir}/${l.id}.block`) != null || fs.lstat(`${cfg.dir}/${l.id}.allow`) != null;
+		// what is there under this name is this list's (see the top)
+		const own = (prev.url == l.url);
+		let entry = own ? prev : { name: l.name };
 		entry.name = l.name;
-		if (download(l.url, raw)) {
-			const st = convert_file(raw, `${cfg.dir}/.${l.id}.block.tmp`, `${cfg.dir}/.${l.id}.allow.tmp`);
-			if (st && (st.rules + st.allow) > 0) {
-				fs.rename(`${cfg.dir}/.${l.id}.block.tmp`, `${cfg.dir}/${l.id}.block`);
-				fs.rename(`${cfg.dir}/.${l.id}.allow.tmp`, `${cfg.dir}/${l.id}.allow`);
-				entry = { name: l.name, url: l.url, rules: st.rules, allow: st.allow, skipped: st.skipped, updated: time(), error: null };
-			}
-			else {
-				// an empty result is almost certainly an error page, keep the old data
-				entry.error = 'no usable rules in the downloaded file';
-				entry.skipped = st?.skipped ?? null;
-				failed++;
-			}
-		}
+		let err = null;
+		if (!download(l.url, raw))
+			err = 'download failed';
 		else {
-			entry.error = 'download failed';
+			const st = convert_file(raw, `${cfg.dir}/.${l.id}.block.tmp`, `${cfg.dir}/.${l.id}.allow.tmp`);
+			if (!st || (st.rules + st.allow) == 0) {
+				// an empty result is almost certainly an error page
+				err = 'no usable rules in the downloaded file';
+				entry.skipped = st?.skipped ?? null;
+			}
+			else if (!(err = replace_data(cfg, l)))
+				entry = { name: l.name, url: l.url, rules: st.rules, allow: st.allow, skipped: st.skipped, updated: time(), error: null };
+		}
+		if (err) {
+			// nothing thrown away; what went wrong, for this address
+			entry.error = err;
+			entry.tried = l.url;
 			failed++;
+			if (!has_files(cfg, l)) {
+				if (had)
+					push(lost, `${l.name}: ${err}`);
+			}
+			else if (!own)
+				kept[l.id] = prev.rules ?? 0;
 		}
 		fs.unlink(raw);
 		fs.unlink(`${cfg.dir}/.${l.id}.block.tmp`);
@@ -630,11 +696,22 @@ function cmd_update() {
 			fs.unlink(`${cfg.dir}/${f}`);
 	}
 
-	const merr = merge(cfg, filter(all, l => has_data(cfg, { lists: lists_state }, l)));
+	const usable = (l) => has_data(cfg, { lists: lists_state }, l) || (l.id in kept);
+	// A list that failed with nothing to merge would be dropped from the
+	// lists in use, its rules with it: those stay as they are then (the next
+	// update that gets it merges everything). A new list that failed has no
+	// rules in them to lose.
+	let merr = null;
+	if (length(lost) && length(filter([ 'block', 'allow' ], k => fs.lstat(`${cfg.dir}/${k}.txt`)?.type == 'file')) == 2)
+		merr = `nothing to merge for ${join('; ', lost)}: the lists in use stay as they are`;
+	else
+		merr = merge(cfg, filter(all, usable));
 	let total = 0;
 	for (let l in all)
 		if (has_data(cfg, { lists: lists_state }, l))
 			total += lists_state[l.id].rules ?? 0;
+		else if (l.id in kept)
+			total += kept[l.id];
 	// when the merged lists could not be written mosdns keeps the previous
 	// ones: so does the total
 	if (merr)
@@ -758,7 +835,7 @@ function cmd_status() {
 	let shown = {};
 	uci.foreach(CONF, 'adlist', (s) => {
 		const e = state.lists?.[s['.name']];
-		if (e && e.url == s.url)
+		if (e && (e.url == s.url || e.tried == s.url))
 			shown[s['.name']] = e;
 	});
 	out({ ok: true, running: !!running(), dir: cfg.dir, lists: shown, total: state.total ?? 0, finished: state.finished ?? null,
