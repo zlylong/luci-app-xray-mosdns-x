@@ -514,16 +514,31 @@ else:
           f"adlist update: the next good update replaces both and clears the error {ad.get('new6')}")
     check(adj("update7").get("ok") is True and ad.get("new7") == "1 0",
           f"adlist update: without hard links (vfat, exfat) the lists in use are copied, and replaced {ad.get('update7')} {ad.get('new7')}")
-    check(ad.get("ensure1") == "" and adj("ensure2") == {"ok": True, "running": True},
-          f"adlist ensure: nothing missing, no update; the merged block list missing, an update {ad.get('ensure1')!r} {ad.get('ensure2')}")
-    if ad.get("locked") == "skipped (no /proc)":
-        print("adlist migrate during an update: skipped (no /proc here)")
-    else:
-        lk, ul = ad.get("locked", ""), ad.get("unlocked", "")
-        check(lk.startswith("2 ") and '"postponed": true' in lk and ad.get("locked-top") == "block.txt state.json ",
-              f"adlist migrate: while an update runs, nothing moves, it is left to the next start {lk} | {ad.get('locked-top')}")
-        check(ul.startswith("0 ") and ad.get("unlocked-top") == "xray-mosdns  lock gone",
-              f"adlist migrate: once it is done the move happens, and its own lock goes {ul} | {ad.get('unlocked-top')}")
+    check(adj("update8").get("ok") is True and ad.get("inplace8") == "same 1",
+          f"adlist update: the lists mosdns reads are rewritten in place (same file: mosdns watches the one it opened) "
+          f"{ad.get('update8')} {ad.get('inplace8')}")
+    u9 = adj("update9")
+    check(u9.get("ok") is False and "cannot rewrite" in (u9.get("error") or "") and "allow.txt" in (u9.get("error") or "")
+          and ad.get("kept9") == "yes yes 0",
+          f"adlist update: an exception list cut short while rewritten puts both lists back as they were {ad.get('update9')} {ad.get('kept9')}")
+    check(ad.get("ensure1") == "" and ad.get("ensure2") == "" and ad.get("ensure2-made") == "yes",
+          f"adlist ensure: nothing missing, nothing done; a merged list missing is made from the lists there are, "
+          f"no download {ad.get('ensure1')!r} {ad.get('ensure2')!r} {ad.get('ensure2-made')}")
+    check(ad.get("ensure2b") == "" and ad.get("ensure2b-made") == "yes",
+          f"adlist ensure: an empty merged list while the lists have data is made again {ad.get('ensure2b-made')}")
+    check(adj("ensure3") == {"ok": True, "running": True}, f"adlist ensure: a list with no data yet is fetched {ad.get('ensure3')}")
+    check("allow.txt is missing and cannot be made" in (ad.get("ensure4") or ""),
+          f"adlist ensure: a merged list that cannot be made is said on stderr {ad.get('ensure4')!r}")
+    lk, ul = ad.get("locked", ""), ad.get("unlocked", "")
+    check(lk.startswith("2 ") and '"postponed": true' in lk and ad.get("locked-top") == "block.txt state.json xray-mosdns ",
+          f"adlist migrate: while an update holds the lock nothing moves, it is left to the next start {lk} | {ad.get('locked-top')}")
+    check("an update is already running" in ad.get("locked-update", "") and ad.get("locked-status") == '"running": true',
+          f"adlist: a second update refuses, and the status says one runs {ad.get('locked-update')} {ad.get('locked-status')}")
+    check(ad.get("locked-ensure") == "" and ad.get("locked-standins") == "allow.txt block.txt  block 0 allow kept",
+          f"adlist ensure: with an update running, an empty stand-in for the missing list only {ad.get('locked-standins')}")
+    check(ul.startswith("0 ") and ad.get("unlocked-top") == "xray-mosdns  lock kept" and ad.get("unlocked-status") == '"running": false',
+          f"adlist migrate: once the lock is free the move happens; the lock file stays (a new one would be a second lock) "
+          f"{ul} | {ad.get('unlocked-top')} {ad.get('unlocked-status')}")
 
     up = {}
     for line in open(f"{rd}/update.txt").read().splitlines():

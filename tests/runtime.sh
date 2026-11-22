@@ -373,30 +373,64 @@ same() { cmp -s "$1" "$2" && echo yes || echo no; }
 	list1 new5.test
 	echo "update7 $(PATH="$OUT/noln:$PATH" adl update)"
 	echo "new7 $(grep -c new5.test "$ADS/block.txt") $(ls -A "$ADS" | grep -c '\.prev$')"
-	# nothing missing: no update; the merged block list missing: an update
+	# rewritten in place, the same file: mosdns watches the one it opened. A
+	# link made before shows the new list only if the file is the same one
+	# (inode numbers alone can be reused).
+	ln -f "$ADS/block.txt" "$OUT/block.link"; list1 new6.test
+	echo "update8 $(adl update)"
+	echo "inplace8 $(grep -q new6.test "$OUT/block.link" && echo same || echo replaced) $(grep -c new6.test "$ADS/block.txt")"
+	# the exception list cannot be rewritten (cut short): both go back as they were
+	cp "$ADS/block.txt" "$OUT/block.before9"; cp "$ADS/allow.txt" "$OUT/allow.before9"
+	mkdir -p "$OUT/badcat"
+	printf '#!/bin/sh\nfor a in "$@"; do case "$a" in */.allow.tmp) head -c 3 "$a"; exit 1 ;; esac; done\nexec busybox cat "$@"\n' > "$OUT/badcat/cat"
+	chmod +x "$OUT/badcat/cat"; list1 new7.test
+	echo "update9 $(PATH="$OUT/badcat:$PATH" adl update)"
+	echo "kept9 $(same "$OUT/block.before9" "$ADS/block.txt") $(same "$OUT/allow.before9" "$ADS/allow.txt") $(ls -A "$ADS" | grep -c '\.prev$\|\.tmp$')"
+	# At start, mosdns does not start without the merged lists: nothing
+	# missing, nothing done; one missing, made from the lists there are (no
+	# download, no update started)
 	echo "ensure1 $(adl ensure)"
+	cat "$ADS/l1.block" > "$OUT/merged.expected"
 	mv "$ADS/block.txt" "$OUT/block.saved"
 	echo "ensure2 $(adl ensure)"
-	mv "$OUT/block.saved" "$ADS/block.txt"
+	echo "ensure2-made $(same "$OUT/merged.expected" "$ADS/block.txt")"
+	# an empty one (a stand-in an earlier version made) while the lists have data: made again
+	: > "$ADS/block.txt"
+	echo "ensure2b $(adl ensure)"
+	echo "ensure2b-made $(same "$OUT/merged.expected" "$ADS/block.txt")"
+	# a subscribed list with no data yet: fetched in the background
+	mv "$ADS/l1.block" "$OUT/l1.saved"
+	echo "ensure3 $(adl ensure)"
+	mv "$OUT/l1.saved" "$ADS/l1.block"
+	# one that cannot be made: said on stderr
+	mv "$ADS/allow.txt" "$OUT/allow.saved"; mkdir "$ADS/allow.txt"
+	echo "ensure4 $(ucode "$REPO/root/usr/libexec/xray-mosdns/adlist.uc" ensure 2>&1 >/dev/null)"
+	rmdir "$ADS/allow.txt"; mv "$OUT/allow.saved" "$ADS/allow.txt"
 } > "$OUT/adlist.txt"
-# No move while an update runs (it writes the same directory): left to the
-# next start. Whether one runs is seen in /proc, which a chroot may lack.
-AD3="$OUT/adlists3"
-mkdir -p "$AD3"; echo old > "$AD3/block.txt"
+# One writer of the list directory at a time: an update holds the lock (here
+# the test does, with flock on fd 7). A move is left to the next start,
+# another update refuses, missing merged lists get empty stand-ins for the
+# update to replace, never written over a file that is there.
+AD3="$OUT/adlists3"; AD3S="$AD3/xray-mosdns"
+mkdir -p "$AD3S"; echo old > "$AD3/block.txt"; echo kept > "$AD3S/allow.txt"
 printf '{"lists":{"l1":{"name":"l1","rules":1}},"total":1}' > "$AD3/state.json"
 printf "config adblock\n\toption dir '%s'\nconfig adlist 'l1'\n\toption url 'https://lists.test/list1.txt'\n" "$AD3" > "$CONF"
-LOCKF=/var/run/xray-mosdns-adlist.pid
-if [ -r /proc/self/stat ]; then
-	sleep 60 & sp=$!
-	echo "$sp" > "$LOCKF"
-	o=$(adl migrate); echo "locked $? $o" >> "$OUT/adlist.txt"
-	echo "locked-top $(ls -A "$AD3" | tr '\n' ' ')" >> "$OUT/adlist.txt"
-	kill "$sp"; rm -f "$LOCKF"
-	o=$(adl migrate); echo "unlocked $? $o" >> "$OUT/adlist.txt"
-	echo "unlocked-top $(ls -A "$AD3" | tr '\n' ' ') lock $([ -e "$LOCKF" ] && echo left || echo gone)" >> "$OUT/adlist.txt"
-else
-	echo "locked skipped (no /proc)" >> "$OUT/adlist.txt"
-fi
+LOCKF=/var/run/xray-mosdns-adlist.lock
+exec 7>"$LOCKF"; flock -x 7
+{
+	o=$(adl migrate); echo "locked $? $o"
+	echo "locked-top $(ls -A "$AD3" | tr '\n' ' ')"
+	echo "locked-update $(adl update)"
+	echo "locked-status $(adl status | grep -o '"running": [a-z]*')"
+	echo "locked-ensure $(ucode "$REPO/root/usr/libexec/xray-mosdns/adlist.uc" ensure 2>&1 >/dev/null)"
+	echo "locked-standins $(ls -A "$AD3S" | tr '\n' ' ') block $(wc -c < "$AD3S/block.txt") allow $(cat "$AD3S/allow.txt")"
+} >> "$OUT/adlist.txt"
+exec 7>&-
+{
+	o=$(adl migrate); echo "unlocked $? $o"
+	echo "unlocked-top $(ls -A "$AD3" | tr '\n' ' ') lock $([ -e "$LOCKF" ] && echo kept || echo gone)"
+	echo "unlocked-status $(adl status | grep -o '"running": [a-z]*')"
+} >> "$OUT/adlist.txt"
 # A move that cannot finish: the state stays at the top, and the next start
 # moves the rest.
 AD2="$OUT/adlists2"
