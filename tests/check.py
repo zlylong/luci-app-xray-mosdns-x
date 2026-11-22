@@ -106,11 +106,12 @@ check(cmain[0] == {"if": "query_is_probe", "exec": ["_new_nxdomain_response", "_
 check(cmain[1] == "metrics_all" and (plugin(m, "metrics_all") or {}).get("type") == "metrics_collector"
       and (plugin(m, "metrics_block") or {}).get("type") == "metrics_collector" and m.get("api") == {"http": "127.0.0.1:5336"},
       f"stats: every query counted next, the counters on 127.0.0.1:5336 {cmain[:2]} {m.get('api')}")
-blocks = [e for e in cmain if isinstance(e, dict) and ("_new_nxdomain_response" in e["exec"] or "block_zero" in e["exec"])]
+# the block branches (not the health check's, which nothing counts)
+blocks = [e for e in cmain if isinstance(e, dict) and e["if"] != "query_is_probe" and ("_new_nxdomain_response" in e["exec"] or "block_zero" in e["exec"])]
 check(len(blocks) >= 2 and all(e["exec"][0] == "metrics_block" for e in blocks), f"stats: every block branch counts first {blocks}")
 check(plugin(m, "rule_4")["args"]["domain"] == ["provider:geosite:cn"] and by_if["rule_4"] == ["local_seq", "add_direct", "_return"], "legacy chnroute: mainland domains resolve locally")
 check(plugin(m, "rule_5")["args"]["domain"] == ["provider:geosite:geolocation-!cn"] and by_if["rule_5"][-3:] == ["remote_seq", "add_proxy", "_return"], "legacy chnroute: non-mainland domains resolve through the proxy")
-check(order == ["query_is_lan_name || query_is_ptr", "query_is_node"] + ["rule_%d" % i for i in range(6)], f"chnroute: rule order {order}")
+check(order == ["query_is_probe", "query_is_lan_name || query_is_ptr", "query_is_node"] + ["rule_%d" % i for i in range(6)], f"chnroute: rule order {order}")
 check(main[-1] == "fallback_seq", "mainland IPs direct + default proxy: unclassified names use the ChinaDNS fallback")
 check({"type": "field", "domain": ["geosite:cn"], "outboundTag": "direct"} in rules, "geosite:cn rule reaches Xray")
 check(order.index("query_is_node") < order.index("rule_0"), "node hostnames must be resolved locally before any rule")
