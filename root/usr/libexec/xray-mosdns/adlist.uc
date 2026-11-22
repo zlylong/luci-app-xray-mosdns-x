@@ -306,14 +306,33 @@ function cmd_catalog_sync() {
 // ---------------------------------------------------------------- update
 
 // block.txt / allow.txt are what mosdns loads; they are replaced in one
-// rename so a reload never sees half a file
+// rename so a reload never sees half a file. Both are written in full
+// first: when either cannot be (a full flash cuts it short), both stay as
+// they were and the reason is returned.
 function merge(cfg, all) {
-	for (let kind in [ 'block', 'allow' ]) {
-		const parts = join(' ', map(filter(all, l => fs.access(`${cfg.dir}/${l.id}.${kind}`)), l => `'${cfg.dir}/${l.id}.${kind}'`));
-		const tmp = `${cfg.dir}/.${kind}.tmp`;
-		system(length(parts) ? `cat ${parts} > '${tmp}'` : `: > '${tmp}'`);
-		fs.rename(tmp, `${cfg.dir}/${kind}.txt`);
+	const kinds = [ 'block', 'allow' ];
+	const tmp = (kind) => `${cfg.dir}/.${kind}.tmp`;
+	let err = null;
+	for (let kind in kinds) {
+		const files = map(filter(all, l => fs.access(`${cfg.dir}/${l.id}.${kind}`)), l => `${cfg.dir}/${l.id}.${kind}`);
+		let want = 0;
+		for (let f in files)
+			want += fs.stat(f)?.size ?? 0;
+		// the braces take the shell's own message too (a target it cannot create)
+		const rc = system(`{ ${length(files) ? 'cat ' + join(' ', map(files, f => `'${f}'`)) : ':'} > '${tmp(kind)}'; } 2>/dev/null`);
+		if (rc != 0 || fs.stat(tmp(kind))?.type != 'file' || fs.stat(tmp(kind)).size != want) {
+			err = `cannot write ${cfg.dir}/${kind}.txt (is the disk full?)`;
+			break;
+		}
 	}
+	for (let kind in kinds) {
+		if (!err && !fs.rename(tmp(kind), `${cfg.dir}/${kind}.txt`))
+			err = `cannot replace ${cfg.dir}/${kind}.txt: ${fs.error()}`;
+		// a directory in the way is not ours to remove
+		if (fs.stat(tmp(kind))?.type == 'file')
+			fs.unlink(tmp(kind));
+	}
+	return err;
 }
 
 function cmd_update() {
@@ -363,20 +382,39 @@ function cmd_update() {
 		lists_state[l.id] = entry;
 	}
 
-	// data of lists that are no longer subscribed
+	// data of lists that are no longer subscribed. A directory of our own
+	// holds nothing else; one set in the options may be shared with other
+	// programs, so there only the lists this file wrote go, by name.
 	const keep = map(all, l => l.id);
-	for (let f in (fs.lsdir(cfg.dir) ?? [])) {
-		const m = match(f, /^([A-Za-z0-9_]+)\.(block|allow)$/);
-		if (m && !(m[1] in keep))
-			fs.unlink(`${cfg.dir}/${f}`);
+	let gone = keys(state.lists ?? {});
+	if (index(cfg.dir, '/etc/xray-mosdns/') == 0)
+		for (let f in (fs.lsdir(cfg.dir) ?? [])) {
+			const m = match(f, /^([A-Za-z0-9_]+)\.(block|allow)$/);
+			if (m)
+				push(gone, m[1]);
+		}
+	for (let id in uniq(gone)) {
+		if (!match(id, /^[A-Za-z0-9_]+$/) || (id in keep))
+			continue;
+		fs.unlink(`${cfg.dir}/${id}.block`);
+		fs.unlink(`${cfg.dir}/${id}.allow`);
 	}
 
-	merge(cfg, all);
+	const merr = merge(cfg, all);
 	let total = 0;
 	for (let id in keys(lists_state))
 		total += lists_state[id].rules ?? 0;
-	fs.writefile(state_path(cfg), sprintf('%J', { lists: lists_state, total, finished: time() }));
+	// when the merged lists could not be written mosdns keeps the previous
+	// ones: so does the total
+	if (merr)
+		total = state.total ?? 0;
+	fs.writefile(state_path(cfg), sprintf('%J', { lists: lists_state, total, finished: time(), error: merr }));
 	fs.unlink(LOCK);
+	if (merr) {
+		system([ 'logger', '-p', 'daemon.err', '-t', 'xray-mosdns', `blocklists: ${merr}; the previous lists stay in use` ]);
+		out({ ok: false, error: merr, lists: length(all), total, failed });
+		return 1;
+	}
 	system([ 'logger', '-t', 'xray-mosdns', `blocklists updated: ${length(all)} lists, ${total} rules, ${failed} failed` ]);
 	out({ ok: failed == 0, lists: length(all), total, failed });
 	return failed ? 1 : 0;
@@ -403,7 +441,8 @@ function cmd_ensure() {
 function cmd_status() {
 	const cfg = settings();
 	const state = load(state_path(cfg), {});
-	out({ ok: true, running: !!running(), dir: cfg.dir, lists: state.lists ?? {}, total: state.total ?? 0, finished: state.finished ?? null });
+	out({ ok: true, running: !!running(), dir: cfg.dir, lists: state.lists ?? {}, total: state.total ?? 0, finished: state.finished ?? null,
+		error: state.error ?? null });
 }
 
 // ---------------------------------------------------------------- cron

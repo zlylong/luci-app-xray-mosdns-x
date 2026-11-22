@@ -121,15 +121,16 @@ gated() {
 
 gate() {
 	nft list table $TABLE >/dev/null 2>&1 || return 0
-	# already out: the reason goes back on the overview if a start cleared
-	# it, without covering another message
-	if gated; then
-		[ -s "$ERR" ] || printf '%s\n' "$GATE_MSG" > "$ERR"
-		return 0
-	fi
-	# what is left of a half-done gate goes in the same transaction
+	was=0; gated && was=1
+	# Always the whole gate, replacing whatever there is of one (none, half,
+	# all), in one transaction: what the message says (DNS with dnsmasq)
+	# holds afterwards even when a gate was found in place.
 	if err=$({ gate_deletes; gate_lines; } | nft -f - 2>&1); then
-		printf '%s\n' "$GATE_MSG" > "$ERR"
+		# a gate already in place gets its reason back if a start cleared
+		# it, without covering another message
+		if [ "$was" = 0 ] || [ ! -s "$ERR" ]; then
+			printf '%s\n' "$GATE_MSG" > "$ERR"
+		fi
 		return 0
 	fi
 	echo "could not take the transparent proxy out of the path: $err" >&2

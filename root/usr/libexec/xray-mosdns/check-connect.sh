@@ -12,10 +12,13 @@ case "${1:-}" in
 	*)       URL="$1"; NAME="$1" ;;
 esac
 
+# the SOCKS port and binary in effect (runtime.env next to the running
+# config), else the configured ones
 SOCKS_PORT=$(uci -q get "$CFG.@global[0].socks_port" 2>/dev/null || true)
+XRAY_BIN=$(uci -q get "$CFG.@global[0].xray_bin" 2>/dev/null || true)
+[ -f /var/etc/xray-mosdns/runtime.env ] && . /var/etc/xray-mosdns/runtime.env
 [ -n "$SOCKS_PORT" ] || SOCKS_PORT=1070
-XRAY=$(uci -q get "$CFG.@global[0].xray_bin" 2>/dev/null || true)
-[ -n "$XRAY" ] || XRAY=/usr/bin/xray
+XRAY=${XRAY_BIN:-/usr/bin/xray}
 
 VIA="direct"
 if ps w 2>/dev/null | grep -v grep | grep -qF "$XRAY run -c /var/etc/xray-mosdns/xray.json"; then

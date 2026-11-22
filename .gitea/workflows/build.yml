@@ -80,7 +80,8 @@ jobs:
           python3 -c 'import yaml' 2>/dev/null || {
             apt-get update -qq && apt-get install -y -qq python3-yaml >/dev/null
           }
-          python3 tests/check.py "$R/out"
+          # --all: a part of the tests that left no output fails, not skipped
+          python3 tests/check.py "$R/out" --all
 
       - name: Migration leaves the generated configs unchanged
         run: chroot "$R" /bin/sh /src/tests/migrate.sh /src

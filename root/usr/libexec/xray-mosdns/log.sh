@@ -53,8 +53,23 @@ function basename(path) {
 
 const uci = cursor();
 let by_ident = {};
-by_ident[basename(uci.get_first('xray-mosdns', 'global', 'xray_bin') || '/usr/bin/xray')] = 'xray';
-by_ident[basename(uci.get_first('xray-mosdns', 'dns', 'mosdns_bin') || '/usr/bin/mosdns')] = 'mosdns';
+// procd names a daemon's lines after its binary: the ones in effect
+// (runtime.env next to the running config) and the configured ones, which
+// differ after a change that was not applied or did not take
+let rt = {};
+for (let l in split(fs.readfile('/var/etc/xray-mosdns/runtime.env') ?? '', '\n')) {
+	const m = match(l, /^([A-Z_]+)='?([^']*)'?$/);
+	if (m)
+		rt[m[1]] = m[2];
+}
+// (another binary of the same kind, not the one in use, stays out)
+function idents(kind, bins) {
+	bins = filter(bins, b => b);
+	for (let bin in (length(bins) ? bins : [ `/usr/bin/${kind}` ]))
+		by_ident[basename(bin)] ??= kind;
+}
+idents('xray', [ rt.XRAY_BIN, uci.get_first('xray-mosdns', 'global', 'xray_bin') ]);
+idents('mosdns', [ rt.MOSDNS_BIN, uci.get_first('xray-mosdns', 'dns', 'mosdns_bin') ]);
 for (let id in [ 'xray-mosdns', 'xray-mosdns-gen', 'groups.uc', 'dns-watchdog.sh' ])
 	by_ident[id] = 'app';
 const by_instance = { xray: 'xray', mosdns: 'mosdns', dnswatch: 'app', groups: 'app' };
