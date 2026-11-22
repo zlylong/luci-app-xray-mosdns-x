@@ -84,12 +84,8 @@ start_service() {
 		return 1
 	fi
 
-	# blocklist subscriptions: keep the daily job in step with the settings,
-	# move lists an older version kept elsewhere, and fetch lists that were
-	# just added (in the background, start does not wait). The download must
-	# not hold the start lock: fd 1000 is closed for it.
+	# blocklist subscriptions: keep the daily job in step with the settings
 	ucode /usr/libexec/xray-mosdns/adlist.uc cron-sync >/dev/null 2>&1 1000>&-
-	ucode /usr/libexec/xray-mosdns/adlist.uc ensure >/dev/null 2>&1 1000>&-
 
 	# what the new configuration asks for (UCI)
 	uci_values
@@ -142,6 +138,12 @@ start_service() {
 			return 1
 		}
 	fi
+
+	# Lists that were just added are fetched in the background (start does
+	# not wait), into where the new configuration reads them, after the move
+	# above so that the two do not write the same files. The download must
+	# not hold the start lock: fd 1000 is closed for it.
+	ucode /usr/libexec/xray-mosdns/adlist.uc ensure >/dev/null 2>&1 1000>&-
 
 	# The daemons as the files in effect want them: with the previous set's
 	# binaries, ports and geo directory when the new set was not taken.
@@ -201,7 +203,14 @@ generate_and_switch() {
 			# its first line says what failed
 			[ "$rc" = 0 ] || bad="新配置无法替换到 $OUT：$(head -n 1 "$OUT/.switch.log" | cut -c1-300)"
 			case $rc in
-				0) rm -rf "$NEW"; rm -f "$ERR" ;;
+				0)
+					rm -rf "$NEW"; rm -f "$ERR"
+					# The new set reads the blocklists from where they are
+					# now kept; lists an older version kept elsewhere move
+					# there only at this point, never on a start that falls
+					# back to the previous set. procd restarts mosdns on
+					# the new set once this script is done.
+					ucode /usr/libexec/xray-mosdns/adlist.uc migrate >/dev/null 2>&1 1000>&- ;;
 				3) broken=1 ;;
 			esac
 			rm -f "$OUT/.switch.log"

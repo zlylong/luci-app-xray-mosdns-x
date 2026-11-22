@@ -478,12 +478,26 @@ else:
         except ValueError:
             return {"unparsed": ad.get(k)}
     check(adj("update1").get("ok") is True and adj("update1").get("total") == 2, f"adlist update: {ad.get('update1')}")
-    check(ad.get("top1") == "mine.allow mine.block xray-mosdns ",
-          f"adlist: what 0.9.8 kept at the top of a shared directory moves into xray-mosdns/, another program's files stay {ad.get('top1')}")
-    check(ad.get("sub1") == "allow.txt block.txt l1.allow l1.block state.json ",
-          f"adlist: in the subdirectory, a list no longer subscribed goes {ad.get('sub1')}")
+    check(ad.get("top1") == "allow.txt block.txt gone1.allow gone1.block l1.allow l1.block mine.allow mine.block state.json xray-mosdns ",
+          f"adlist update: writes into xray-mosdns/ and moves nothing at the top, where a configuration still running reads its lists {ad.get('top1')}")
+    check(ad.get("sub1") == "allow.txt block.txt l1.allow l1.block state.json ", f"adlist update: the subdirectory {ad.get('sub1')}")
+    check(adj("migrate1").get("ok") is True and ad.get("top1m") == "mine.allow mine.block xray-mosdns "
+          and ad.get("sub1m") == "allow.txt block.txt gone1.allow gone1.block l1.allow l1.block state.json "
+          and adj("migrate1b").get("ok") is True,
+          f"adlist migrate: what 0.9.8 kept at the top goes (moved, or dropped where the subdirectory has newer), "
+          f"another program's files stay, a second run does nothing {ad.get('top1m')} | {ad.get('sub1m')}")
+    check(ad.get("sub2u") == "allow.txt block.txt l1.allow l1.block state.json ",
+          f"adlist update: a list no longer subscribed goes from the subdirectory {ad.get('sub2u')}")
     check(adj("update2").get("ok") is True and ad.get("theirs2") == 'yes theirs-allow {"theirs":1}' and ad.get("new2") == "1",
           f"adlist: another program's block.txt / allow.txt / state.json at the top are neither moved nor written {ad}")
+    check(ad.get("theirs6") == 'yes { "ok": true, "failed": [ ] } {"theirs":1}',
+          f"adlist migrate: leaves another program's files at the top alone {ad.get('theirs6')}")
+    check(adj("migrate2").get("failed") == ["l1.allow"] and ad.get("top2") == "l1.allow state.json xray-mosdns "
+          and ad.get("sub2") == "block.txt l1.allow l1.block ",
+          f"adlist migrate: a file that cannot be moved keeps the state at the top, to be tried again {ad.get('top2')} | {ad.get('sub2')}")
+    check(adj("migrate3").get("ok") is True and ad.get("top3") == "xray-mosdns "
+          and ad.get("sub3") == "block.txt l1.allow l1.block state.json ",
+          f"adlist migrate: the next run moves the rest, state last {ad.get('top3')} | {ad.get('sub3')}")
     u3 = adj("update3")
     check(u3.get("ok") is False and "block.txt" in (u3.get("error") or "") and ad.get("kept3") == "yes",
           f"adlist update: merged lists that cannot be written are an error, the ones in use stay {ad.get('update3')}")
@@ -492,8 +506,12 @@ else:
     u4 = adj("update4")
     check(u4.get("ok") is False and "allow.txt" in (u4.get("error") or "") and ad.get("kept4") == "yes 0",
           f"adlist update: an exception list that cannot be replaced leaves the block list as it was too {ad.get('update4')} {ad.get('kept4')}")
-    check(adj("update5").get("ok") is True and ad.get("new5") == "1 allow" and adj("status5").get("error") is None,
-          f"adlist update: the next good update replaces both and clears the error {ad.get('new5')}")
+    u5 = adj("update5")
+    check(u5.get("ok") is False and ".allow.prev is in the way" in (u5.get("error") or "") and ad.get("kept5") == "yes 0",
+          f"adlist update: a directory where the copy of a list in use goes stops the update, nothing is replaced, "
+          f"no link is put inside it {ad.get('update5')} {ad.get('kept5')}")
+    check(adj("update6").get("ok") is True and ad.get("new6") == "1 allow" and adj("status6").get("error") is None,
+          f"adlist update: the next good update replaces both and clears the error {ad.get('new6')}")
 
     up = {}
     for line in open(f"{rd}/update.txt").read().splitlines():
@@ -515,13 +533,13 @@ else:
     upgrade, rest = pr.split("[removal]\n")
     removal, theirs = rest.split("[removal-theirs]\n")
     check("cron-ours 2 cron-other 1" in upgrade and "etc-dir present backups present table present" in upgrade
-          and "shared .block.tmp .l1.raw ANON.allow ANON.block allow.txt block.txt l1.allow l1.block mine.allow mine.block mine.txt state.json xray-mosdns "
+          and "shared .block.tmp .gone3.raw .l1.raw ANON.allow ANON.block allow.txt block.txt gone3.block l1.allow l1.block mine.allow mine.block mine.txt state.json xray-mosdns "
           in upgrade and "sub .gone2.raw allow.txt block.txt gone2.block l1.block state.json " in upgrade,
           f"postrm: an upgrade leaves everything {upgrade}")
     check("cron-ours 0 cron-other 1" in removal and "etc-dir gone backups gone table gone" in removal
           and removal.strip().endswith("shared mine.allow mine.block mine.txt"),
           f"postrm: removal takes our cron lines, data, backups, our subdirectory whole (a list unsubscribed since the "
-          f"last update too) and what 0.9.8 left at the top (named or anonymous subscriptions); another program's files stay {removal}")
+          f"last update too) and what 0.9.8 left at the top (named or anonymous subscriptions, and a list only its state names); another program's files stay {removal}")
     check(theirs.strip().endswith("shared allow.txt block.txt l1.block state.json"),
           f"postrm: block.txt / allow.txt / state.json at the top that are not ours stay {theirs}")
 
