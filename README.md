@@ -262,6 +262,7 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-<版本>-r1.apk
 | node | type/address/port/uuid/... | vless / vmess / trojan / shadowsocks / hysteria2 节点 |
 | global | api_port | Xray 本地统计 API 端口（默认 10085，用于节点流量） |
 | global | geo_dir | geosite.dat / geoip.dat 所在目录（默认 `/usr/share/v2ray`），mosdns-x、内核集合、Xray 和更新页共用 |
+| global | geo_auto_update / geo_update_hour / geo_update_day | geo 数据定时更新：是否开启、钟点（0–23，默认 4）、星期几（0 = 周日 … 6，`*` = 每天，默认每天） |
 | rule | rule_type/value/outbound | 分流规则，从上到下匹配：domain/ip/port/network → main/节点/节点组/direct/block；`value` 是列表 |
 | rule | builtin_ads / builtin_cn_domain / builtin_cn_ip / builtin_noncn / builtin_gfw | 预置规则行，和普通规则完全一样，“快速预设”只是开关它们 |
 

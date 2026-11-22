@@ -82,6 +82,41 @@ run traffic-bad  env XRAY="$OUT/garbage-xray" "$LX/traffic.sh"
 run traffic-down env XRAY="$OUT/no-such-xray" "$LX/traffic.sh"
 
 run update-versions env UPD_TEST_DIR="$OUT/upd" "$LX/update.sh" versions
+# this package's version: from apk, or from opkg where there is no apk
+mkdir -p "$OUT/pm-apk" "$OUT/pm-opkg"
+cat > "$OUT/pm-apk/apk" <<'EOF'
+#!/bin/sh
+[ "$*" = "info -e -v luci-app-xray-mosdns-x" ] && echo luci-app-xray-mosdns-x-9.9.9-r1
+exit 0
+EOF
+printf '#!/bin/sh\nexit 1\n' > "$OUT/pm-opkg/apk"
+cat > "$OUT/pm-opkg/opkg" <<'EOF'
+#!/bin/sh
+if [ "$*" = "status luci-app-xray-mosdns-x" ]; then
+	echo "Package: luci-app-xray-mosdns-x"
+	echo "Version: 8.8.8-r2"
+	echo "Status: install user installed"
+fi
+exit 0
+EOF
+chmod +x "$OUT/pm-apk/apk" "$OUT/pm-opkg/apk" "$OUT/pm-opkg/opkg"
+run update-versions-apk  env PATH="$OUT/pm-apk:$PATH" UPD_TEST_DIR="$OUT/upd" "$LX/update.sh" versions
+run update-versions-opkg env PATH="$OUT/pm-opkg:$PATH" UPD_TEST_DIR="$OUT/upd" "$LX/update.sh" versions
+
+# the geo schedule: day of the week and hour from the config; junk means
+# every day at 4, and the line is replaced, not added again
+CR="$OUT/cron-root"
+uci set xray-mosdns.global.geo_update_hour='6'
+uci set xray-mosdns.global.geo_update_day='1'
+uci commit xray-mosdns
+run cron-weekly        env UPD_TEST_DIR="$CR" "$LX/update.sh" cron-install
+grep 'xray-mosdns-geo-auto' "$CR/etc/crontabs/root" > "$OUT/cron-weekly.txt"
+run cron-weekly-status env UPD_TEST_DIR="$CR" "$LX/update.sh" cron-status
+uci set xray-mosdns.global.geo_update_hour='x'
+uci set xray-mosdns.global.geo_update_day='9'
+uci commit xray-mosdns
+run cron-junk          env UPD_TEST_DIR="$CR" "$LX/update.sh" cron-install
+grep 'xray-mosdns-geo-auto' "$CR/etc/crontabs/root" > "$OUT/cron-junk.txt"
 # jstr on its own, with every character that needs escaping
 eval "$(grep '^jstr()' "$LX/update.sh")"
 jstr "$(printf 'quote " backslash \\ tab \t newline \n end')" > "$OUT/jstr.json"
