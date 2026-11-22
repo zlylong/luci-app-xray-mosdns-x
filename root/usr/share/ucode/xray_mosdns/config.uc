@@ -429,6 +429,9 @@ export function plan(cfg) {
 			name, remarks: grp.remarks, strategy: grp.strategy, members,
 			failback: !!grp.failback,
 			tag: p.group_tag(name), fallback_tag: fallback_tag(grp),
+			// a second balancer over the same members, used by no rule: it
+			// tells the group watcher which members Xray still has as alive
+			alive_tag: (grp.strategy == 'ordered') ? `${name}.alive` : null,
 		};
 		push(p.groups, used[name]);
 		return used[name];

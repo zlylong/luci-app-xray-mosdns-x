@@ -16,8 +16,19 @@
 //   0.0.0.0 example.org -> full:example.org     (hosts line: that name only)
 //   example.org         -> full:example.org     (plain name: that name only)
 //   @@||example.org^    -> an exception, kept in the allow file
-// Rules with wildcards, regular expressions or modifiers other than
-// $important are counted as skipped.
+//   ||example.org^$dnsrewrite=NXDOMAIN (or REFUSED, 0.0.0.0, ::, AdGuard's
+//                       blocking host) -> blocked like the first form
+// Rules with wildcards, regular expressions or other modifiers (a
+// $dnsrewrite that answers with a record is a rewrite, not a block) are
+// counted as skipped.
+//
+// A list's data files and state go by its UCI section's name. For an
+// anonymous section ("cfg140306") that name is only its place in the file:
+// a section added before it gives the name to the next list down. So the
+// state records the address each list's data came from, and data from
+// another address is not used: not merged, not counted as there, the list
+// is fetched again. State written before addresses were recorded counts as
+// another address (fetched again once).
 'use strict';
 
 import * as fs from 'fs';
@@ -224,6 +235,12 @@ function download(url, dest) {
 const RE_NAME = /^[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?(\.[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?)+$/;
 const RE_HOSTS = /^(0\.0\.0\.0|127\.0\.0\.1|::1?|::ffff:0\.0\.0\.0)[ \t]+(.+)$/;
 const LOCAL_NAMES = [ 'localhost', 'localhost.localdomain', 'local', 'broadcasthost', 'ip6-localhost', 'ip6-loopback' ];
+// $dnsrewrite values that mean "blocked" (lower case): an error answer or an
+// empty one (RCODE;; is the long form), a null address, or a name of
+// AdGuard's that answers with its block page
+const BLOCKING_REWRITES = [ 'nxdomain', 'nxdomain;;', 'refused', 'refused;;', 'noerror;;',
+	'0.0.0.0', '::', '127.0.0.1', '::1',
+	'ad-block.dns.adguard.com', 'family-block.dns.adguard.com', 'standard-block.dns.adguard.com' ];
 
 // returns [ kind, rule ] with kind "block" | "allow", or null when the line is not usable
 function convert(line) {
@@ -252,11 +269,19 @@ function convert(line) {
 		return length(res) ? res : null;
 	}
 
-	// modifiers: $important changes nothing for us, anything else changes the meaning
+	// modifiers: $important changes nothing for us; a $dnsrewrite that
+	// answers "no such name", refuses, points at a null address or at
+	// AdGuard's blocking host is a block (AdGuard's DNS lists write their
+	// blocks that way); anything else changes the meaning
 	const d = index(line, '$');
 	if (d >= 0) {
-		if (substr(line, d + 1) != 'important')
-			return null;
+		for (let mod in split(substr(line, d + 1), ',')) {
+			if (mod == 'important')
+				continue;
+			const rw = match(mod, /^dnsrewrite=(.*)$/);
+			if (!rw || kind != 'block' || !(lc(rw[1]) in BLOCKING_REWRITES))
+				return null;
+		}
 		line = substr(line, 0, d);
 	}
 
@@ -310,6 +335,12 @@ function convert_file(src, block_path, allow_path) {
 
 function state_path(cfg) {
 	return `${cfg.dir}/state.json`;
+}
+
+// a list's data is there, and is from its address (see the top)
+function has_data(cfg, state, l) {
+	return state?.lists?.[l.id]?.url == l.url
+		&& fs.access(`${cfg.dir}/${l.id}.block`) && fs.access(`${cfg.dir}/${l.id}.allow`);
 }
 
 // ---------------------------------------------------------------- catalogue
@@ -473,6 +504,7 @@ function copy_file(from, to) {
 // exception list, or the reverse. Where there is no room for the copies the
 // lists are rewritten without them: an update that cannot finish then
 // leaves them mixed until the next one, which beats never updating.
+// `all` is the lists whose data may be used (has_data).
 function merge(cfg, all) {
 	const kinds = [ 'block', 'allow' ];
 	const tmp = (kind) => `${cfg.dir}/.${kind}.tmp`;
@@ -557,17 +589,24 @@ function cmd_update() {
 	for (let l in all) {
 		const raw = `${cfg.dir}/.${l.id}.raw`;
 		let entry = state.lists?.[l.id] ?? {};
+		if (entry.url != l.url) {
+			// what is there under this name is another list's: not kept as this one's
+			entry = {};
+			fs.unlink(`${cfg.dir}/${l.id}.block`);
+			fs.unlink(`${cfg.dir}/${l.id}.allow`);
+		}
 		entry.name = l.name;
 		if (download(l.url, raw)) {
 			const st = convert_file(raw, `${cfg.dir}/.${l.id}.block.tmp`, `${cfg.dir}/.${l.id}.allow.tmp`);
 			if (st && (st.rules + st.allow) > 0) {
 				fs.rename(`${cfg.dir}/.${l.id}.block.tmp`, `${cfg.dir}/${l.id}.block`);
 				fs.rename(`${cfg.dir}/.${l.id}.allow.tmp`, `${cfg.dir}/${l.id}.allow`);
-				entry = { name: l.name, rules: st.rules, allow: st.allow, skipped: st.skipped, updated: time(), error: null };
+				entry = { name: l.name, url: l.url, rules: st.rules, allow: st.allow, skipped: st.skipped, updated: time(), error: null };
 			}
 			else {
 				// an empty result is almost certainly an error page, keep the old data
 				entry.error = 'no usable rules in the downloaded file';
+				entry.skipped = st?.skipped ?? null;
 				failed++;
 			}
 		}
@@ -591,10 +630,11 @@ function cmd_update() {
 			fs.unlink(`${cfg.dir}/${f}`);
 	}
 
-	const merr = merge(cfg, all);
+	const merr = merge(cfg, filter(all, l => has_data(cfg, { lists: lists_state }, l)));
 	let total = 0;
-	for (let id in keys(lists_state))
-		total += lists_state[id].rules ?? 0;
+	for (let l in all)
+		if (has_data(cfg, { lists: lists_state }, l))
+			total += lists_state[l.id].rules ?? 0;
 	// when the merged lists could not be written mosdns keeps the previous
 	// ones: so does the total
 	if (merr)
@@ -664,10 +704,12 @@ function cmd_ensure() {
 	if (!wanted)
 		return 0;
 	const all = lists();
+	const state = load(state_path(cfg), {});
+	const usable = filter(all, l => has_data(cfg, state, l));
 	const live = (kind) => `${cfg.dir}/${kind}.txt`;
 	const size = (kind) => {
 		let n = 0;
-		for (let l in all)
+		for (let l in usable)
 			n += fs.stat(`${cfg.dir}/${l.id}.${kind}`)?.size ?? 0;
 		return n;
 	};
@@ -675,16 +717,15 @@ function cmd_ensure() {
 	// finish) the lists there make less than the list in use has: that one
 	// stays until the update below has the data. Missing, it is made from
 	// what there is.
-	// a list's data is both its files (an update always writes the two)
-	const has_data = (l) => fs.access(`${cfg.dir}/${l.id}.block`) && fs.access(`${cfg.dir}/${l.id}.allow`);
-	const complete = !length(filter(all, l => !has_data(l)));
+	// a list's data is both its files (an update always writes the two), from its address
+	const complete = (length(usable) == length(all));
 	const stale = filter([ 'block', 'allow' ], k => fs.lstat(live(k))?.type != 'file'
 		|| (complete && fs.lstat(live(k)).size != size(k)));
 	if (length(stale)) {
 		system([ 'mkdir', '-p', cfg.dir ]);
 		let err = null;
 		if (lock_wait(5)) {
-			err = merge(cfg, all);
+			err = merge(cfg, usable);
 			unlock();
 		}
 		else {
@@ -705,16 +746,22 @@ function cmd_ensure() {
 					break;
 				}
 	}
-	for (let l in all)
-		if (!has_data(l))
-			return cmd_start();
+	if (!complete)
+		return cmd_start();
 	return 0;
 }
 
 function cmd_status() {
 	const cfg = settings();
 	const state = load(state_path(cfg), {});
-	out({ ok: true, running: !!running(), dir: cfg.dir, lists: state.lists ?? {}, total: state.total ?? 0, finished: state.finished ?? null,
+	// what the state says of a section that now has another address is not about it
+	let shown = {};
+	uci.foreach(CONF, 'adlist', (s) => {
+		const e = state.lists?.[s['.name']];
+		if (e && e.url == s.url)
+			shown[s['.name']] = e;
+	});
+	out({ ok: true, running: !!running(), dir: cfg.dir, lists: shown, total: state.total ?? 0, finished: state.finished ?? null,
 		error: state.error ?? null });
 }
 
