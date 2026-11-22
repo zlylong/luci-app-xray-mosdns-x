@@ -275,7 +275,7 @@ case "\$url" in
 	*/geosite.dat|*/geoip.dat) emit "$F/\${url##*/}" ;;
 	*/lists.test/list1.txt) emit "$F/list1.txt" ;;
 	*/HostlistsRegistry/assets/filters.json)
-		[ -n "\${REGISTRY_OK:-}" ] || exit 22
+		[ -n "\${REGISTRY_OK:-}" ] || { [ -n "\$out" ] && echo '{"filt' > "\$out"; exit 22; }
 		printf '{"groups":[{"groupId":1,"groupName":"G","displayNumber":1}],"filters":[{"filterId":7,"groupId":1,"name":"F","downloadUrl":"https://lists.test/f7.txt"}]}' > "\$out" ;;
 	*) exit 22 ;;
 esac
@@ -407,6 +407,11 @@ same() { cmp -s "$1" "$2" && echo yes || echo no; }
 	# ... and the list in use keeps its rules until the update has the data
 	echo "ensure3-kept $(same "$OUT/merged.expected" "$ADS/block.txt")"
 	mv "$OUT/l1.saved" "$ADS/l1.block"
+	# the same for a list's exceptions: the exceptions in use stay, the list is fetched
+	cp "$ADS/allow.txt" "$OUT/allow.expected"; mv "$ADS/l1.allow" "$OUT/l1a.saved"
+	echo "ensure3b $(adl ensure)"
+	echo "ensure3b-kept $(same "$OUT/allow.expected" "$ADS/allow.txt") $(wc -c < "$ADS/allow.txt")"
+	mv "$OUT/l1a.saved" "$ADS/l1.allow"
 	# one that cannot be made: said on stderr
 	mv "$ADS/allow.txt" "$OUT/allow.saved"; mkdir "$ADS/allow.txt"
 	echo "ensure4 $(ucode "$REPO/root/usr/libexec/xray-mosdns/adlist.uc" ensure 2>&1 >/dev/null)"
@@ -455,8 +460,16 @@ exec 7>"$LOCKF"; flock -x 7
 	printf '{"lists":{"l1":{"name":"l1","catalog":"keep"}}}' > "$AD3S/state.json"; cp "$AD3S/state.json" "$OUT/state3.before"
 	echo "locked-catalog $(REGISTRY_OK=1 adl catalog-sync)"
 	echo "locked-catalog-state $(same "$OUT/state3.before" "$AD3S/state.json")"
+	# a sync that downloaded the catalogue and waits for the lock; meanwhile
+	# an update writes a newer one (two lists): that one is used
+	REGISTRY_OK=1 ucode "$REPO/root/usr/libexec/xray-mosdns/adlist.uc" catalog-sync > "$OUT/catalog-newer.json" 2>&1 7>&- & cs=$!
+	sleep 2
+	printf '{"updated":4102444800,"groups":[],"filters":[{"id":7,"url":"https://lists.test/f7.txt","name":"F"},{"id":8,"url":"https://lists.test/f8.txt","name":"G"}]}' \
+		> /etc/xray-mosdns/adlist-catalog.json
 } >> "$OUT/adlist.txt"
 exec 7>&-
+wait "$cs"
+echo "catalog-newer $(cat "$OUT/catalog-newer.json")" >> "$OUT/adlist.txt"
 {
 	o=$(adl migrate); echo "unlocked $? $o"
 	echo "unlocked-top $(ls -A "$AD3" | tr '\n' ' ') lock $([ -e "$LOCKF" ] && echo kept || echo gone)"
@@ -482,6 +495,8 @@ printf "config adblock\n\toption dir '%s'\nconfig adlist 'l1'\n\toption url 'htt
 	echo "sub3 $(ls -A "$AD2/xray-mosdns" | tr '\n' ' ')"
 } >> "$OUT/adlist.txt"
 echo "script adlist: done"
+
+echo "catalog-tmp-left $(ls /tmp/xray-mosdns-adlist-catalog.*.json 2>/dev/null | wc -l)" >> "$OUT/adlist.txt"
 
 # ---------------------------------------------------------------- postrm
 # taken from the Makefile the way the build does ($$ -> $)
