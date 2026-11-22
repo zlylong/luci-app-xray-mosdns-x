@@ -193,6 +193,12 @@ export function build(cfg, plan) {
 	push(main, 'edns_cookie_filter');
 	if (length(d.hosts))
 		push(main, 'hosts');
+	// names to be reached over IPv4 only, whatever rule they fall under
+	// (say a home server's DDNS name whose IPv6 is not usable from the LAN)
+	if (length(d.ipv4_only)) {
+		qmatch('query_is_ipv4_only', { domain: d.ipv4_only });
+		push(main, { if: 'query_is_ipv4_only && query_is_ipv6', exec: [ '_new_empty_response', '_return' ] });
+	}
 	if (lan_forward)
 		push(main, { if: 'query_is_lan_name || query_is_ptr', exec: [ 'forward_lan', '_return' ] });
 	if (length(node_domains))

@@ -113,6 +113,8 @@ export function load(confdir) {
 			query_log: bool(d.query_log),
 			domestic: list(d.domestic_dns),
 			hosts: list(d.hosts),
+			// names answered over IPv4 only (AAAA and HTTPS empty), whatever their rule
+			ipv4_only: list(d.ipv4_only),
 			local_domains: [],
 			dnsmasq_port: 53,
 		},
@@ -159,6 +161,14 @@ export function load(confdir) {
 		note(`dns.hosts: ignoring '${h}' (use "name address ...")`);
 		return false;
 	});
+
+	// "example.com" (it and its subdomains), or with a domain: full: keyword: prefix
+	cfg.dns.ipv4_only = map(filter(cfg.dns.ipv4_only, v => {
+		if (match(v, /^((domain|full|keyword):)?[A-Za-z0-9_.-]+$/))
+			return true;
+		note(`dns.ipv4_only: ignoring '${v}' (use example.com, full:example.com or keyword:example)`);
+		return false;
+	}), v => match(v, /^(domain|full|keyword):/) ? v : `domain:${v}`);
 
 	if (!ipver(cfg.dns.bootstrap))
 		fail(`dns.bootstrap must be an IP address, got '${cfg.dns.bootstrap}'`);

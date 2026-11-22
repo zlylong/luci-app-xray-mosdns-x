@@ -81,6 +81,15 @@ return view.extend({
 			_('走国内上游解析的域名只返回 IPv4 地址。宽带没有 IPv6，或 IPv6 线路质量差、想让直连流量都走 IPv4 时开启。'));
 		o.default = '0';
 
+		o = s.taboption('ipv6tab', form.DynamicList, 'ipv4_only', _('只返回 IPv4 的域名'),
+			_('这些域名的 AAAA 查询和 HTTPS 记录查询返回空，不管它们按哪条规则解析，设备就只会用 IPv4 连接。例如家里服务器的 DDNS 域名带有 IPv6 地址，但在局域网里想走 IPv4。example.com 匹配它和所有子域名，full:example.com 只匹配它本身，keyword:example 匹配包含这段文字的域名。'));
+		o.placeholder = 'home.example.com';
+		o.validate = function(sid, v) {
+			if (!v)
+				return true;
+			return (/^((domain|full|keyword):)?[A-Za-z0-9_.-]+$/).test(v) ? true : _('写域名，或在前面加 domain:、full:、keyword:');
+		};
+
 		o = s.taboption('cachetab', form.Value, 'cache_size', _('缓存条数'));
 		o.datatype = 'uinteger';
 		o.default = '8192';

@@ -245,6 +245,7 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-<版本>-r1.apk
 | dns | query_log | 记录每次查询，在 DNS 页的“查询日志”标签里查看（默认 0） |
 | dns | filter_proxy_ipv6 | 代理域名不返回 AAAA（默认 1） |
 | dns | filter_direct_ipv6 | 直连域名不返回 AAAA（默认 0） |
+| dns | ipv4_only | 只返回 IPv4 的域名列表：这些域名的 AAAA 和 HTTPS 查询返回空，不管按哪条规则解析（example.com 含子域名，也可以加 full: / keyword:） |
 | dns | domestic_dns | 国内 DoH/DoT/明文上游列表 |
 | dns | hosts | 静态域名映射（节点域名/VPS 域名解析用） |
 | global | default_action | 没有命中任何规则的流量：proxy（走总节点）/ direct |
