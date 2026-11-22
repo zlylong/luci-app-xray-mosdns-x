@@ -112,6 +112,10 @@ export function load(confdir) {
 			// lower bound for answer TTLs, 0 = leave them alone
 			min_ttl: +str(d.min_ttl, '0'),
 			query_log: bool(d.query_log),
+			// EDNS client subnet on domestic queries; addresses given by hand,
+			// else the generator finds the router's public ones
+			ecs: bool(d.ecs),
+			ecs_ip: list(d.ecs_ip),
 			domestic: list(d.domestic_dns),
 			hosts: list(d.hosts),
 			// names answered over IPv4 only (AAAA and HTTPS empty), whatever their rule
@@ -179,6 +183,18 @@ export function load(confdir) {
 	}));
 	if (!length(cfg.dns.bootstrap))
 		cfg.dns.bootstrap = [ '223.5.5.5' ];
+	// one IPv4 and one IPv6 address at most
+	let ecs4 = null, ecs6 = null;
+	for (let a in cfg.dns.ecs_ip) {
+		const v = ipver(a);
+		if (v == 4 && !ecs4)
+			ecs4 = a;
+		else if (v == 6 && !ecs6)
+			ecs6 = a;
+		else
+			note(`dns.ecs_ip: ignoring '${a}' (one IPv4 and one IPv6 address)`);
+	}
+	cfg.dns.ecs_ip = (ecs4 || ecs6) ? { v4: ecs4, v6: ecs6 } : null;
 	if (!(cfg.dns.min_ttl >= 0 && cfg.dns.min_ttl <= 86400))
 		cfg.dns.min_ttl = 0;
 

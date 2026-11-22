@@ -106,6 +106,7 @@ check(order.index("query_is_node") < order.index("rule_0"), "node hostnames must
 check(plugin(m, "query_is_node")["args"]["domain"] == ["full:hk1.example.net"], "only hostname nodes need the node matcher")
 check(plugin(m, "rule_1")["args"]["domain"] == ["provider:geosite:netflix", "full:api.example.com", "keyword:tracker"], "domain syntax conversion")
 check(plugin(m, "local_seq")["args"]["exec"] == ["cache", "forward_local"], "cache must sit inside the sequence so nftset runs on hits")
+check(plugin(m, "ecs_local") is None and "ECS_IFACES=''" in open(f"{out}/chnroute/runtime.env").read(), "defaults: no ECS, no WAN interfaces watched for it")
 check(plugin(m, "forward_remote")["args"]["upstream"] == [{"addr": "tcp://1.1.1.1:53", "socks5": "127.0.0.1:1070", "idle_timeout": 10, "enable_pipeline": True}], "default foreign upstream")
 check(m["log"].get("production") is False and "_query_summary" not in plugin(m, "main_sequence")["args"]["exec"] and plugin(m, "query_is_ipv4_only") is None and plugin(m, "min_ttl") is None and plugin(m, "block_zero") is None, "defaults: no query log, no TTL floor, NXDOMAIN blocking")
 check("disabled.example" not in json.dumps(m), "disabled rule leaked into mosdns")
@@ -142,6 +143,8 @@ check('th dport 53 return comment "handled by dns_redirect"' in n, "port 53 stay
 
 # ------------------------------------------------------------------ gfw
 x, m, n = load("gfw")
+check(plugin(m, "ecs_local") is None and "ecs_local" not in json.dumps(m),
+      "ECS from the router's own address: none found (no network in the tests), so none, and no reference to it")
 check_mosdns_refs("gfw", m)
 rules = x["routing"]["rules"]
 check(rules[-1]["outboundTag"] == "direct", "gfw: everything not listed must be direct")
@@ -296,6 +299,17 @@ pre = chain(n, "prerouting")
 check("sniffing" not in x["inbounds"][0], "nosniff: Xray does not sniff")
 check(not any("@direct4_dns ip daddr @proxy4_dns" in r for r in pre) and pre.index("ip daddr @direct4_dns return") < pre.index("ip daddr @proxy4_dns goto do_tproxy"),
       "nosniff: Xray could not decide by name, so the direct set keeps precedence")
+# ECS with addresses given by hand (this fixture): one of each family, the rest dropped
+check(plugin(m, "ecs_local") == {"tag": "ecs_local", "type": "ecs", "args": {"mask4": 24, "mask6": 48, "ipv4": "203.0.113.7", "ipv6": "2001:db8::7"}},
+      f"ECS: the addresses given by hand, one IPv4 and one IPv6 (junk and a second IPv4 dropped) {plugin(m, 'ecs_local')}")
+ptags = [p["tag"] for p in m["plugins"]]
+check(plugin(m, "local_seq")["args"]["exec"][:3] == ["cache", "ecs_local", "forward_local"] and ptags.index("ecs_local") < ptags.index("local_seq"),
+      "ECS: behind the cache (which keys on the client's own query), in front of the domestic upstreams")
+fbx = plugin(m, "fallback_seq")["args"]["exec"][1]
+check(fbx["primary"][:2] == ["ecs_local", "forward_local"] and "ecs_local" not in json.dumps(fbx["secondary"])
+      and "ecs_local" not in plugin(m, "remote_seq")["args"]["exec"],
+      "ECS: the domestic side of the fallback carries it, the proxied side never does")
+check("ECS_IFACES=''" in open(f"{out}/nosniff/runtime.env").read(), "ECS given by hand: no WAN interface watched for it")
 
 # ------------------------------------------------------------------ blocklist conversion
 block = open(f"{out}/adlist/block.txt").read().split()
@@ -438,7 +452,7 @@ rt = runtime_env("chnroute")
 check(rt == {"XRAY_BIN": "/usr/bin/xray", "MOSDNS_BIN": "/usr/bin/mosdns", "GEO_DIR": "/usr/share/v2ray",
              "TPROXY_PORT": "12345", "API_PORT": "10085", "SOCKS_PORT": "1070", "DNS_PORT": "5335", "DNS_REDIRECT": "1",
              "DNS_WATCH": "manage", "FWMARK": "0x1", "ROUTE_TABLE": "100", "IPV6": "0", "KERNEL_SPLIT": "1",
-             "DEFAULT_ACTION": "proxy", "PROBE_INTERVAL": "1m", "PROBE_BACKUP": "0", "MAIN_TARGET": "hk1"},
+             "DEFAULT_ACTION": "proxy", "PROBE_INTERVAL": "1m", "PROBE_BACKUP": "0", "MAIN_TARGET": "hk1", "ECS_IFACES": ""},
       f"runtime.env (chnroute): {rt}")
 rt = runtime_env("groups")
 check(rt.get("DNS_WATCH") == "log-only" and rt.get("MAIN_TARGET") == "hk" and rt.get("PROBE_INTERVAL") == "30s",

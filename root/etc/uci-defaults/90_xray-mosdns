@@ -17,6 +17,7 @@ d '@global[0].geo_update_hour' '4'
 d '@global[0].geo_update_day' '*'
 d '@global[0].kernel_split' '1'
 d '@dns[0].redirect' '1'
+d '@dns[0].ecs' '0'
 
 # 0.9: mosdns listens on a wildcard address; 5353 would collide with mDNS
 port=$(g '@dns[0].listen_port')
