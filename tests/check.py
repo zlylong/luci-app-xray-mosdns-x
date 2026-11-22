@@ -452,7 +452,7 @@ rt = runtime_env("chnroute")
 check(rt == {"XRAY_BIN": "/usr/bin/xray", "MOSDNS_BIN": "/usr/bin/mosdns", "GEO_DIR": "/usr/share/v2ray",
              "TPROXY_PORT": "12345", "API_PORT": "10085", "SOCKS_PORT": "1070", "DNS_PORT": "5335", "DNS_REDIRECT": "1",
              "DNS_WATCH": "manage", "FWMARK": "0x1", "ROUTE_TABLE": "100", "IPV6": "0", "KERNEL_SPLIT": "1",
-             "DEFAULT_ACTION": "proxy", "PROBE_INTERVAL": "1m", "PROBE_BACKUP": "0", "MAIN_TARGET": "hk1"},
+             "DEFAULT_ACTION": "proxy", "PROBE_INTERVAL": "1m", "PROBE_BACKUP": "0", "MAIN_TARGET": "hk1", "ECS_IFACES": ""},
       f"runtime.env (chnroute): {rt}")
 rt = runtime_env("groups")
 check(rt.get("DNS_WATCH") == "log-only" and rt.get("MAIN_TARGET") == "hk" and rt.get("PROBE_INTERVAL") == "30s",
