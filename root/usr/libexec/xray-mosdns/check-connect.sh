@@ -1,11 +1,14 @@
 #!/bin/sh
 # Connectivity check for the dashboard tiles.
 # usage: check-connect.sh aliyun|google|github|youtube
-# When the proxy is running the check goes through the local SOCKS inbound,
-# otherwise it falls back to a direct request.
+# aliyun checks the domestic direct path, so it always goes direct. The
+# others check the proxy: while it runs they go through the local SOCKS
+# inbound (which always uses the main target, whatever the rules say),
+# otherwise they fall back to a direct request.
 CFG=xray-mosdns
+WAY=
 case "${1:-}" in
-	aliyun)  URL="https://www.aliyun.com";  NAME="阿里连接" ;;
+	aliyun)  URL="https://www.aliyun.com";  NAME="阿里连接"; WAY=direct ;;
 	google)  URL="https://www.google.com";  NAME="谷歌连接" ;;
 	github)  URL="https://github.com";      NAME="GitHub 连接" ;;
 	youtube) URL="https://www.youtube.com"; NAME="YouTube 连接" ;;
@@ -21,7 +24,7 @@ XRAY_BIN=$(uci -q get "$CFG.@global[0].xray_bin" 2>/dev/null || true)
 XRAY=${XRAY_BIN:-/usr/bin/xray}
 
 VIA="direct"
-if ps w 2>/dev/null | grep -v grep | grep -qF "$XRAY run -c /var/etc/xray-mosdns/xray.json"; then
+if [ "$WAY" != "direct" ] && ps w 2>/dev/null | grep -v grep | grep -qF "$XRAY run -c /var/etc/xray-mosdns/xray.json"; then
 	VIA="proxy"
 fi
 
