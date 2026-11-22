@@ -245,6 +245,11 @@ check(plugin(m, "min_ttl")["args"] == {"minimal_ttl": 120} and plugin(m, "local_
 ups = plugin(m, "forward_remote")["args"]["upstream"]
 check([u["addr"] for u in ups] == ["tcp://8.8.8.8:53", "https://1.1.1.1/dns-query", "tls://dns.google"] and all(u["socks5"] == "127.0.0.1:1070" for u in ups), "several foreign upstreams, all through the proxy, junk dropped")
 check("bootstrap" in ups[2] and "bootstrap" not in ups[1] and ups[0].get("enable_pipeline") is True and "enable_pipeline" not in ups[1], "host-name upstream gets a bootstrap resolver; pipelining only for plain TCP")
+# two bootstrap resolvers (junk dropped) go round the host-name upstreams, domestic first
+boots = [(u["addr"], u.get("bootstrap")) for u in fl + ups]
+check(boots == [("https://dns.alidns.com/dns-query", "119.29.29.29"), ("tls://dot.pub", "223.5.5.5"), ("tls://223.5.5.5", None),
+                ("tcp://8.8.8.8:53", None), ("https://1.1.1.1/dns-query", None), ("tls://dns.google", "119.29.29.29")],
+      f"bootstrap resolvers: one per host-name upstream, in turn; none for an address {boots}")
 # IPv4-only names: AAAA/HTTPS answered empty right after the static entries, before
 # any other branch; bare names mean the name and its subdomains, junk dropped
 check(plugin(m, "query_is_ipv4_only") == {"tag": "query_is_ipv4_only", "type": "query_matcher",
@@ -543,6 +548,9 @@ else:
     gal = open(f"{rd}/groups-alive-api.log").read().splitlines()
     check("api bi --server=127.0.0.1:20002 hk.alive" in gal and "api bo --server=127.0.0.1:20002 -b hk.group a.node" in gal,
           f"groups.uc watch: every member failed a probe lately, one is still alive: held on that one, not dropped to the fallback {gal}")
+    gs = [l for l in open(f"{rd}/groups-settle-api.log").read().splitlines() if " bo " in l]
+    check(gs == ["api bo --server=127.0.0.1:20002 -b hk.group b.node", "api bo --server=127.0.0.1:20002 -b hk.group a.node"],
+          f"groups.uc watch: after a start an ordered group follows list order for a few probe rounds, then is sticky again {gs}")
     sj = json.load(open(f"{rd}/status.json"))
     check(sj.get("effective") == {"default_action": "direct", "kernel_split": 0, "dns_redirect": 0, "dns_port": 5353},
           f"status.sh: the default action, split, DNS redirect and port in effect, not UCI's {sj}")

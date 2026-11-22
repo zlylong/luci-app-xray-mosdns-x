@@ -226,11 +226,17 @@ case "\$2" in
 	bi)
 		# api-mode strict-none: every member failed a probe lately (the group's
 		# balancer has none), Xray still has a.node as alive
-		if [ "\$(cat "$OUT/api-mode" 2>/dev/null)" = strict-none ]; then
+		# settle-b: nothing held, only b.node usable; settle-ab: b.node held, both usable
+		mode=\$(cat "$OUT/api-mode" 2>/dev/null)
+		if [ "\$mode" = strict-none ]; then
 			case "\$4" in
 				*.alive) printf 'Balancer: %s\n  - Selects:\n    0 a.node\n' "\$4" ;;
 				*) printf 'Balancer: %s\n  - Selecting Override:\n  - Selects:\n' "\$4" ;;
 			esac
+		elif [ "\$mode" = settle-b ]; then
+			printf 'Balancer: %s\n  - Selecting Override:\n  - Selects:\n    1 b.node\n' "\$4"
+		elif [ "\$mode" = settle-ab ]; then
+			printf 'Balancer: %s\n  - Selecting Override:\n    1   b.node\n  - Selects:\n    1 a.node\n    2 b.node\n' "\$4"
 		else
 			printf 'Balancer: %s\n  - Selecting Override:\n  - Selects:\n    0 b.node\n' "\$4"
 		fi ;;
@@ -240,9 +246,9 @@ EOF
 chmod +x "$OUT/bin/xray-api"
 printf '[{"name":"hk","tag":"hk.group","alive":"hk.alive","strategy":"ordered","failback":false,"members":[{"name":"a","tag":"a.node"},{"name":"b","tag":"b.node"}],"fallback":"direct"}]\n' \
 	> /var/etc/xray-mosdns/groups.json
-grt() { # $1 = API port in effect
-	printf "XRAY_BIN='%s'\nAPI_PORT=%s\nPROBE_INTERVAL=30s\nPROBE_BACKUP=1\nDEFAULT_ACTION=direct\nKERNEL_SPLIT=0\nDNS_REDIRECT=0\nDNS_PORT=5353\n" \
-		"$OUT/bin/xray-api" "$1" > /var/etc/xray-mosdns/runtime.env
+grt() { # $1 = API port in effect, $2 = probe interval (30s)
+	printf "XRAY_BIN='%s'\nAPI_PORT=%s\nPROBE_INTERVAL=%s\nPROBE_BACKUP=1\nDEFAULT_ACTION=direct\nKERNEL_SPLIT=0\nDNS_REDIRECT=0\nDNS_PORT=5353\n" \
+		"$OUT/bin/xray-api" "$1" "${2:-30s}" > /var/etc/xray-mosdns/runtime.env
 }
 # what UCI says differs from what is in effect in every value
 printf "config global 'global'\n\toption xray_bin '/usr/bin/xray-missing'\n\toption api_port '10085'\n\toption default_action 'proxy'\n\toption kernel_split '1'\nconfig dns 'dns'\n\toption redirect '1'\n\toption listen_port '5335'\n" > "$CONF"
@@ -262,7 +268,20 @@ ucode "$REPO/root/usr/libexec/xray-mosdns/groups.uc" watch > "$OUT/groups-watch2
 sleep 3
 kill "$gw" 2>/dev/null
 cp "$OUT/groups-api.log" "$OUT/groups-alive-api.log"
+# Xray (re)started, nothing held: for 4 probe rounds (4 x 4 s here) the group
+# follows list order, then it is sticky again. Rounds every 10 s: the first
+# holds b (the only usable one), the second, still settling, moves to a now
+# that both are usable, the third (settled) leaves the held b alone.
+grt 20002 4s
+echo settle-b > "$OUT/api-mode"
+: > "$OUT/groups-api.log"
+ucode "$REPO/root/usr/libexec/xray-mosdns/groups.uc" watch > "$OUT/groups-watch3.log" 2>&1 & gw=$!
+sleep 3; echo settle-ab > "$OUT/api-mode"
+sleep 21
+kill "$gw" 2>/dev/null
+cp "$OUT/groups-api.log" "$OUT/groups-settle-api.log"
 rm -f "$OUT/api-mode"
+grt 20002
 sh "$REPO/root/usr/libexec/xray-mosdns/status.sh" > "$OUT/status.json" 2>&1
 # update.sh below goes by the configured binary: not this one
 rm -f /var/etc/xray-mosdns/groups.json /var/etc/xray-mosdns/runtime.env "$CONF"

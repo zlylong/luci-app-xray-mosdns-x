@@ -14,6 +14,13 @@
 // it stays there for as long as that member is usable, so a primary that
 // keeps going up and down cannot drag live connections back and forth. With
 // the group's "failback" option it returns to the earliest usable member.
+//
+// A group with no member held (Xray just started, so its overrides are
+// gone, or the group had fallen to its fallback) settles first: for a few
+// probe rounds it follows list order whatever "failback" says. Xray's first
+// probe at start fails for every member, so the member that answers a probe
+// first is not necessarily the first one; held at once by a sticky group,
+// a backup would be kept until it failed.
 'use strict';
 
 import * as fs from 'fs';
@@ -23,6 +30,7 @@ const GROUPS = '/var/etc/xray-mosdns/groups.json';
 const PINS = '/var/run/xray-mosdns-pins.json';
 const PROBE_STATE = '/var/run/xray-mosdns-probe';
 const INTERVAL = 10;
+const SETTLE_ROUNDS = 4;	// probe rounds a group without a held member follows list order
 const SWITCH_COOLDOWN = 600;	// seconds between probe target switches
 
 function load(path, dflt) {
@@ -121,15 +129,25 @@ function member_tags(grp) {
 	return map(grp.members, m => m.tag);
 }
 
-// the member a group should be held on, or null to let the balancer decide
-function desired(grp, state, pins) {
+// The members of an ordered group Xray still has as alive (not every probe
+// it keeps failed), from the group's ".alive" balancer: read once per round.
+function alive_members(grp, state) {
+	if (state.alive == null)
+		state.alive = (grp.alive ? balancer(grp.alive)?.selects : null) ?? [];
+	return state.alive;
+}
+
+// the member a group should be held on, or null to let the balancer decide;
+// `settling`: list order, as with failback (see the top)
+function desired(grp, state, pins, settling) {
 	const pin = pins[grp.name];
 	if (pin && (pin in member_tags(grp)))
 		return pin;
 	if (grp.strategy == 'ordered') {
+		const sticky = !grp.failback && !settling;
 		// usable: no failed probe lately (the balancer's tolerance)
 		// sticky: the member in use is only given up when it stops being usable
-		if (!grp.failback && state.override
+		if (sticky && state.override
 		    && (state.override in member_tags(grp)) && (state.override in state.selects))
 			return state.override;
 		for (let m in grp.members)
@@ -139,8 +157,8 @@ function desired(grp, state, pins) {
 		// may be what failed. A member Xray still has as alive (not every
 		// probe it keeps failed) beats the group's fallback: the one in use
 		// first, then the first in order.
-		const alive = (grp.alive ? balancer(grp.alive)?.selects : null) ?? [];
-		if (state.override && (state.override in member_tags(grp)) && (state.override in alive))
+		const alive = alive_members(grp, state);
+		if (sticky && state.override && (state.override in member_tags(grp)) && (state.override in alive))
 			return state.override;
 		for (let m in grp.members)
 			if (m.tag in alive)
@@ -149,11 +167,18 @@ function desired(grp, state, pins) {
 	return null;
 }
 
+// group name -> until when it settles (see the top); the watcher's memory
+let settle_until = {};
+
 function enforce(grp, pins) {
 	const state = balancer(grp.tag);
 	if (!state)
 		return null;
-	const want = desired(grp, state, pins);
+	const now = time();
+	if (grp.strategy == 'ordered' && state.override == null && !(settle_until[grp.name] > now))
+		// long enough for the first member's probes to come back after a start
+		settle_until[grp.name] = now + SETTLE_ROUNDS * S.probe_interval;
+	const want = desired(grp, state, pins, settle_until[grp.name] > now);
 	if (want != state.override) {
 		override(grp.tag, want);
 		state.override = want;
@@ -175,9 +200,9 @@ function cmd_list() {
 		const state = balancer(grp.tag);
 		let current = null;
 		if (state) {
-			const want = desired(grp, state, pins);
-			// round robin / random have no single current member
-			current = want ?? state.override
+			// the member held, else the one it would be (the watcher holds it
+			// within a round); round robin / random have no single current member
+			current = state.override ?? desired(grp, state, pins)
 				?? ((grp.strategy == 'fastest') ? state.selects[0] : null);
 		}
 		push(out, {
@@ -257,7 +282,9 @@ function cmd_watch() {
 				state = balancer(grp.tag);
 			if (state) {
 				seen++;
-				if (length(state.selects))
+				// a member with a failed probe lately is not usable but still
+				// answers: the probe target is not the one at fault
+				if (length(state.selects) || (grp.strategy == 'ordered' && length(alive_members(grp, state))))
 					alive++;
 			}
 		}

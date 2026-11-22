@@ -101,19 +101,27 @@ export function build(cfg, plan) {
 	// so they are neither proxied nor (for 127.0.0.1:53) redirected back here.
 	const self = g.proxy_router ? { so_mark: +g.self_mark } : {};
 
+	// A URL with a host name: its address is looked up once, domestically, by
+	// a bootstrap resolver. mosdns-x takes one per upstream, so with several
+	// they go round the host-name upstreams in turn: one that does not answer
+	// leaves the others reachable.
+	let nboot = 0;
+	function boot(u) {
+		const host = match(u.addr, /^[a-z0-9]+:\/\/([^\/]*)/)?.[1] ?? '';
+		if (index(host, '[') != 0 && match(host, /[A-Za-z]/))
+			u.bootstrap = d.bootstrap[nboot++ % length(d.bootstrap)];
+		return u;
+	}
+
 	plugin('forward_local', 'fast_forward', {
-		upstream: map(d.domestic, addr => ({ addr, bootstrap: d.bootstrap, idle_timeout: 10, ...self })),
+		upstream: map(d.domestic, addr => boot({ addr, idle_timeout: 10, ...self })),
 	});
 	plugin('forward_remote', 'fast_forward', {
 		upstream: map(d.remote, function(addr) {
 			let u = { addr, socks5: `127.0.0.1:${g.socks_port}`, idle_timeout: 10 };
 			if (index(addr, 'tcp://') == 0)
 				u.enable_pipeline = true;
-			// a URL with a host name: its address is looked up once, domestically
-			const host = match(addr, /^[a-z0-9]+:\/\/([^\/]*)/)?.[1] ?? '';
-			if (index(host, '[') != 0 && match(host, /[A-Za-z]/))
-				u.bootstrap = d.bootstrap;
-			return u;
+			return boot(u);
 		}),
 	});
 

@@ -64,10 +64,10 @@ return view.extend({
 				/^(tcp|tls|https|h3|quic):\/\/[^\s'"\\]+$/.test(v)) ? true : _('需要是 IP 地址，或 tcp/tls/https/h3/quic 开头的地址');
 		};
 
-		o = s.taboption('upstream', form.Value, 'bootstrap', _('引导解析器'),
-			_('用来解析 DoH/DoT 上游自身域名的明文 DNS，需为国内可直连的 IP。'));
+		o = s.taboption('upstream', form.DynamicList, 'bootstrap', _('引导解析器'),
+			_('用来解析 DoH/DoT 上游自身域名的明文 DNS，需为国内可直连的 IP，例如 223.5.5.5、119.29.29.29。可以填多个：每个用域名的上游分到其中一个，轮流分配，一个不通时其余上游仍然可用。不填时用 223.5.5.5。'));
 		o.datatype = 'ipaddr';
-		o.default = '223.5.5.5';
+		o.placeholder = '223.5.5.5';
 
 		o = s.taboption('upstream', form.DynamicList, 'hosts', _('静态解析'),
 			_('格式为“域名 IP”，例如 v1.example.com 203.0.113.10。'));

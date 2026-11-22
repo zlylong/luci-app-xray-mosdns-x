@@ -69,8 +69,9 @@ config dns 'dns'
 	option filter_proxy_ipv6 '1'
 	#   for direct domains (when the uplink has no usable IPv6)
 	option filter_direct_ipv6 '0'
-	# bootstrap resolver used to reach DoH/DoT upstreams (direct, mainland)
-	option bootstrap '223.5.5.5'
+	# bootstrap resolvers used to reach DoH/DoT upstreams by name (direct,
+	# mainland); several go round the upstreams in turn
+	list bootstrap '223.5.5.5'
 	# foreign DNS servers, always queried through the proxy: an IP address
 	# (plain DNS over TCP) or a tcp:// tls:// https:// URL
 	list remote_dns '1.1.1.1'
