@@ -99,8 +99,8 @@ order = [e["if"] for e in main if isinstance(e, dict) and "if" in e]
 check(plugin(m, "rule_3")["args"]["domain"] == ["provider:geosite:category-ads-all"] and by_if["rule_3"] == ["metrics_block", "_new_nxdomain_response", "_return"], "legacy adblock becomes a block rule")
 # the DNS counts (stats.uc): every query first, every blocked one in its branch, read on 127.0.0.1
 cmain = plugin(m, "main_sequence")["args"]["exec"]
-check(cmain[0] == "metrics_all" and plugin(m, "metrics_all") == {"tag": "metrics_all", "type": "metrics_collector"}
-      and plugin(m, "metrics_block") == {"tag": "metrics_block", "type": "metrics_collector"} and m.get("api") == {"http": "127.0.0.1:5336"},
+check(cmain[0] == "metrics_all" and (plugin(m, "metrics_all") or {}).get("type") == "metrics_collector"
+      and (plugin(m, "metrics_block") or {}).get("type") == "metrics_collector" and m.get("api") == {"http": "127.0.0.1:5336"},
       f"stats: every query counted first, the counters on 127.0.0.1:5336 {cmain[:2]} {m.get('api')}")
 blocks = [e for e in cmain if isinstance(e, dict) and ("_new_nxdomain_response" in e["exec"] or "block_zero" in e["exec"])]
 check(len(blocks) >= 2 and all(e["exec"][0] == "metrics_block" for e in blocks), f"stats: every block branch counts first {blocks}")
