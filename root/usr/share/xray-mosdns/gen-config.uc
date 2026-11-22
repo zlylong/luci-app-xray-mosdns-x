@@ -158,14 +158,10 @@ env.geoip = function(tag) {
 	return geoip_seen[tag];
 };
 
-// mosdns refuses to start when a data provider's file is missing, and the
-// first download may not have happened yet
-if (cfg.adblock.lists > 0) {
-	system([ 'mkdir', '-p', cfg.adblock.dir ]);
-	for (let f in [ 'block.txt', 'allow.txt' ])
-		if (!fs.access(`${cfg.adblock.dir}/${f}`))
-			fs.writefile(`${cfg.adblock.dir}/${f}`, '');
-}
+// mosdns refuses to start when a data provider's file is missing: the
+// start script has adlist.uc ensure make the merged blocklists (from the
+// lists there are) before mosdns starts, once this configuration is the
+// one in use; nothing is written there from here
 
 function write(name, data) {
 	const tmp = `${opt.out}/.${name}.tmp`;

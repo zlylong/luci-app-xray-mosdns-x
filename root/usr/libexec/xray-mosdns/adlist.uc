@@ -27,7 +27,9 @@ const CONF = 'xray-mosdns';
 const SHIPPED = '/usr/share/xray-mosdns/adlist-catalog.json';
 const CATALOG = '/etc/xray-mosdns/adlist-catalog.json';
 const REGISTRY = 'https://adguardteam.github.io/HostlistsRegistry/assets/filters.json';
-const LOCK = '/var/run/xray-mosdns-adlist.pid';
+// held (flock) by whoever writes the list directory: an update, a move, the
+// merge at start. Never removed: a new file would be a second lock.
+const LOCK = '/var/run/xray-mosdns-adlist.lock';
 const LOG = '/tmp/xray-mosdns-adlist.log';
 const SELF = '/usr/libexec/xray-mosdns/adlist.uc';
 const CRON = '/etc/crontabs/root';
@@ -128,9 +130,48 @@ function lists() {
 	return res;
 }
 
+// One writer of the list directory at a time: an exclusive flock on LOCK,
+// taken without waiting, so that taking it and finding it free are one
+// step. It goes with the process, one that crashed included.
+let held = null, lock_error = null;
+function lock() {
+	if (held)
+		return true;
+	// /var/run is there once the system has booted; not necessarily before
+	const dir = match(LOCK, /^(.*)\//)[1];
+	if (!fs.access(dir))
+		system([ 'mkdir', '-p', dir ]);
+	const f = fs.open(LOCK, 'a');
+	if (!f) {
+		lock_error = `cannot open ${LOCK}: ${fs.error()}`;
+		return false;
+	}
+	if (!f.lock('xn')) {
+		f.close();
+		lock_error = 'an update is already running';
+		return false;
+	}
+	held = f;
+	return true;
+}
+
+function unlock() {
+	if (held) {
+		held.close();
+		held = null;
+	}
+}
+
+// whether another process holds it (an update running)
 function running() {
-	const pid = trim(fs.readfile(LOCK) ?? '');
-	return match(pid, /^[0-9]+$/) && fs.access(`/proc/${pid}`);
+	if (held)
+		return false;
+	const f = fs.open(LOCK, 'a');
+	if (!f)
+		return false;
+	const free = f.lock('sn');
+	f.close();
+	return !free;
 }
 
 // ---------------------------------------------------------------- download
@@ -359,29 +400,25 @@ function cmd_catalog_sync() {
 
 // ---------------------------------------------------------------- update
 
-// A copy of a list in use, to put back if need be: a hard link where the
-// file system has them (no space taken), else a real copy (vfat and exfat,
-// as on most USB sticks, have no hard links). Paths are checked ones.
-function keep_copy(from, to) {
-	if (system(`ln -f '${from}' '${to}' 2>/dev/null`) == 0 && fs.lstat(to)?.inode == fs.lstat(from)?.inode)
-		return true;
-	if (fs.lstat(to)?.type == 'file')
-		fs.unlink(to);
-	if (system(`cp '${from}' '${to}' 2>/dev/null`) == 0 && fs.lstat(to)?.type == 'file'
-	    && fs.lstat(to).size == fs.lstat(from)?.size)
-		return true;
-	if (fs.lstat(to)?.type == 'file')
-		fs.unlink(to);
-	return false;
+// A file's content written to another file (made, or rewritten in place:
+// the same file afterwards), checked by its size. Paths are checked ones.
+function copy_file(from, to) {
+	return system(`cat '${from}' > '${to}' 2>/dev/null`) == 0 && fs.lstat(to)?.type == 'file'
+		&& fs.lstat(to).size == fs.lstat(from)?.size;
 }
 
-// block.txt / allow.txt are what mosdns loads; each is replaced in one
-// rename so a reload never sees half a file. Both are written in full
-// first: when either cannot be (a full flash cuts it short), both stay as
-// they were and the reason is returned. The same holds for the two
-// renames: a copy of each list in use is kept until both new ones are in
-// place, and one that cannot be replaced puts the other back, so mosdns
-// never has a new block list with an old exception list or the reverse.
+// block.txt / allow.txt are what mosdns loads. Both are written in full
+// first, beside them: when either cannot be (a full flash cuts it short),
+// both stay as they were and the reason is returned. Then each is
+// rewritten in place, never replaced by another file: mosdns-x watches the
+// file it opened, and one renamed over it is reloaded once, after which no
+// later update is noticed until mosdns restarts. Its reload waits for a
+// second without writes, so it reads a list whole. Copies of the lists in
+// use are kept until both are rewritten, and one that cannot be rewritten
+// puts them back: mosdns does not get a new block list with an old
+// exception list, or the reverse. Where there is no room for the copies the
+// lists are rewritten without them: an update that cannot finish then
+// leaves them mixed until the next one, which beats never updating.
 function merge(cfg, all) {
 	const kinds = [ 'block', 'allow' ];
 	const tmp = (kind) => `${cfg.dir}/.${kind}.tmp`;
@@ -400,58 +437,55 @@ function merge(cfg, all) {
 	}
 	const live = (kind) => `${cfg.dir}/${kind}.txt`;
 	const prev = (kind) => `${cfg.dir}/.${kind}.prev`;
-	// something other than a file where a list goes cannot be replaced
-	for (let kind in kinds) {
-		const t = fs.lstat(live(kind))?.type;
-		if (!err && t != null && t != 'file')
-			err = `cannot replace ${live(kind)}: not a file`;
-	}
-	// the copy kept has to be the list in use: with a directory named like
-	// it, ln would put the link inside and there would be no copy at all
+	// something other than a file where a list or its copy goes: not ours
+	// to remove, nothing is rewritten
 	for (let kind in kinds) {
 		if (err)
 			break;
-		const p = fs.lstat(prev(kind))?.type;
-		if (p != null && p != 'file')
+		const t = fs.lstat(live(kind))?.type, p = fs.lstat(prev(kind))?.type;
+		if (t != null && t != 'file')
+			err = `cannot replace ${live(kind)}: not a file`;
+		else if (p != null && p != 'file')
 			err = `cannot keep ${live(kind)} while replacing it: ${prev(kind)} is in the way`;
 		else if (p != null && !fs.unlink(prev(kind)))
 			err = `cannot keep ${live(kind)} while replacing it: ${fs.error()}`;
-		else if (fs.access(live(kind)) && !keep_copy(live(kind), prev(kind)))
-			err = `cannot keep a copy of ${live(kind)} while replacing it (is the disk full?)`;
 	}
-	let replaced = [], stuck = {};
+	let copies = !err;
+	for (let kind in kinds)
+		if (copies && fs.access(live(kind)) && !copy_file(live(kind), prev(kind)))
+			copies = false;
+	let written = [], keep = {};
 	for (let kind in kinds) {
 		if (err)
 			break;
-		if (fs.rename(tmp(kind), live(kind))) {
-			push(replaced, kind);
+		if (copy_file(tmp(kind), live(kind))) {
+			push(written, kind);
 			continue;
 		}
-		err = `cannot replace ${live(kind)}: ${fs.error()}`;
-		for (let k in replaced) {
-			if (fs.access(prev(k)) ? fs.rename(prev(k), live(k)) : fs.unlink(live(k)))
+		err = `cannot rewrite ${live(kind)} (is the disk full?)`;
+		// this one may be cut short, the ones before it are new: back as they were
+		for (let k in [ ...written, kind ]) {
+			if (copies && fs.access(prev(k)) ? copy_file(prev(k), live(k)) : (k == kind && fs.writefile(live(k), '') != null))
 				continue;
-			// the list in use could not be put back: its copy stays
-			stuck[k] = true;
-			err += `; ${live(k)} could not be put back, the one it replaced is ${prev(k)}`;
+			keep[k] = true;
+			err += `; ${live(k)} could not be put back as it was`;
 		}
 	}
 	for (let kind in kinds) {
 		// a directory in the way is not ours to remove
 		if (fs.lstat(tmp(kind))?.type == 'file')
 			fs.unlink(tmp(kind));
-		if (!stuck[kind] && fs.lstat(prev(kind))?.type == 'file')
+		if (!keep[kind] && fs.lstat(prev(kind))?.type == 'file')
 			fs.unlink(prev(kind));
 	}
 	return err;
 }
 
 function cmd_update() {
-	if (running()) {
-		out({ ok: false, error: 'an update is already running' });
+	if (!lock()) {
+		out({ ok: false, error: lock_error });
 		return 1;
 	}
-	fs.writefile(LOCK, fs.readlink('/proc/self') ?? '0');
 	const cfg = settings();
 	system([ 'mkdir', '-p', cfg.dir ]);
 
@@ -511,7 +545,7 @@ function cmd_update() {
 	if (merr)
 		total = state.total ?? 0;
 	fs.writefile(state_path(cfg), sprintf('%J', { lists: lists_state, total, finished: time(), error: merr }));
-	fs.unlink(LOCK);
+	unlock();
 	if (merr) {
 		system([ 'logger', '-p', 'daemon.err', '-t', 'xray-mosdns', `blocklists: ${merr}; the previous lists stay in use` ]);
 		out({ ok: false, error: merr, lists: length(all), total, failed });
@@ -541,32 +575,63 @@ function cmd_migrate() {
 		out({ ok: true, failed: [] });
 		return 0;
 	}
-	if (running()) {
+	// and no update starts while the files move
+	if (!lock()) {
 		system([ 'logger', '-t', 'xray-mosdns',
-			`blocklists: an update is running; moving the lists from ${cfg.base} into ${cfg.dir} is left to the next start` ]);
+			`blocklists: ${lock_error}; moving the lists from ${cfg.base} into ${cfg.dir} is left to the next start` ]);
 		out({ ok: false, postponed: true });
 		return 2;
 	}
-	// and no update starts while the files move
-	fs.writefile(LOCK, fs.readlink('/proc/self') ?? '0');
 	const failed = migrate(cfg);
-	fs.unlink(LOCK);
+	unlock();
 	if (length(failed))
 		warn(join(' ', failed), '\n');
 	out({ ok: !length(failed), failed });
 	return length(failed) ? 1 : 0;
 }
 
-// An update when a subscribed list has no data yet, or the merged lists
-// mosdns reads are missing (a move that did not finish, say).
+// At every start, before mosdns: it does not start at all when a list it
+// reads is missing (the config has them as soon as a subscription is
+// enabled, as config.uc counts them), and nothing would start it again
+// once the list is there. Missing merged lists (or empty ones while the
+// lists there have data) are made from the lists there are now, which
+// needs no download; while an update runs, which writes them itself, empty
+// ones stand in (never over a file that is there) for it to rewrite. A
+// subscribed list with no data yet is fetched in the background. What
+// cannot be fixed so is printed on stderr.
 function cmd_ensure() {
 	const cfg = settings();
+	let wanted = 0;
+	uci.foreach(CONF, 'adlist', (s) => { if (s.enabled != '0' && s.url) wanted++; });
+	if (!wanted)
+		return 0;
 	const all = lists();
+	const live = (kind) => `${cfg.dir}/${kind}.txt`;
+	// missing, or empty while the lists there have data (an empty stand-in
+	// an earlier version made): made again
+	const data = (kind) => length(filter(all, l => (fs.stat(`${cfg.dir}/${l.id}.${kind}`)?.size ?? 0) > 0)) > 0;
+	const missing = filter([ 'block', 'allow' ], k => fs.lstat(live(k))?.type != 'file'
+		|| (fs.lstat(live(k)).size == 0 && data(k)));
+	if (length(missing)) {
+		system([ 'mkdir', '-p', cfg.dir ]);
+		let err = null;
+		if (lock()) {
+			err = merge(cfg, all);
+			unlock();
+		}
+		else
+			for (let k in missing)
+				if (fs.lstat(live(k)) == null)
+					fs.open(live(k), 'wx')?.close();
+		for (let k in missing)
+			if (fs.lstat(live(k))?.type != 'file') {
+				warn(`${live(k)} is missing and cannot be made${err ? ': ' + err : ''}\n`);
+				break;
+			}
+	}
 	for (let l in all)
 		if (!fs.access(`${cfg.dir}/${l.id}.block`))
 			return cmd_start();
-	if (length(all) && (fs.lstat(`${cfg.dir}/block.txt`)?.type != 'file' || fs.lstat(`${cfg.dir}/allow.txt`)?.type != 'file'))
-		return cmd_start();
 	return 0;
 }
 
