@@ -260,7 +260,7 @@ return view.extend({
 				E('div', { 'class': 'cbi-page-actions', 'style': 'text-align:left' }, [
 					E('button', { 'class': 'cbi-button cbi-button-action', 'click': runChecks }, _('检测'))
 				])
-			], _('服务运行时经代理访问，否则直连。')),
+			], _('阿里云总是直连，检测国内直连是否正常；其余在服务运行时经代理访问，否则直连。')),
 			xm.section(_('节点流量'), [
 				trafficNote,
 				E('table', { 'class': 'table' }, [
