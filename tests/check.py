@@ -93,10 +93,17 @@ by_if = {e["if"]: e["exec"] for e in main if isinstance(e, dict) and "if" in e}
 check(by_if["rule_0"] == ["local_seq", "add_direct", "_return"], "chnroute: direct rule must resolve locally and mark the direct set")
 check(by_if["rule_1"][0] == {"if": "query_is_ipv6", "exec": ["_new_empty_response", "_return"]}, "default: proxied names get no AAAA, direct names do")
 check(by_if["rule_1"][-3:] == ["remote_seq", "add_proxy", "_return"], "chnroute: proxy rule must resolve remotely and mark the proxy set")
-check(by_if["rule_2"] == ["_new_nxdomain_response", "_return"], "chnroute: block rule must answer NXDOMAIN")
+check(by_if["rule_2"] == ["metrics_block", "_new_nxdomain_response", "_return"], "chnroute: block rule must answer NXDOMAIN (and is counted)")
 order = [e["if"] for e in main if isinstance(e, dict) and "if" in e]
 # the fixture is a pre-0.9.1 config: its mode and ad switch must turn into rule rows after the user's rules
-check(plugin(m, "rule_3")["args"]["domain"] == ["provider:geosite:category-ads-all"] and by_if["rule_3"] == ["_new_nxdomain_response", "_return"], "legacy adblock becomes a block rule")
+check(plugin(m, "rule_3")["args"]["domain"] == ["provider:geosite:category-ads-all"] and by_if["rule_3"] == ["metrics_block", "_new_nxdomain_response", "_return"], "legacy adblock becomes a block rule")
+# the DNS counts (stats.uc): every query first, every blocked one in its branch, read on 127.0.0.1
+cmain = plugin(m, "main_sequence")["args"]["exec"]
+check(cmain[0] == "metrics_all" and plugin(m, "metrics_all") == {"tag": "metrics_all", "type": "metrics_collector"}
+      and plugin(m, "metrics_block") == {"tag": "metrics_block", "type": "metrics_collector"} and m.get("api") == {"http": "127.0.0.1:5336"},
+      f"stats: every query counted first, the counters on 127.0.0.1:5336 {cmain[:2]} {m.get('api')}")
+blocks = [e for e in cmain if isinstance(e, dict) and ("_new_nxdomain_response" in e["exec"] or "block_zero" in e["exec"])]
+check(len(blocks) >= 2 and all(e["exec"][0] == "metrics_block" for e in blocks), f"stats: every block branch counts first {blocks}")
 check(plugin(m, "rule_4")["args"]["domain"] == ["provider:geosite:cn"] and by_if["rule_4"] == ["local_seq", "add_direct", "_return"], "legacy chnroute: mainland domains resolve locally")
 check(plugin(m, "rule_5")["args"]["domain"] == ["provider:geosite:geolocation-!cn"] and by_if["rule_5"][-3:] == ["remote_seq", "add_proxy", "_return"], "legacy chnroute: non-mainland domains resolve through the proxy")
 check(order == ["query_is_lan_name || query_is_ptr", "query_is_node"] + ["rule_%d" % i for i in range(6)], f"chnroute: rule order {order}")
@@ -241,7 +248,7 @@ prov = {p["tag"]: p for p in m["data_providers"]}
 check(prov.get("adblock") == {"tag": "adblock", "file": "/tmp/xm-adlists/xray-mosdns/block.txt", "auto_reload": True} and prov.get("adallow", {}).get("file") == "/tmp/xm-adlists/xray-mosdns/allow.txt", "adlist: merged files are data providers with auto reload, in our own subdirectory of a directory set in the options")
 gmain = plugin(m, "main_sequence")["args"]["exec"]
 adrow = [e for e in gmain if isinstance(e, dict) and "query_is_ad_exception" in e.get("if", "")]
-check(len(adrow) == 1 and adrow[0]["exec"] == ["block_zero", "_return"] and adrow[0]["if"].endswith("&& (! query_is_ad_exception)"), "adlist: blocked (0.0.0.0 mode) unless one of the lists' own exceptions matches")
+check(len(adrow) == 1 and adrow[0]["exec"] == ["metrics_block", "block_zero", "_return"] and adrow[0]["if"].endswith("&& (! query_is_ad_exception)"), "adlist: blocked (0.0.0.0 mode) unless one of the lists' own exceptions matches")
 # DNS options set in this fixture
 check(plugin(m, "block_zero")["args"] == {"ipv4": ["0.0.0.0"], "ipv6": ["::"]}, "block mode zero")
 check(plugin(m, "min_ttl")["args"] == {"minimal_ttl": 120} and plugin(m, "local_seq")["args"]["exec"] == ["cache", "forward_local", "min_ttl"] and plugin(m, "remote_seq")["args"]["exec"] == ["cache", "forward_remote", "min_ttl"] and plugin(m, "fallback_seq")["args"]["exec"][-1] == "min_ttl", "TTL floor sits behind the forwarder in every cached sequence")
@@ -260,7 +267,8 @@ check(plugin(m, "query_is_ipv4_only") == {"tag": "query_is_ipv4_only", "type": "
       and gmain[gmain.index("hosts") + 1] == {"if": "query_is_ipv4_only && query_is_ipv6", "exec": ["_new_empty_response", "_return"]},
       f"dns.ipv4_only: a matcher and an empty answer for AAAA/HTTPS, behind hosts: {gmain[:5]}")
 # the preset summary node first: it wraps everything behind it, so every query is logged
-check(m["log"]["production"] is True and gmain[0] == "_query_summary" and gmain.count("_query_summary") == 1, "query log: JSON log lines, the preset summary node first in the main sequence")
+check(m["log"]["production"] is True and gmain[0] == "_query_summary" and gmain.count("_query_summary") == 1 and gmain[1] == "metrics_all",
+      "query log: JSON log lines, the preset summary node first in the main sequence (then the counter)")
 # mosdns-x v26.05.25 panics while loading any plugin of type query_summary
 check(not [p for p in m["plugins"] if p["type"] == "query_summary"] and not any(f'"log_{k}"' in json.dumps(m) for k in ("lan", "block", "direct", "proxy", "fallback")), "query log: no query_summary plugins (they crash mosdns-x), no references to them")
 check({"type": "field", "inboundTag": ["socks-in"], "balancerTag": "hk.group"} in x["routing"]["rules"], "internal SOCKS inbound follows the main target (a group here)")
@@ -419,6 +427,28 @@ else:
           f"geo schedule: junk day/hour mean every day at 4, the line replaced: {open(f'{sd}/cron-junk.txt').read()!r}")
     check(res("jstr") == 'quote " backslash \\ tab \t newline \n end', "update.sh jstr: escapes quotes, backslashes and control characters")
 
+    # stats.uc (the DNS counts)
+    s2 = res("stats-s2")
+    check(s2.get("today") == {"queries": 15, "blocked": 3} and s2.get("since") == "2025-11-21" and s2.get("running") is True,
+          f"stats: samples add up the counters' growth for today {s2}")
+    s3 = res("stats-s3")
+    check(s3.get("today") == {"queries": 37, "blocked": 8}, f"stats: a new mosdns start counts all it has, even more than before {s3}")
+    check(res("stats-big").get("today") == {"queries": 37 + 1234567 - 22, "blocked": 10}, f"stats: counters in exponent notation {res('stats-big')}")
+    check(json.load(open(f"{sd}/stats/disk.json")).get("days", {}).get("2025-11-21") == [37 + 1234570 - 22, 11],
+          "stats: flush keeps the counts on flash (after a last sample)")
+    check(res("stats-reboot").get("today") == {"queries": 37 + 1234570 - 22, "blocked": 11},
+          f"stats: after a reboot the flash copy carries on {res('stats-reboot')}")
+    d2 = res("stats-day2")
+    check(d2.get("today") == {"queries": 10, "blocked": 1} and [x["day"] for x in d2.get("days", [])] == ["2025-11-22", "2025-11-21"]
+          and d2.get("total", {}).get("queries") == 37 + 1234570 - 22 + 10,
+          f"stats: a new day gets its own count, newest first, the total over the days {d2}")
+    d31 = res("stats-day31")
+    check([x["day"] for x in d31.get("days", [])] == ["2025-12-21", "2025-11-22"] and d31.get("total", {}).get("queries") == 11
+          and d31.get("since") == "2025-11-22", f"stats: 30 days kept, older ones dropped, counted since the first one kept {d31}")
+    check("running" not in json.load(open(f"{sd}/stats/disk.json")), "stats: only the counts are kept on flash")
+    dn = res("stats-down")
+    check(dn.get("running") is False and dn.get("total") == d31.get("total"), f"stats: no counters to read: the counts as they were {dn}")
+
     def txt(name):
         return open(f"{sd}/{name}.txt").read().splitlines()
 
@@ -468,7 +498,7 @@ def runtime_env(case):
 
 rt = runtime_env("chnroute")
 check(rt == {"XRAY_BIN": "/usr/bin/xray", "MOSDNS_BIN": "/usr/bin/mosdns", "GEO_DIR": "/usr/share/v2ray",
-             "TPROXY_PORT": "12345", "API_PORT": "10085", "SOCKS_PORT": "1070", "DNS_PORT": "5335", "DNS_REDIRECT": "1",
+             "TPROXY_PORT": "12345", "API_PORT": "10085", "SOCKS_PORT": "1070", "DNS_PORT": "5335", "STATS_PORT": "5336", "DNS_REDIRECT": "1",
              "DNS_WATCH": "manage", "FWMARK": "0x1", "ROUTE_TABLE": "100", "IPV6": "0", "KERNEL_SPLIT": "1",
              "DEFAULT_ACTION": "proxy", "PROBE_INTERVAL": "1m", "PROBE_BACKUP": "0", "MAIN_TARGET": "hk1", "ECS_IFACES": ""},
       f"runtime.env (chnroute): {rt}")

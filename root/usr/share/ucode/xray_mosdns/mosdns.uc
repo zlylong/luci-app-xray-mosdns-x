@@ -61,7 +61,8 @@ export function build(cfg, plan) {
 	// that record too and it can carry IPv6 address hints
 	const no_aaaa = { if: 'query_is_ipv6', exec: [ '_new_empty_response', '_return' ] };
 
-	const block = (d.block_mode == 'zero') ? [ 'block_zero', '_return' ] : [ '_new_nxdomain_response', '_return' ];
+	// metrics_block counts what is blocked (stats.uc)
+	const block = (d.block_mode == 'zero') ? [ 'metrics_block', 'block_zero', '_return' ] : [ 'metrics_block', '_new_nxdomain_response', '_return' ];
 
 	// answer through the proxy; `mark` records the addresses for the kernel
 	function via_proxy(mark) {
@@ -88,6 +89,10 @@ export function build(cfg, plan) {
 
 	// ------------------------------------------------------------ executables
 	plugin('edns_cookie_filter', 'edns0_filter', { discard: [ 10 ] });
+	// every query and every blocked one, counted from mosdns' start; read on
+	// 127.0.0.1 (api.http, /metrics) by stats.uc
+	plugin('metrics_all', 'metrics_collector');
+	plugin('metrics_block', 'metrics_collector');
 
 	let cache = { size: d.cache_size, lazy_cache_ttl: 86400 };
 	if (d.cache_everything)
@@ -214,6 +219,7 @@ export function build(cfg, plan) {
 	// (its args constructor returns new(*Args), Init asserts *Args).
 	if (d.query_log)
 		push(main, '_query_summary');
+	push(main, 'metrics_all');
 	push(main, 'edns_cookie_filter');
 	if (length(d.hosts))
 		push(main, 'hosts');
@@ -293,6 +299,7 @@ export function build(cfg, plan) {
 	return {
 		// production = one JSON object per line, which is what the query log reader parses
 		log: { level: 'info', file: '/tmp/mosdns-x.log', production: d.query_log },
+		api: { http: `127.0.0.1:${d.stats_port}` },
 		data_providers: [
 			{ tag: 'geosite', file: `${g.geo_dir}/geosite.dat`, auto_reload: true },
 			{ tag: 'geoip', file: `${g.geo_dir}/geoip.dat`, auto_reload: true },

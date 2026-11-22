@@ -121,11 +121,25 @@ watch_xray() {
 	fi
 }
 
+# the DNS counts (stats.uc): a sample every 10 minutes, onto flash every hour
+STATS=/usr/libexec/xray-mosdns/stats.uc
+SAMPLE_ROUNDS=$((600 / INTERVAL)); FLUSH_ROUNDS=$((3600 / INTERVAL))
+round=0
+stats() {
+	round=$((round + 1))
+	if [ $((round % FLUSH_ROUNDS)) -eq 0 ]; then
+		ucode "$STATS" flush >/dev/null 2>&1
+	elif [ $((round % SAMPLE_ROUNDS)) -eq 0 ]; then
+		ucode "$STATS" sample >/dev/null 2>&1
+	fi
+}
+
 fail=0
 while :; do
 	ports
 	trim_log
 	watch_xray
+	stats
 	if [ "$MODE" != "manage" ]; then
 		sleep "$INTERVAL"
 		continue
