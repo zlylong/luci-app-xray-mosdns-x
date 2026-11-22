@@ -60,6 +60,14 @@ reason() {
 }
 
 start_service() {
+	# One start at a time, and none while a stop runs: rc.common takes this
+	# lock (fd 1000) around stop but not around start, and a reload is a
+	# start here (LuCI's restart, Save & Apply, interface events and the
+	# group watcher can all ask for one at once). A start that finds one
+	# running waits for it, then applies the configuration as it is by
+	# then. Held until this script exits, service_started included.
+	procd_lock
+
 	# configs written by <= 0.8 pointed dnsmasq at mosdns; undo that once
 	"$PLUGIN_DIR/dnsmasq.sh" revert || true
 
@@ -76,10 +84,12 @@ start_service() {
 		return 1
 	fi
 
-	# blocklist subscriptions: keep the daily job in step with the settings and
-	# fetch lists that were just added (in the background, start does not wait)
-	ucode /usr/libexec/xray-mosdns/adlist.uc cron-sync >/dev/null 2>&1
-	ucode /usr/libexec/xray-mosdns/adlist.uc ensure >/dev/null 2>&1
+	# blocklist subscriptions: keep the daily job in step with the settings,
+	# move lists an older version kept elsewhere, and fetch lists that were
+	# just added (in the background, start does not wait). The download must
+	# not hold the start lock: fd 1000 is closed for it.
+	ucode /usr/libexec/xray-mosdns/adlist.uc cron-sync >/dev/null 2>&1 1000>&-
+	ucode /usr/libexec/xray-mosdns/adlist.uc ensure >/dev/null 2>&1 1000>&-
 
 	# what the new configuration asks for (UCI)
 	uci_values
@@ -94,6 +104,7 @@ start_service() {
 	chmod 600 "$MOSDNS_LOG"
 
 	bad=""
+	broken=""
 	if ! problem=$(preflight); then
 		# What runs keeps running: a mistyped path or a geo file moved away
 		# for a moment must not take the proxy and DNS down with it.
@@ -106,6 +117,14 @@ start_service() {
 		fi
 	else
 		generate_and_switch
+	fi
+
+	# Neither set is whole in $OUT: nothing can run on it. Stopping leaves
+	# LAN traffic and DNS as they are without the service.
+	if [ -n "$broken" ]; then
+		set_error "$bad；上一份配置也无法完整恢复（剩下的在 $OUT/.prev），服务已停止"
+		teardown
+		return 1
 	fi
 
 	if [ -n "$bad" ]; then
@@ -152,7 +171,8 @@ runtime_values() {
 }
 
 # ---- new configuration: generated aside, checked, then switched to; sets
-# $bad when it was not taken
+# $bad when it was not taken, and $broken as well when the old set could
+# not be kept whole either
 generate_and_switch() {
 	rm -rf "$NEW"
 	mkdir -p "$NEW"
@@ -176,13 +196,15 @@ generate_and_switch() {
 			# all files or none: when they cannot all be put in place the
 			# old set is back whole, and the code below puts its rules back
 			# too. The new set stays in $NEW to look at.
-			if "$PLUGIN_DIR/switch.sh" "$NEW" "$OUT" 2>"$OUT/.switch.log"; then
-				rm -rf "$NEW"
-				rm -f "$ERR" "$OUT/.switch.log"
-			else
-				bad="新配置无法替换到 $OUT：$(reason "$OUT/.switch.log")"
-				rm -f "$OUT/.switch.log"
-			fi
+			"$PLUGIN_DIR/switch.sh" "$NEW" "$OUT" 2>"$OUT/.switch.log"
+			rc=$?
+			# its first line says what failed
+			[ "$rc" = 0 ] || bad="新配置无法替换到 $OUT：$(head -n 1 "$OUT/.switch.log" | cut -c1-300)"
+			case $rc in
+				0) rm -rf "$NEW"; rm -f "$ERR" ;;
+				3) broken=1 ;;
+			esac
+			rm -f "$OUT/.switch.log"
 		else
 			bad="防火墙规则加载失败：$(reason "$NEW/.log")"
 		fi

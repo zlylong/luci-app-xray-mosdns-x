@@ -10,6 +10,11 @@
 # step fails, the new files go back to <new dir>, the old ones back in
 # place, and it exits 1 with the reason on stderr. The daemons never see a
 # mix of the two sets.
+#
+# Exit status: 0 the new set is in place; 1 it is not, the old set is (the
+# caller can go on with it); 3 neither is whole, because putting the old
+# set back failed too: what is left of it stays in <dir in use>/.prev, and
+# nothing may be started on <dir in use>.
 NEW=$1
 OUT=$2
 [ -d "$NEW" ] && [ -d "$OUT" ] || { echo "usage: switch.sh <new dir> <dir in use>" >&2; exit 2; }
@@ -26,18 +31,23 @@ names() {
 undo() {
 	back=1
 	for n in $moved; do
-		mv -f "$OUT/$n" "$NEW/" 2>/dev/null
 		if [ -e "$P/$n" ]; then
+			# the new file back to look at, the old one in its place (over
+			# the new one, if that could not be moved back)
+			mv -f "$OUT/$n" "$NEW/" 2>/dev/null
 			mv -f "$P/$n" "$OUT/" 2>/dev/null || back=0
+		else
+			# a file the old set did not have must not stay
+			mv -f "$OUT/$n" "$NEW/" 2>/dev/null || rm -f "$OUT/$n" 2>/dev/null || back=0
 		fi
 	done
 	echo "$1" >&2
 	if [ "$back" = 1 ]; then
 		rm -rf "$P"
-	else
-		echo "not every old file could be put back: they are in $P" >&2
+		exit 1
 	fi
-	exit 1
+	echo "the old set could not be put back whole either: what is left of it is in $P" >&2
+	exit 3
 }
 
 rm -rf "$P"

@@ -47,18 +47,52 @@ function load(path, dflt) {
 	}
 }
 
+// The directory set in the options may be shared with other programs (a
+// USB stick, say): there everything this file writes goes into its own
+// subdirectory, xray-mosdns/. Under /etc/xray-mosdns the directory is ours
+// as it is. config.uc points mosdns at the same place.
 function settings() {
-	let dir = uci.get_first(CONF, 'adblock', 'dir') ?? '/etc/xray-mosdns/adlists';
-	if (!match(dir, /^\/[A-Za-z0-9_.\/-]+$/) || index(dir, '..') >= 0)
-		dir = '/etc/xray-mosdns/adlists';
+	let base = rtrim(uci.get_first(CONF, 'adblock', 'dir') ?? '', '/');
+	if (!match(base, /^\/[A-Za-z0-9_.\/-]+$/) || index(base, '..') >= 0)
+		base = '/etc/xray-mosdns/adlists';
+	const own = (base == '/etc/xray-mosdns' || index(base, '/etc/xray-mosdns/') == 0);
 	let hour = uci.get_first(CONF, 'adblock', 'update_hour') ?? '5';
 	if (!match(hour, /^[0-9]{1,2}$/) || +hour > 23)
 		hour = '5';
 	return {
-		dir: rtrim(dir, '/'),
+		dir: own ? base : `${base}/xray-mosdns`,
+		base, own,
 		auto: (uci.get_first(CONF, 'adblock', 'auto_update') ?? '1') == '1',
 		hour,
 	};
+}
+
+// Up to 0.9.8 the lists of a directory set in the options were kept at its
+// top. They move into the subdirectory once, by name: what the state file
+// there (ours if it has the lists we wrote) and UCI name, nothing else.
+function migrate(cfg) {
+	if (cfg.own)
+		return;
+	const st = load(`${cfg.base}/state.json`, null);
+	if (type(st?.lists) != 'object')
+		return;
+	let ids = keys(st.lists);
+	uci.foreach(CONF, 'adlist', (s) => push(ids, s['.name']));
+	let names = [ 'block.txt', 'allow.txt', '.block.tmp', '.allow.tmp' ];
+	for (let id in uniq(ids))
+		if (match(id, /^[A-Za-z0-9_]+$/))
+			push(names, `${id}.block`, `${id}.allow`, `.${id}.raw`, `.${id}.block.tmp`, `.${id}.allow.tmp`);
+	// the state last: until it has moved, a migration cut short is done again
+	push(names, 'state.json');
+	system([ 'mkdir', '-p', cfg.dir ]);
+	let moved = 0;
+	for (let n in names) {
+		if (fs.lstat(`${cfg.base}/${n}`)?.type != 'file')
+			continue;
+		if (fs.rename(`${cfg.base}/${n}`, `${cfg.dir}/${n}`))
+			moved++;
+	}
+	system([ 'logger', '-t', 'xray-mosdns', `blocklists: ${moved} files moved from ${cfg.base} into ${cfg.dir}` ]);
 }
 
 function lists() {
@@ -293,6 +327,7 @@ function cmd_catalog_sync() {
 	}
 	const res = sync_catalog(cat);
 	const cfg = settings();
+	migrate(cfg);
 	let state = load(state_path(cfg), null);
 	if (state?.lists) {
 		for (let id in keys(state.lists))
@@ -305,10 +340,13 @@ function cmd_catalog_sync() {
 
 // ---------------------------------------------------------------- update
 
-// block.txt / allow.txt are what mosdns loads; they are replaced in one
+// block.txt / allow.txt are what mosdns loads; each is replaced in one
 // rename so a reload never sees half a file. Both are written in full
 // first: when either cannot be (a full flash cuts it short), both stay as
-// they were and the reason is returned.
+// they were and the reason is returned. The same holds for the two
+// renames: the lists in use are kept as hard links until both new ones are
+// in place, and one that cannot be replaced puts the other back, so mosdns
+// never has a new block list with an old exception list or the reverse.
 function merge(cfg, all) {
 	const kinds = [ 'block', 'allow' ];
 	const tmp = (kind) => `${cfg.dir}/.${kind}.tmp`;
@@ -325,12 +363,43 @@ function merge(cfg, all) {
 			break;
 		}
 	}
+	const live = (kind) => `${cfg.dir}/${kind}.txt`;
+	const prev = (kind) => `${cfg.dir}/.${kind}.prev`;
+	// something other than a file where a list goes cannot be replaced
 	for (let kind in kinds) {
-		if (!err && !fs.rename(tmp(kind), `${cfg.dir}/${kind}.txt`))
-			err = `cannot replace ${cfg.dir}/${kind}.txt: ${fs.error()}`;
+		const t = fs.lstat(live(kind))?.type;
+		if (!err && t != null && t != 'file')
+			err = `cannot replace ${live(kind)}: not a file`;
+	}
+	for (let kind in kinds) {
+		if (err)
+			break;
+		fs.unlink(prev(kind));
+		if (fs.access(live(kind)) && system([ 'ln', '-f', live(kind), prev(kind) ]) != 0)
+			err = `cannot keep ${live(kind)} while replacing it`;
+	}
+	let replaced = [];
+	for (let kind in kinds) {
+		if (err)
+			break;
+		if (fs.rename(tmp(kind), live(kind))) {
+			push(replaced, kind);
+			continue;
+		}
+		err = `cannot replace ${live(kind)}: ${fs.error()}`;
+		for (let k in replaced) {
+			if (fs.access(prev(k)))
+				fs.rename(prev(k), live(k));
+			else
+				fs.unlink(live(k));
+		}
+	}
+	for (let kind in kinds) {
 		// a directory in the way is not ours to remove
-		if (fs.stat(tmp(kind))?.type == 'file')
+		if (fs.lstat(tmp(kind))?.type == 'file')
 			fs.unlink(tmp(kind));
+		if (fs.lstat(prev(kind))?.type == 'file')
+			fs.unlink(prev(kind));
 	}
 	return err;
 }
@@ -342,6 +411,7 @@ function cmd_update() {
 	}
 	fs.writefile(LOCK, fs.readlink('/proc/self') ?? '0');
 	const cfg = settings();
+	migrate(cfg);
 	system([ 'mkdir', '-p', cfg.dir ]);
 
 	// follow the catalogue first, so a moved list is fetched from its new address;
@@ -382,22 +452,13 @@ function cmd_update() {
 		lists_state[l.id] = entry;
 	}
 
-	// data of lists that are no longer subscribed. A directory of our own
-	// holds nothing else; one set in the options may be shared with other
-	// programs, so there only the lists this file wrote go, by name.
+	// data of lists that are no longer subscribed: the directory is ours
+	// alone (a shared one has its own subdirectory for us)
 	const keep = map(all, l => l.id);
-	let gone = keys(state.lists ?? {});
-	if (index(cfg.dir, '/etc/xray-mosdns/') == 0)
-		for (let f in (fs.lsdir(cfg.dir) ?? [])) {
-			const m = match(f, /^([A-Za-z0-9_]+)\.(block|allow)$/);
-			if (m)
-				push(gone, m[1]);
-		}
-	for (let id in uniq(gone)) {
-		if (!match(id, /^[A-Za-z0-9_]+$/) || (id in keep))
-			continue;
-		fs.unlink(`${cfg.dir}/${id}.block`);
-		fs.unlink(`${cfg.dir}/${id}.allow`);
+	for (let f in (fs.lsdir(cfg.dir) ?? [])) {
+		const m = match(f, /^([A-Za-z0-9_]+)\.(block|allow)$/);
+		if (m && !(m[1] in keep))
+			fs.unlink(`${cfg.dir}/${f}`);
 	}
 
 	const merr = merge(cfg, all);
@@ -430,8 +491,11 @@ function cmd_start() {
 	return 0;
 }
 
+// at every start, before the config is generated: the lists are where
+// mosdns will look for them
 function cmd_ensure() {
 	const cfg = settings();
+	migrate(cfg);
 	for (let l in lists())
 		if (!fs.access(`${cfg.dir}/${l.id}.block`))
 			return cmd_start();

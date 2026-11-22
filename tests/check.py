@@ -228,7 +228,7 @@ check(all(u.get("so_mark") == 255 for u in fl) and plugin(m, "forward_lan")["arg
 
 # blocklist subscriptions
 prov = {p["tag"]: p for p in m["data_providers"]}
-check(prov.get("adblock") == {"tag": "adblock", "file": "/tmp/xm-adlists/block.txt", "auto_reload": True} and prov.get("adallow", {}).get("file") == "/tmp/xm-adlists/allow.txt", "adlist: merged files are data providers with auto reload")
+check(prov.get("adblock") == {"tag": "adblock", "file": "/tmp/xm-adlists/xray-mosdns/block.txt", "auto_reload": True} and prov.get("adallow", {}).get("file") == "/tmp/xm-adlists/xray-mosdns/allow.txt", "adlist: merged files are data providers with auto reload, in our own subdirectory of a directory set in the options")
 gmain = plugin(m, "main_sequence")["args"]["exec"]
 adrow = [e for e in gmain if isinstance(e, dict) and "query_is_ad_exception" in e.get("if", "")]
 check(len(adrow) == 1 and adrow[0]["exec"] == ["log_block", "block_zero", "_return"] and adrow[0]["if"].endswith("&& (! query_is_ad_exception)"), "adlist: blocked (0.0.0.0 mode, logged) unless one of the lists' own exceptions matches")
@@ -449,6 +449,12 @@ else:
                  "out .fw-state": "state", "new": ".h.env a.json b.yaml c.rules ", "prev": "no"},
           f"switch.sh: a file that cannot be moved puts the old set back whole, the new one stays to look at {sf}")
     check("b.yaml" in open(f"{rd}/switch-fail.err").read(), "switch.sh: says which file could not be moved")
+    sb = kv("switch-broken")
+    check(sb.get("rc") == "3" and sb.get("prev") == "yes" and sb.get("prev-files") == "a.json b.yaml "
+          and sb.get("out a.json") == "-", f"switch.sh: when the old set cannot be put back whole either, it says so "
+          f"(exit 3) and keeps what is left of it in .prev {sb}")
+    sbe = open(f"{rd}/switch-broken.err").read().splitlines()
+    check(len(sbe) == 2 and "b.yaml" in sbe[0] and ".prev" in sbe[1], f"switch.sh: what failed first, then that the old set is not whole {sbe}")
 
     gl = json.load(open(f"{rd}/groups-list.json"))
     check(gl.get("ok") and gl["groups"][0]["running"] and gl["groups"][0]["current"] == "b" and gl.get("probe_backup") is True,
@@ -472,14 +478,22 @@ else:
         except ValueError:
             return {"unparsed": ad.get(k)}
     check(adj("update1").get("ok") is True and adj("update1").get("total") == 2, f"adlist update: {ad.get('update1')}")
-    check(ad.get("files1") == "allow.txt block.txt l1.allow l1.block mine.allow mine.block state.json ",
-          f"adlist update: a list no longer subscribed goes, another program's files in the directory stay {ad.get('files1')}")
-    u2 = adj("update2")
-    check(u2.get("ok") is False and "block.txt" in (u2.get("error") or "") and ad.get("kept2") == "yes",
-          f"adlist update: merged lists that cannot be written are an error, the ones in use stay {ad.get('update2')}")
-    check(adj("status2").get("error") == u2.get("error") and adj("status2").get("total") == 2,
-          f"adlist status: shows why {ad.get('status2')}")
-    check(adj("update3").get("ok") is True and adj("status3").get("error") is None, "adlist update: the next good update clears it")
+    check(ad.get("top1") == "mine.allow mine.block xray-mosdns ",
+          f"adlist: what 0.9.8 kept at the top of a shared directory moves into xray-mosdns/, another program's files stay {ad.get('top1')}")
+    check(ad.get("sub1") == "allow.txt block.txt l1.allow l1.block state.json ",
+          f"adlist: in the subdirectory, a list no longer subscribed goes {ad.get('sub1')}")
+    check(adj("update2").get("ok") is True and ad.get("theirs2") == 'yes theirs-allow {"theirs":1}' and ad.get("new2") == "1",
+          f"adlist: another program's block.txt / allow.txt / state.json at the top are neither moved nor written {ad}")
+    u3 = adj("update3")
+    check(u3.get("ok") is False and "block.txt" in (u3.get("error") or "") and ad.get("kept3") == "yes",
+          f"adlist update: merged lists that cannot be written are an error, the ones in use stay {ad.get('update3')}")
+    check(adj("status3").get("error") == u3.get("error") and adj("status3").get("total") == 3,
+          f"adlist status: shows why {ad.get('status3')}")
+    u4 = adj("update4")
+    check(u4.get("ok") is False and "allow.txt" in (u4.get("error") or "") and ad.get("kept4") == "yes 0",
+          f"adlist update: an exception list that cannot be replaced leaves the block list as it was too {ad.get('update4')} {ad.get('kept4')}")
+    check(adj("update5").get("ok") is True and ad.get("new5") == "1 allow" and adj("status5").get("error") is None,
+          f"adlist update: the next good update replaces both and clears the error {ad.get('new5')}")
 
     up = {}
     for line in open(f"{rd}/update.txt").read().splitlines():
@@ -498,14 +512,18 @@ else:
     check(up.get("mode-backups") == "drwx------" and up.get("mode-geo") == "-rw-------", "update: backups and downloads are root's")
 
     pr = open(f"{rd}/postrm.txt").read()
-    upgrade, removal = pr.split("[removal]")
+    upgrade, rest = pr.split("[removal]\n")
+    removal, theirs = rest.split("[removal-theirs]\n")
     check("cron-ours 2 cron-other 1" in upgrade and "etc-dir present backups present table present" in upgrade
-          and "shared .block.tmp .l1.raw ANON.allow ANON.block allow.txt block.txt l1.allow l1.block mine.allow mine.block mine.txt state.json"
-          in upgrade, f"postrm: an upgrade leaves everything {upgrade}")
+          and "shared .block.tmp .l1.raw ANON.allow ANON.block allow.txt block.txt l1.allow l1.block mine.allow mine.block mine.txt state.json xray-mosdns "
+          in upgrade and "sub .gone2.raw allow.txt block.txt gone2.block l1.block state.json " in upgrade,
+          f"postrm: an upgrade leaves everything {upgrade}")
     check("cron-ours 0 cron-other 1" in removal and "etc-dir gone backups gone table gone" in removal
           and removal.strip().endswith("shared mine.allow mine.block mine.txt"),
-          f"postrm: removal takes our cron lines, data, backups and the files of our subscriptions (named or not), "
-          f"another program's .block / .allow stay {removal}")
+          f"postrm: removal takes our cron lines, data, backups, our subdirectory whole (a list unsubscribed since the "
+          f"last update too) and what 0.9.8 left at the top (named or anonymous subscriptions); another program's files stay {removal}")
+    check(theirs.strip().endswith("shared allow.txt block.txt l1.block state.json"),
+          f"postrm: block.txt / allow.txt / state.json at the top that are not ours stay {theirs}")
 
 if failed:
     print("\n".join("FAIL: " + f for f in failed))
