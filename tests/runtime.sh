@@ -276,6 +276,7 @@ case "\$url" in
 	*/lists.test/list1.txt) emit "$F/list1.txt" ;;
 	*/HostlistsRegistry/assets/filters.json)
 		[ -n "\${REGISTRY_OK:-}" ] || { [ -n "\$out" ] && echo '{"filt' > "\$out"; exit 22; }
+		[ -n "\${SLOW_REGISTRY:-}" ] && sleep "\$SLOW_REGISTRY"
 		printf '{"groups":[{"groupId":1,"groupName":"G","displayNumber":1}],"filters":[{"filterId":7,"groupId":1,"name":"F","downloadUrl":"https://lists.test/f7.txt"}]}' > "\$out" ;;
 	*) exit 22 ;;
 esac
@@ -464,12 +465,23 @@ exec 7>"$LOCKF"; flock -x 7
 	# an update writes a newer one (two lists): that one is used
 	REGISTRY_OK=1 ucode "$REPO/root/usr/libexec/xray-mosdns/adlist.uc" catalog-sync > "$OUT/catalog-newer.json" 2>&1 7>&- & cs=$!
 	sleep 2
+	mkdir -p /etc/xray-mosdns
 	printf '{"updated":4102444800,"groups":[],"filters":[{"id":7,"url":"https://lists.test/f7.txt","name":"F"},{"id":8,"url":"https://lists.test/f8.txt","name":"G"}]}' \
 		> /etc/xray-mosdns/adlist-catalog.json
 } >> "$OUT/adlist.txt"
 exec 7>&-
 wait "$cs"
 echo "catalog-newer $(cat "$OUT/catalog-newer.json")" >> "$OUT/adlist.txt"
+# A slow download (started first, done last) does not put its older
+# catalogue over the one an update fetched meanwhile, nor use it.
+REGISTRY_OK=1 SLOW_REGISTRY=3 ucode "$REPO/root/usr/libexec/xray-mosdns/adlist.uc" catalog-sync > "$OUT/catalog-slow.json" 2>&1 & cs=$!
+sleep 1
+mkdir -p /etc/xray-mosdns
+printf '{"updated":%s,"groups":[],"filters":[{"id":7,"url":"https://lists.test/f7.txt","name":"F"},{"id":8,"url":"https://lists.test/f8.txt","name":"G"}]}' \
+	"$(( $(date +%s) + 1 ))" > /etc/xray-mosdns/adlist-catalog.json
+wait "$cs"
+echo "catalog-slow $(cat "$OUT/catalog-slow.json")" >> "$OUT/adlist.txt"
+echo "catalog-slow-cache $(grep -o '"url"' /etc/xray-mosdns/adlist-catalog.json | wc -l)" >> "$OUT/adlist.txt"
 {
 	o=$(adl migrate); echo "unlocked $? $o"
 	echo "unlocked-top $(ls -A "$AD3" | tr '\n' ' ') lock $([ -e "$LOCKF" ] && echo kept || echo gone)"

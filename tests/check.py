@@ -543,6 +543,10 @@ else:
     cn = adj("catalog-newer")
     check(cn.get("ok") is True and cn.get("filters") == 2,
           f"adlist catalog-sync: a catalogue an update fetched while it waited is newer and is the one used {ad.get('catalog-newer')}")
+    cs_ = adj("catalog-slow")
+    check(cs_.get("ok") is True and cs_.get("filters") == 2 and ad.get("catalog-slow-cache") == "2",
+          f"adlist catalog-sync: a slow download does not put its older catalogue over the newer cache, nor use it "
+          f"{ad.get('catalog-slow')} cache {ad.get('catalog-slow-cache')}")
     check(ad.get("ensure8") == "" and ad.get("ensure8-made") == "yes",
           f"adlist ensure: a short holder of the lock (a catalogue sync, a move) is waited for, then the list made "
           f"{ad.get('ensure8')!r} {ad.get('ensure8-made')}")
