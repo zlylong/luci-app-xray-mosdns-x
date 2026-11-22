@@ -209,8 +209,13 @@ generate_and_switch() {
 					# now kept; lists an older version kept elsewhere move
 					# there only at this point, never on a start that falls
 					# back to the previous set. procd restarts mosdns on
-					# the new set once this script is done.
-					ucode /usr/libexec/xray-mosdns/adlist.uc migrate >/dev/null 2>&1 1000>&- ;;
+					# the new set once this script is done. What could not
+					# move is said on the overview (ensure below fetches
+					# what the new set is missing); exit 2, an update
+					# running, is only logged: it writes where the new set
+					# reads.
+					why=$(ucode /usr/libexec/xray-mosdns/adlist.uc migrate 2>&1 >/dev/null 1000>&-)
+					[ "$?" = 1 ] && set_error "拦截列表有文件没能搬进 xray-mosdns 子目录：$why（见系统日志，下次启动重试）" ;;
 				3) broken=1 ;;
 			esac
 			rm -f "$OUT/.switch.log"

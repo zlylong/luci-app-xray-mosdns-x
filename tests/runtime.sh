@@ -9,6 +9,8 @@
 #   - groups.uc and status.sh go by runtime.env, not UCI
 #   - update.sh: checksums, replacing a running binary, the lock, backups
 #   - adlist.uc update: a shared directory, merged lists that cannot be written
+#     or replaced, no hard links (vfat); migrate (and not during an update);
+#     ensure
 #   - the package's postrm, on an upgrade and on removal
 # Results go to <outdir>/runtime/; tests/check.py checks them. nft syntax
 # is not checked here (the stand-in takes any rule): that needs a kernel,
@@ -366,7 +368,35 @@ same() { cmp -s "$1" "$2" && echo yes || echo no; }
 	echo "new6 $(grep -c new4.test "$ADS/block.txt") $([ -f "$ADS/allow.txt" ] && echo allow)"
 	echo "status6 $(adl status)"
 	echo "theirs6 $(same "$OUT/theirs.block" "$AD/block.txt") $(adl migrate) $(cat "$AD/state.json")"
+	# a file system without hard links (vfat, exfat): the lists in use are copied
+	mkdir -p "$OUT/noln"; printf '#!/bin/sh\necho "ln: Operation not permitted" >&2\nexit 1\n' > "$OUT/noln/ln"; chmod +x "$OUT/noln/ln"
+	list1 new5.test
+	echo "update7 $(PATH="$OUT/noln:$PATH" adl update)"
+	echo "new7 $(grep -c new5.test "$ADS/block.txt") $(ls -A "$ADS" | grep -c '\.prev$')"
+	# nothing missing: no update; the merged block list missing: an update
+	echo "ensure1 $(adl ensure)"
+	mv "$ADS/block.txt" "$OUT/block.saved"
+	echo "ensure2 $(adl ensure)"
+	mv "$OUT/block.saved" "$ADS/block.txt"
 } > "$OUT/adlist.txt"
+# No move while an update runs (it writes the same directory): left to the
+# next start. Whether one runs is seen in /proc, which a chroot may lack.
+AD3="$OUT/adlists3"
+mkdir -p "$AD3"; echo old > "$AD3/block.txt"
+printf '{"lists":{"l1":{"name":"l1","rules":1}},"total":1}' > "$AD3/state.json"
+printf "config adblock\n\toption dir '%s'\nconfig adlist 'l1'\n\toption url 'https://lists.test/list1.txt'\n" "$AD3" > "$CONF"
+LOCKF=/var/run/xray-mosdns-adlist.pid
+if [ -r /proc/self/stat ]; then
+	sleep 60 & sp=$!
+	echo "$sp" > "$LOCKF"
+	o=$(adl migrate); echo "locked $? $o" >> "$OUT/adlist.txt"
+	echo "locked-top $(ls -A "$AD3" | tr '\n' ' ')" >> "$OUT/adlist.txt"
+	kill "$sp"; rm -f "$LOCKF"
+	o=$(adl migrate); echo "unlocked $? $o" >> "$OUT/adlist.txt"
+	echo "unlocked-top $(ls -A "$AD3" | tr '\n' ' ') lock $([ -e "$LOCKF" ] && echo left || echo gone)" >> "$OUT/adlist.txt"
+else
+	echo "locked skipped (no /proc)" >> "$OUT/adlist.txt"
+fi
 # A move that cannot finish: the state stays at the top, and the next start
 # moves the rest.
 AD2="$OUT/adlists2"
@@ -375,7 +405,8 @@ echo old > "$AD2/l1.block"; echo old > "$AD2/l1.allow"; echo old > "$AD2/block.t
 printf '{"lists":{"l1":{"name":"l1","rules":1}},"total":1}' > "$AD2/state.json"
 printf "config adblock\n\toption dir '%s'\nconfig adlist 'l1'\n\toption url 'https://lists.test/list1.txt'\n" "$AD2" > "$CONF"
 {
-	echo "migrate2 $(adl migrate)"
+	echo "migrate2 $(ucode "$REPO/root/usr/libexec/xray-mosdns/adlist.uc" migrate 2>"$OUT/migrate2.err")"
+	echo "migrate2-err $(cat "$OUT/migrate2.err")"
 	echo "top2 $(ls -A "$AD2" | tr '\n' ' ')"
 	echo "sub2 $(ls -A "$AD2/xray-mosdns" | tr '\n' ' ')"
 	rmdir "$AD2/xray-mosdns/l1.allow"

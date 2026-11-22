@@ -492,7 +492,7 @@ else:
           f"adlist: another program's block.txt / allow.txt / state.json at the top are neither moved nor written {ad}")
     check(ad.get("theirs6") == 'yes { "ok": true, "failed": [ ] } {"theirs":1}',
           f"adlist migrate: leaves another program's files at the top alone {ad.get('theirs6')}")
-    check(adj("migrate2").get("failed") == ["l1.allow"] and ad.get("top2") == "l1.allow state.json xray-mosdns "
+    check(adj("migrate2").get("failed") == ["l1.allow"] and ad.get("migrate2-err") == "l1.allow" and ad.get("top2") == "l1.allow state.json xray-mosdns "
           and ad.get("sub2") == "block.txt l1.allow l1.block ",
           f"adlist migrate: a file that cannot be moved keeps the state at the top, to be tried again {ad.get('top2')} | {ad.get('sub2')}")
     check(adj("migrate3").get("ok") is True and ad.get("top3") == "xray-mosdns "
@@ -512,6 +512,18 @@ else:
           f"no link is put inside it {ad.get('update5')} {ad.get('kept5')}")
     check(adj("update6").get("ok") is True and ad.get("new6") == "1 allow" and adj("status6").get("error") is None,
           f"adlist update: the next good update replaces both and clears the error {ad.get('new6')}")
+    check(adj("update7").get("ok") is True and ad.get("new7") == "1 0",
+          f"adlist update: without hard links (vfat, exfat) the lists in use are copied, and replaced {ad.get('update7')} {ad.get('new7')}")
+    check(ad.get("ensure1") == "" and adj("ensure2") == {"ok": True, "running": True},
+          f"adlist ensure: nothing missing, no update; the merged block list missing, an update {ad.get('ensure1')!r} {ad.get('ensure2')}")
+    if ad.get("locked") == "skipped (no /proc)":
+        print("adlist migrate during an update: skipped (no /proc here)")
+    else:
+        lk, ul = ad.get("locked", ""), ad.get("unlocked", "")
+        check(lk.startswith("2 ") and '"postponed": true' in lk and ad.get("locked-top") == "block.txt state.json ",
+              f"adlist migrate: while an update runs, nothing moves, it is left to the next start {lk} | {ad.get('locked-top')}")
+        check(ul.startswith("0 ") and ad.get("unlocked-top") == "xray-mosdns  lock gone",
+              f"adlist migrate: once it is done the move happens, and its own lock goes {ul} | {ad.get('unlocked-top')}")
 
     up = {}
     for line in open(f"{rd}/update.txt").read().splitlines():
