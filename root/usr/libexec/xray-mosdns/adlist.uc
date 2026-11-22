@@ -352,6 +352,18 @@ function has_data(cfg, state, l) {
 	return state?.lists?.[l.id]?.url == l.url && has_files(cfg, l);
 }
 
+// A list's data that replace_data() put aside and did not put back (the
+// process was killed, the power went in between): back where it belongs.
+// Only with the lock held, or an update in the middle of replacing would
+// have its files moved under it.
+function recover_aside(cfg, l) {
+	for (let k in [ 'block', 'allow' ]) {
+		const cur = `${cfg.dir}/${l.id}.${k}`, old = `${cfg.dir}/.${l.id}.${k}.old`;
+		if (fs.lstat(old)?.type == 'file' && fs.lstat(cur) == null && fs.rename(old, cur))
+			system([ 'logger', '-t', 'xray-mosdns', `blocklists: ${cur} put back from ${old} (an update was cut short)` ]);
+	}
+}
+
 // A list's two new files (written beside them) in place of its old ones:
 // both or neither. The old ones go aside first and come back when a new one
 // cannot be put in place. Returns null, or why not.
@@ -360,10 +372,13 @@ function replace_data(cfg, l) {
 	const cur = (k) => `${cfg.dir}/${l.id}.${k}`;
 	const tmp = (k) => `${cfg.dir}/.${l.id}.${k}.tmp`;
 	const old = (k) => `${cfg.dir}/.${l.id}.${k}.old`;
+	// what an earlier one cut short left aside is the data: back first
+	recover_aside(cfg, l);
 	for (let k in kinds) {
 		const t = fs.lstat(cur(k))?.type;
 		if (t != null && t != 'file')
 			return `cannot replace ${cur(k)}: not a file`;
+		// a copy left next to a file that is there is out of date
 		if (fs.lstat(old(k)) != null && !fs.unlink(old(k)))
 			return `cannot replace ${cur(k)}: ${old(k)} is in the way`;
 	}
@@ -650,6 +665,7 @@ function cmd_update() {
 	for (let l in all) {
 		const raw = `${cfg.dir}/.${l.id}.raw`;
 		const prev = state.lists?.[l.id] ?? {};
+		recover_aside(cfg, l);
 		const had = fs.lstat(`${cfg.dir}/${l.id}.block`) != null || fs.lstat(`${cfg.dir}/${l.id}.allow`) != null;
 		// what is there under this name is this list's (see the top)
 		const own = (prev.url == l.url);
@@ -781,6 +797,13 @@ function cmd_ensure() {
 	if (!wanted)
 		return 0;
 	const all = lists();
+	// data an update that was cut short left aside, back first (not while
+	// one runs: it may be in the middle of replacing)
+	if (lock_wait(5)) {
+		for (let l in all)
+			recover_aside(cfg, l);
+		unlock();
+	}
 	const state = load(state_path(cfg), {});
 	const usable = filter(all, l => has_data(cfg, state, l));
 	const live = (kind) => `${cfg.dir}/${kind}.txt`;

@@ -69,6 +69,8 @@ export function load(confdir) {
 			self_mark,
 			route_table,
 			log_level: str(g.log_level, 'warning'),
+			// days the plugin's own logs keep (logs.uc)
+			log_days: +str(g.log_days, '30'),
 			sniffing: bool(g.sniffing, true),
 			socks_port: port(g.socks_port, 1070, 'socks_port'),
 			api_port: port(g.api_port, 10085, 'api_port'),
@@ -144,6 +146,10 @@ export function load(confdir) {
 			fail(`invalid ${p[0]} '${p[1]}' (an absolute file path)`);
 	// values passed on to Xray and mosdns as they are: caught here, with the
 	// option's name, rather than by a daemon that then will not start
+	if (!(type(cfg.global.log_days) == 'int' && cfg.global.log_days >= 1 && cfg.global.log_days <= 365)) {
+		note(`global.log_days: ignoring '${g.log_days}' (1 to 365 days), 30 then`);
+		cfg.global.log_days = 30;
+	}
 	if (!(cfg.global.log_level in [ 'debug', 'info', 'warning', 'error', 'none' ]))
 		fail(`invalid log_level '${cfg.global.log_level}' (debug, info, warning, error or none)`);
 	for (let k in [ 'probe_url', 'probe_url_backup' ])

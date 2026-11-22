@@ -99,14 +99,19 @@ order = [e["if"] for e in main if isinstance(e, dict) and "if" in e]
 check(plugin(m, "rule_3")["args"]["domain"] == ["provider:geosite:category-ads-all"] and by_if["rule_3"] == ["metrics_block", "_new_nxdomain_response", "_return"], "legacy adblock becomes a block rule")
 # the DNS counts (stats.uc): every query first, every blocked one in its branch, read on 127.0.0.1
 cmain = plugin(m, "main_sequence")["args"]["exec"]
-check(cmain[0] == "metrics_all" and (plugin(m, "metrics_all") or {}).get("type") == "metrics_collector"
+# the watchdog's health check first: answered, neither logged nor counted (#90)
+check(cmain[0] == {"if": "query_is_probe", "exec": ["_new_nxdomain_response", "_return"]}
+      and plugin(m, "query_is_probe")["args"] == {"domain": ["full:xray-mosdns-probe.invalid"]},
+      f"stats: the watchdog's health check is answered before anything counts or logs it {cmain[:2]}")
+check(cmain[1] == "metrics_all" and (plugin(m, "metrics_all") or {}).get("type") == "metrics_collector"
       and (plugin(m, "metrics_block") or {}).get("type") == "metrics_collector" and m.get("api") == {"http": "127.0.0.1:5336"},
-      f"stats: every query counted first, the counters on 127.0.0.1:5336 {cmain[:2]} {m.get('api')}")
-blocks = [e for e in cmain if isinstance(e, dict) and ("_new_nxdomain_response" in e["exec"] or "block_zero" in e["exec"])]
+      f"stats: every query counted next, the counters on 127.0.0.1:5336 {cmain[:2]} {m.get('api')}")
+# the block branches (not the health check's, which nothing counts)
+blocks = [e for e in cmain if isinstance(e, dict) and e["if"] != "query_is_probe" and ("_new_nxdomain_response" in e["exec"] or "block_zero" in e["exec"])]
 check(len(blocks) >= 2 and all(e["exec"][0] == "metrics_block" for e in blocks), f"stats: every block branch counts first {blocks}")
 check(plugin(m, "rule_4")["args"]["domain"] == ["provider:geosite:cn"] and by_if["rule_4"] == ["local_seq", "add_direct", "_return"], "legacy chnroute: mainland domains resolve locally")
 check(plugin(m, "rule_5")["args"]["domain"] == ["provider:geosite:geolocation-!cn"] and by_if["rule_5"][-3:] == ["remote_seq", "add_proxy", "_return"], "legacy chnroute: non-mainland domains resolve through the proxy")
-check(order == ["query_is_lan_name || query_is_ptr", "query_is_node"] + ["rule_%d" % i for i in range(6)], f"chnroute: rule order {order}")
+check(order == ["query_is_probe", "query_is_lan_name || query_is_ptr", "query_is_node"] + ["rule_%d" % i for i in range(6)], f"chnroute: rule order {order}")
 check(main[-1] == "fallback_seq", "mainland IPs direct + default proxy: unclassified names use the ChinaDNS fallback")
 check({"type": "field", "domain": ["geosite:cn"], "outboundTag": "direct"} in rules, "geosite:cn rule reaches Xray")
 check(order.index("query_is_node") < order.index("rule_0"), "node hostnames must be resolved locally before any rule")
@@ -267,8 +272,9 @@ check(plugin(m, "query_is_ipv4_only") == {"tag": "query_is_ipv4_only", "type": "
       and gmain[gmain.index("hosts") + 1] == {"if": "query_is_ipv4_only && query_is_ipv6", "exec": ["_new_empty_response", "_return"]},
       f"dns.ipv4_only: a matcher and an empty answer for AAAA/HTTPS, behind hosts: {gmain[:5]}")
 # the preset summary node first: it wraps everything behind it, so every query is logged
-check(m["log"]["production"] is True and gmain[0] == "_query_summary" and gmain.count("_query_summary") == 1 and gmain[1] == "metrics_all",
-      "query log: JSON log lines, the preset summary node first in the main sequence (then the counter)")
+check(m["log"]["production"] is True and gmain[0].get("if") == "query_is_probe" and gmain[1] == "_query_summary"
+      and gmain.count("_query_summary") == 1 and gmain[2] == "metrics_all",
+      "query log: JSON log lines, the preset summary node first in the main sequence after the health check (then the counter)")
 # mosdns-x v26.05.25 panics while loading any plugin of type query_summary
 check(not [p for p in m["plugins"] if p["type"] == "query_summary"] and not any(f'"log_{k}"' in json.dumps(m) for k in ("lan", "block", "direct", "proxy", "fallback")), "query log: no query_summary plugins (they crash mosdns-x), no references to them")
 check({"type": "field", "inboundTag": ["socks-in"], "balancerTag": "hk.group"} in x["routing"]["rules"], "internal SOCKS inbound follows the main target (a group here)")
@@ -384,6 +390,10 @@ if os.path.exists(swp):
           f"adlist #84: ... and its status says so instead of a success {ra}")
     check(swj("swap-update8").get("ok") is True and sw.get("swap-merged8") == "1",
           f"adlist #84: once replaceable the new data goes in {swj('swap-update8')} {sw.get('swap-merged8')}")
+    check(sw.get("swap-cut-back") == "yes allow 0 yes",
+          f"adlist #91: data an update left aside (cut short) goes back at start, the lists in use as they were {sw.get('swap-cut-back')}")
+    check(swj("swap-cut-update").get("failed") == 2 and sw.get("swap-cut-kept") == "yes 0 yes",
+          f"adlist #91: ... and an update that then fails keeps it, nothing left aside {swj('swap-cut-update')} {sw.get('swap-cut-kept')}")
 else:
     print("adlist swap: no output from tests/runtime.sh, skipped")
     check(not strict, "adlist swap: no output from tests/runtime.sh")
@@ -452,6 +462,13 @@ else:
     def txt(name):
         return open(f"{sd}/{name}.txt").read().splitlines()
 
+    # logs.uc (the plugin's logs kept for global.log_days)
+    check(txt("logs-a") == ['2025-11-20T08:00:00+0800 {"ok":true,"message":"geo already up to date"}', "\tcontinuation of the kept one",
+                            '{"level":"info","time":"2025-11-21T09:00:00.000Z","msg":"query summary","qname":"new.example."}']
+          and txt("logs-b") == ["no time here", "nor here"] and res("logs-prune").get("days") == 30,
+          f"logs: older than 30 days dropped (console, JSON, with an offset, continuation lines with theirs); no times, not cut {txt('logs-a')} {txt('logs-b')}")
+    check(txt("logs-c") == ["9"], f"logs: kept under the size limit, the newest lines {txt('logs-c')}")
+
     def utc(ts):
         return time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime(ts))
 
@@ -498,7 +515,7 @@ def runtime_env(case):
 
 rt = runtime_env("chnroute")
 check(rt == {"XRAY_BIN": "/usr/bin/xray", "MOSDNS_BIN": "/usr/bin/mosdns", "GEO_DIR": "/usr/share/v2ray",
-             "TPROXY_PORT": "12345", "API_PORT": "10085", "SOCKS_PORT": "1070", "DNS_PORT": "5335", "STATS_PORT": "5336", "DNS_REDIRECT": "1",
+             "TPROXY_PORT": "12345", "API_PORT": "10085", "SOCKS_PORT": "1070", "DNS_PORT": "5335", "STATS_PORT": "5336", "LOG_DAYS": "30", "DNS_REDIRECT": "1",
              "DNS_WATCH": "manage", "FWMARK": "0x1", "ROUTE_TABLE": "100", "IPV6": "0", "KERNEL_SPLIT": "1",
              "DEFAULT_ACTION": "proxy", "PROBE_INTERVAL": "1m", "PROBE_BACKUP": "0", "MAIN_TARGET": "hk1", "ECS_IFACES": ""},
       f"runtime.env (chnroute): {rt}")

@@ -313,7 +313,8 @@ case "${1:-versions}" in
 	versions) cmd_versions ;;
 	check) cmd_check ;;
 	geo) lock; cmd_geo "${2:-}" ;;
-	geo-auto) lock; cmd_geo_auto ;;
+	# the cron job appends this to its log: with the time, for logs.uc
+	geo-auto) lock; printf '%s ' "$(date +%Y-%m-%dT%H:%M:%S%z)"; cmd_geo_auto ;;
 	xray) lock; cmd_xray ;;
 	mosdns) lock; cmd_mosdns ;;
 	cron-install) lock; cmd_cron_install ;;

@@ -201,6 +201,25 @@ stv 1234581 9 1.7636999e+09; run stats-day31 stu $((D1 + 30 * 86400 + 60)) show
 # no counters to read (mosdns down, an older config): the counts as they were
 rm -f "$ST/metrics"; run stats-down stu $((D1 + 30 * 86400 + 120)) show
 
+# logs.uc: lines older than the days kept go (mosdns-x's console and JSON
+# lines, ours with an offset, a line without a time going with the one
+# before), then the size limit; a log without any times is not cut by age
+LG="$OUT/logs"; mkdir -p "$LG"
+cat > "$LG/a.log" <<'EOF'
+2025-10-01T10:00:00.000Z	info	old console line
+	continuation of the old one
+{"level":"info","time":"2025-10-20T10:00:00.000Z","msg":"query summary","qname":"old.example."}
+2025-11-20T08:00:00+0800 {"ok":true,"message":"geo already up to date"}
+	continuation of the kept one
+{"level":"info","time":"2025-11-21T09:00:00.000Z","msg":"query summary","qname":"new.example."}
+EOF
+printf 'no time here\nnor here\n' > "$LG/b.log"
+yes '{"level":"info","time":"2025-11-21T09:00:00.000Z","msg":"x"}' | head -n 50 > "$LG/c.log"
+run logs-prune env LOGS_FILES="$LG/a.log $LG/b.log" LOGS_DAYS=30 LOGS_NOW=1763730000 "$LX/logs.uc" prune
+cp "$LG/a.log" "$OUT/logs-a.txt"; cp "$LG/b.log" "$OUT/logs-b.txt"
+run logs-cap env LOGS_FILES="$LG/c.log" LOGS_MAX=600 LOGS_DAYS=30 LOGS_NOW=1763730000 "$LX/logs.uc" prune
+wc -l < "$LG/c.log" | tr -d ' ' > "$OUT/logs-c.txt"
+
 kill "$LISTENER" 2>/dev/null
 if [ -f "$OUT/conf.saved" ]; then mv "$OUT/conf.saved" "$CONF"; else rm -f "$CONF"; fi
 exit $rc

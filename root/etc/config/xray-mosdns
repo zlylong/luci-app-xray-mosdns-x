@@ -48,6 +48,8 @@ config global 'global'
 	option geo_auto_update '0'
 	option geo_update_hour '4'
 	option geo_update_day '*'
+	# days the plugin's own logs keep (mosdns-x and the query log, updates)
+	option log_days '30'
 	# extra destination CIDRs/IPs that must never be tproxy'ed
 	list bypass_ips ''
 
