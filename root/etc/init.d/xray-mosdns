@@ -112,6 +112,8 @@ start_service() {
 			return 1
 		fi
 	else
+		# what mosdns counted since the last sample, before a new config restarts it
+		ucode /usr/libexec/xray-mosdns/stats.uc sample >/dev/null 2>&1 1000>&-
 		generate_and_switch
 	fi
 
@@ -317,6 +319,8 @@ service_started() {
 }
 
 stop_service() {
+	# the DNS counts onto flash while mosdns still runs (it goes after this)
+	ucode /usr/libexec/xray-mosdns/stats.uc flush >/dev/null 2>&1 1000>&-
 	teardown
 	rm -f "$ERR"
 }

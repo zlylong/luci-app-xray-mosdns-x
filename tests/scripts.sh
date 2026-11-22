@@ -177,6 +177,30 @@ run querylog        env MOSDNS_LOG="$OUT/querylog.log" "$LX/querylog.uc" 200
 run querylog-filter env MOSDNS_LOG="$OUT/querylog.log" "$LX/querylog.uc" 200 192.168.1.3
 run querylog-limit  env MOSDNS_LOG="$OUT/querylog.log" "$LX/querylog.uc" 1
 
+# stats.uc: counters as mosdns-x serves them (a file here), the time given;
+# RAM and flash files in the output directory
+ST="$OUT/stats"; mkdir -p "$ST"
+stv() { # $1 all, $2 blocked, $3 process start
+	printf '# HELP x\nmosdns_plugin_metrics_all_query_total %s\nmosdns_plugin_metrics_block_query_total %s\nprocess_start_time_seconds %s\n' "$1" "$2" "$3" > "$ST/metrics"
+}
+stu() { env STATS_METRICS="$ST/metrics" STATS_RAM="$ST/ram.json" STATS_DISK="$ST/disk.json" STATS_LOCK="$ST/lock" TZ=UTC STATS_NOW="$1" ucode "$LX/stats.uc" "$2"; }
+D1=1763683200	# 2025-11-21 00:00 UTC
+stv 10 2 1.7636832e+09; stu $((D1 + 3600)) sample > "$OUT/stats-s1.txt"
+stv 15 3 1.7636832e+09; run stats-s2 stu $((D1 + 7200)) show
+# mosdns restarted (a new start time): everything it counted is new, even
+# when more than before
+stv 22 5 1.7636999e+09; run stats-s3 stu $((D1 + 9000)) show
+stv 1.234567e+06 7 1.7636999e+09; run stats-big stu $((D1 + 9600)) show
+stv 1234570 8 1.7636999e+09
+run stats-flush stu $((D1 + 10800)) flush
+# a reboot: RAM is gone, the flash copy carries on (same process start = no new counts)
+rm -f "$ST/ram.json"; run stats-reboot stu $((D1 + 11000)) show
+# the next day, and 31 days later (the first day is out of the 30)
+stv 1234580 9 1.7636999e+09; run stats-day2 stu $((D1 + 86400 + 60)) show
+stv 1234581 9 1.7636999e+09; run stats-day31 stu $((D1 + 30 * 86400 + 60)) show
+# no counters to read (mosdns down, an older config): the counts as they were
+rm -f "$ST/metrics"; run stats-down stu $((D1 + 30 * 86400 + 120)) show
+
 kill "$LISTENER" 2>/dev/null
 if [ -f "$OUT/conf.saved" ]; then mv "$OUT/conf.saved" "$CONF"; else rm -f "$CONF"; fi
 exit $rc

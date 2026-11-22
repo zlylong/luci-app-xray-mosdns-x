@@ -95,6 +95,8 @@ export function load(confdir) {
 		dns: {
 			mosdns_bin: str(d.mosdns_bin, '/usr/bin/mosdns'),
 			listen_port: port(d.listen_port, 5335, 'dns.listen_port'),
+			// mosdns-x's HTTP API on 127.0.0.1: its query counters, for stats.uc
+			stats_port: port(d.stats_port, 5336, 'dns.stats_port'),
 			// hijack every LAN port-53 query to mosdns (dnsmasq config is left alone)
 			redirect: bool(d.redirect, true),
 			// hand LAN DNS back to dnsmasq while mosdns is not answering
@@ -511,7 +513,7 @@ export function plan(cfg) {
 	// can match on the inbound a packet arrived on, not on a MAC address.
 	p.devices = [];
 	p.device_inbounds = [];		// { tag, port, target }
-	let reserved = [ g.tproxy_port, g.socks_port, g.api_port, cfg.dns.listen_port ];
+	let reserved = [ g.tproxy_port, g.socks_port, g.api_port, cfg.dns.listen_port, cfg.dns.stats_port ];
 	let next_port = g.tproxy_port;
 	for (let dev in cfg.devices) {
 		const target = (dev.outbound in [ 'main', 'proxy' ]) ? p.main : dev.outbound;

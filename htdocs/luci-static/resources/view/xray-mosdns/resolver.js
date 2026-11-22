@@ -5,13 +5,15 @@
 'require xray-mosdns.common as xm';
 'require xray-mosdns.adblock as adblock';
 'require xray-mosdns.querylog as querylog';
+'require xray-mosdns.stats as stats';
 
 return view.extend({
 	load: function() {
 		return Promise.all([
 			uci.load(xm.CONF),
 			adblock.load(),
-			querylog.load()
+			querylog.load(),
+			stats.load()
 		]);
 	},
 
@@ -114,6 +116,12 @@ return view.extend({
 		o.placeholder = '0';
 
 		/* ------------------------------------------------------------ blocking / log */
+		/* the DNS counts, first on the tab */
+		o = s.taboption('logtab', form.DummyValue, '_stats');
+		o.render = function() {
+			return stats.render(res[3]);
+		};
+
 		o = s.taboption('logtab', form.ListValue, 'block_mode', _('拦截方式'),
 			_('被“阻断”规则和广告过滤拦下的域名怎么应答。返回 0.0.0.0 时应用会立刻连接失败；返回“域名不存在”时，个别应用会反复重试。'));
 		o.value('nxdomain', _('返回“域名不存在”'));

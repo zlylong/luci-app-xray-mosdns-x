@@ -1,7 +1,7 @@
 #!/bin/sh
 # luci-app-xray-mosdns-x - the read-only views of the helpers
 #
-#   info.sh groups | adlist-status | adlist-catalog | versions | check | cron-status
+#   info.sh groups | adlist-status | adlist-catalog | versions | check | cron-status | stats
 #
 # groups.uc, adlist.uc and update.sh also change things (pin a group,
 # download lists, install binaries), so they are in the ACL's write group,
@@ -16,5 +16,7 @@ case "$1" in
 	versions) exec "$L/update.sh" versions ;;
 	check) exec "$L/update.sh" check ;;
 	cron-status) exec "$L/update.sh" cron-status ;;
+	# the DNS counts (it takes a sample first, into its RAM state)
+	stats) exec "$L/stats.uc" show ;;
 	*) printf '{"ok":false,"error":"unknown view"}\n'; exit 1 ;;
 esac
