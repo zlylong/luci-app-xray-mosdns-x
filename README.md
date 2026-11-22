@@ -124,7 +124,7 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
 ├── htdocs/luci-static/resources/xray-mosdns/        页面共用的模块
 │   ├── common.js                             辅助函数
 │   ├── adblock.js                            DNS 页的“广告过滤”标签：订阅拦截列表（AdGuard 列表库或自定义地址）
-│   └── querylog.js                           DNS 页的“查询日志”标签：最近的 DNS 查询及其处理方式
+│   └── querylog.js                           DNS 页的“查询日志”标签：最近的 DNS 查询及其结果
 ├── tests/                                    夹具配置 + 生成/运行/断言脚本
 └── .gitea/workflows/ci.yml                   Gitea Actions：推送和合并请求跑测试；版本标签和手动运行时再用 SDK 打包
 ```

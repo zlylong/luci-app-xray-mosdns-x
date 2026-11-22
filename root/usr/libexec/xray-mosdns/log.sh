@@ -22,7 +22,7 @@ import * as fs from 'fs';
 import { cursor } from 'uci';
 
 const SCAN = 5000;	// newest lines of the mosdns log looked at
-const QUERY_KINDS = [ 'lan', 'block', 'direct', 'proxy', 'fallback' ];
+const QUERY_SUMMARY = 'query summary';	// the per-query lines of the preset _query_summary
 const SAFE_PATH = /^[A-Za-z0-9_.\/-]+$/;
 
 let logread = getenv('LOGREAD') || 'logread';
@@ -111,6 +111,22 @@ function fmt_time(ts) {
 	return sprintf('%04d-%02d-%02d %02d:%02d:%02d', t.year, t.mon, t.mday, t.hour, t.min, t.sec);
 }
 
+// mosdns-x writes the time of a JSON line as "time", ISO 8601
+// ("2026-11-22T12:31:46.982Z", or with an offset); plain zap writes "ts",
+// seconds. Returns seconds, or null.
+function log_time(e) {
+	if (type(e.ts) in [ 'int', 'double' ])
+		return e.ts;
+	const m = match(`${e.time ?? ''}`,
+		/^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})(\.[0-9]+)?(Z|([+-])([0-9]{2}):?([0-9]{2}))?$/);
+	if (!m)
+		return null;
+	let t = timegm({ year: +m[1], mon: +m[2], mday: +m[3], hour: +m[4], min: +m[5], sec: +m[6] });
+	if (m[9])
+		t -= ((m[9] == '-') ? -1 : 1) * (+m[10] * 3600 + +m[11] * 60);
+	return m[7] ? t + +`0${m[7]}` : t;
+}
+
 // With the query log on, mosdns writes JSON lines; they are made readable
 // here, and the per-query ones left to the query log page.
 function mosdns_line(line) {
@@ -125,15 +141,16 @@ function mosdns_line(line) {
 	}
 	if (type(e) != 'object')
 		return line;
-	if ((e.msg in QUERY_KINDS) && e.qname != null)
+	if (e.msg == QUERY_SUMMARY && e.qname != null)
 		return null;
-	let s = (type(e.ts) in [ 'int', 'double' ]) ? fmt_time(e.ts) : `${e.ts ?? '-'}`;
+	const t = log_time(e);
+	let s = (t != null) ? fmt_time(t) : `${e.time ?? e.ts ?? '-'}`;
 	s += ` ${uc(e.level ?? '')}`;
 	if (e.logger)
 		s += ` ${e.logger}`;
 	s += `: ${e.msg ?? ''}`;
 	for (let k in keys(e))
-		if (!(k in [ 'ts', 'level', 'logger', 'msg', 'caller' ]))
+		if (!(k in [ 'ts', 'time', 'level', 'logger', 'msg', 'caller' ]))
 			s += ` ${k}=${(type(e[k]) in [ 'object', 'array' ]) ? sprintf('%J', e[k]) : e[k]}`;
 	return s;
 }
