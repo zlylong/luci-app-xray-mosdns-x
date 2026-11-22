@@ -252,6 +252,7 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-<版本>-r1.apk
 | dns | filter_direct_ipv6 | 直连域名不返回 AAAA（默认 0） |
 | dns | ipv4_only | 只返回 IPv4 的域名列表：这些域名的 AAAA 和 HTTPS 查询返回空，不管按哪条规则解析（example.com 含子域名，也可以加 full: / keyword:） |
 | dns | domestic_dns | 国内 DoH/DoT/明文上游列表 |
+| dns | bootstrap | 引导解析器列表：解析 DoH/DoT 上游自身域名用的明文 DNS（IP，国内可直连）；多个时各个用域名的上游轮流分到一个（默认 223.5.5.5） |
 | dns | hosts | 静态域名映射（节点域名/VPS 域名解析用） |
 | global | default_action | 没有命中任何规则的流量：proxy（走总节点）/ direct |
 | group | remarks / strategy / member / fallback | 节点组：名称；fastest / ordered / roundrobin / random；成员列表（ordered 时即挑选顺序）；全部不可用时的出口 |
@@ -284,7 +285,8 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-<版本>-r1.apk
 - “按顺序”的切换延迟最多约等于探测间隔加看护周期（默认 1 分钟 + 10 秒）；看护进程退出时组会停在
   最后锁定的成员上，由 procd 拉起后恢复
 - “按顺序”组记住的当前成员保存在 Xray 进程里：Xray 重启（改配置、更新、重启路由器）后，
-  会重新从列表最靠前的可用成员开始
+  会重新从列表最靠前的可用成员开始：头 4 轮探测内（默认约 4 分钟）组按列表顺序选择，不管是否开了
+  “恢复后切回”。Xray 启动时的第一次探测总是失败，先恢复的不一定是排在前面的成员
 - 轮询和随机会让同一网站看到多个出口 IP，可能触发登录验证；节点组的锁定是临时的，重启后恢复自动
 - 多个域名共用同一 IP（CDN）且分属代理与直连时，以先写入集合的一方为准，直连集合优先
 - 客户端若绕过本机 DNS（DoH/DoT），其流量只能按 IP 集合和模式默认值判定

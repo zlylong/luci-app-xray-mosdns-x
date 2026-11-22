@@ -104,7 +104,8 @@ export function load(confdir) {
 			// answer AAAA queries with an empty response, per kind of domain
 			filter_proxy_ipv6: bool(d.filter_proxy_ipv6, true),
 			filter_direct_ipv6: bool(d.filter_direct_ipv6, false),
-			bootstrap: str(d.bootstrap, '223.5.5.5'),
+			// plain DNS for the upstreams' own names (a list; one value before 1.0.4)
+			bootstrap: list(d.bootstrap),
 			remote: [],
 			// answer for blocked names: nxdomain | zero (0.0.0.0 / ::)
 			block_mode: (str(d.block_mode, 'nxdomain') == 'zero') ? 'zero' : 'nxdomain',
@@ -170,8 +171,14 @@ export function load(confdir) {
 		return false;
 	}), v => match(v, /^(domain|full|keyword):/) ? v : `domain:${v}`);
 
-	if (!ipver(cfg.dns.bootstrap))
-		fail(`dns.bootstrap must be an IP address, got '${cfg.dns.bootstrap}'`);
+	cfg.dns.bootstrap = uniq_list(filter(cfg.dns.bootstrap, b => {
+		if (ipver(b))
+			return true;
+		note(`dns.bootstrap: ignoring '${b}' (use an IP address)`);
+		return false;
+	}));
+	if (!length(cfg.dns.bootstrap))
+		cfg.dns.bootstrap = [ '223.5.5.5' ];
 	if (!(cfg.dns.min_ttl >= 0 && cfg.dns.min_ttl <= 86400))
 		cfg.dns.min_ttl = 0;
 
