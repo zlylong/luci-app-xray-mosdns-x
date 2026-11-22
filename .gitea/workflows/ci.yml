@@ -1,9 +1,12 @@
-name: build-package
+name: ci
 
+# Pushes to master and pull requests only run the tests. Packaging (the
+# build job) runs for a version tag, which also publishes the release, and
+# when the workflow is started by hand (Actions -> ci -> Run workflow), e.g.
+# to check a change to the Makefile or the package scripts before a release.
 on:
   push:
     branches: [ main, master ]
-    # a version tag builds the package and publishes it as a release
     tags: [ 'v*' ]
   pull_request:
   workflow_dispatch:
@@ -88,6 +91,8 @@ jobs:
 
   build:
     needs: test
+    # see the top: a version tag, or started by hand
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     # The official ImmortalWrt SDK image: the SDK is already unpacked in
     # /home/build/immortalwrt, so nothing has to be downloaded or installed.
