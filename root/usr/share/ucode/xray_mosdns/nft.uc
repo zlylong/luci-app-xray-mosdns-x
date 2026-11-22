@@ -274,6 +274,9 @@ export function build(cfg, plan, env) {
 			`meta l4proto != ${protos} return`,
 			// the router's lookups go to mosdns through dns_redirect_out, or stay with dnsmasq
 			'meta l4proto { tcp, udp } th dport 53 return',
+			// Xray's answers to LAN clients belong to flows that prerouting marked;
+			// re-routing them to lo would lose them (the client never gets the SYN-ACK)
+			'ct direction reply return comment "Xray answering a LAN client"',
 			`ct mark & ${mark} == ${mark} goto out_mark`,
 			'ct state != new return',
 			...classify('goto out_mark'),
