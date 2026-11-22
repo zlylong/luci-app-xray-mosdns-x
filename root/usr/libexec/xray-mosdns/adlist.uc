@@ -326,11 +326,16 @@ function cmd_catalog() {
 }
 
 // download AdGuard's registry and keep the fields we use; null when that fails
-// An update and a catalogue sync may both do this at once: each has a
-// download file of its own, and the cache is replaced in one rename.
+// The catalogue as the registry has it now, or null. Nothing is written
+// here: an update and a catalogue sync may both download at once (each has
+// a download file of its own), and the cache is only written with the list
+// lock held (save_catalog). It is dated when the download started: of two
+// downloads the one that started later has the newer content, whichever
+// finished first.
 function refresh_catalog() {
 	const me = fs.readlink('/proc/self') ?? `${time()}`;
 	const tmp = `/tmp/xray-mosdns-adlist-catalog.${me}.json`;
+	const started = time();
 	if (!download(REGISTRY, tmp)) {
 		// curl may have written part of it
 		fs.unlink(tmp);
@@ -340,7 +345,7 @@ function refresh_catalog() {
 	fs.unlink(tmp);
 	if (type(d?.filters) != 'array' || type(d?.groups) != 'array' || !length(d.filters))
 		return null;
-	let cat = { source: REGISTRY, updated: time(), groups: [], filters: [] };
+	let cat = { source: REGISTRY, updated: started, groups: [], filters: [] };
 	for (let grp in sort(d.groups, (a, b) => a.displayNumber - b.displayNumber))
 		push(cat.groups, { id: grp.groupId, name: grp.groupName });
 	for (let f in d.filters) {
@@ -355,9 +360,20 @@ function refresh_catalog() {
 			e.deprecated = true;
 		push(cat.filters, e);
 	}
+	return cat;
+}
+
+// With the list lock held: the newer of a downloaded catalogue and the
+// cached one, which is what to use; the cache becomes the downloaded one
+// only if that is newer (the same second keeps what is there), in one rename.
+function save_catalog(cat) {
+	const cached = load(CATALOG, null);
+	if (type(cached?.filters) == 'array' && (cached.updated ?? 0) >= (cat.updated ?? 0))
+		return cached;
+	const tmp = `${CATALOG}.${fs.readlink('/proc/self') ?? time()}.tmp`;
 	system([ 'mkdir', '-p', '/etc/xray-mosdns' ]);
-	if (fs.writefile(`${CATALOG}.${me}.tmp`, sprintf('%J', cat)) == null || !fs.rename(`${CATALOG}.${me}.tmp`, CATALOG))
-		fs.unlink(`${CATALOG}.${me}.tmp`);
+	if (fs.writefile(tmp, sprintf('%J', cat)) == null || !fs.rename(tmp, CATALOG))
+		fs.unlink(tmp);
 	return cat;
 }
 
@@ -419,11 +435,10 @@ function cmd_catalog_sync() {
 		return 1;
 	}
 	// While this one downloaded, an update may have fetched the catalogue
-	// again and brought the subscriptions in line with it: that one is the
-	// newer, and the subscriptions are read again as they are now.
-	const cached = load(CATALOG, null);
-	if (type(cached?.filters) == 'array' && (cached.updated ?? 0) > (cat.updated ?? 0))
-		cat = cached;
+	// too, started later, and brought the subscriptions in line with it:
+	// then that one is used, and the subscriptions are read again as they
+	// are now.
+	cat = save_catalog(cat);
 	uci.unload(CONF);
 	const res = sync_catalog(cat);
 	const cfg = settings();
@@ -530,7 +545,8 @@ function cmd_update() {
 
 	// follow the catalogue first, so a moved list is fetched from its new address;
 	// when the registry cannot be reached the last known catalogue is used
-	const cat = refresh_catalog() ?? current_catalog();
+	let cat = refresh_catalog();
+	cat = cat ? save_catalog(cat) : current_catalog();
 	const synced = cat ? sync_catalog(cat) : { changed: 0, flags: {} };
 
 	const all = lists();
