@@ -252,6 +252,7 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-<版本>-r1.apk
 | dns | filter_direct_ipv6 | 直连域名不返回 AAAA（默认 0） |
 | dns | ipv4_only | 只返回 IPv4 的域名列表：这些域名的 AAAA 和 HTTPS 查询返回空，不管按哪条规则解析（example.com 含子域名，也可以加 full: / keyword:） |
 | dns | domestic_dns | 国内 DoH/DoT/明文上游列表 |
+| dns | ecs / ecs_ip | EDNS 客户端子网：国内查询附带路由器所在的网段（默认 0 关）；ecs_ip 可填一个 IPv4 和一个 IPv6 固定下来，不填时用默认路由所在接口的公网地址，地址变化（拨号重连）后自动重新生成配置。走代理的查询不附带 |
 | dns | bootstrap | 引导解析器列表：解析 DoH/DoT 上游自身域名用的明文 DNS（IP，国内可直连）；多个时各个用域名的上游轮流分到一个（默认 223.5.5.5） |
 | dns | hosts | 静态域名映射（节点域名/VPS 域名解析用） |
 | global | default_action | 没有命中任何规则的流量：proxy（走总节点）/ direct |

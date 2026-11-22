@@ -42,6 +42,16 @@ return view.extend({
 		o.rmempty = false;
 		o.depends('redirect', '1');
 
+		o = s.taboption('general', form.Flag, 'ecs', _('EDNS 客户端子网（ECS）'),
+			_('国内查询附带路由器所在的网段（IPv4 /24、IPv6 /48），国内 DNS 据此返回离你更近的 CDN 地址。走代理的查询不附带：国外 DNS 看到的是代理服务器的地址，返回的本来就是离代理出口近的地址。和“缓存带 EDNS 的查询”不冲突：缓存按设备发来的原始查询记录，网段只加在发给上游的查询里。'));
+		o.default = '0';
+
+		o = s.taboption('general', form.DynamicList, 'ecs_ip', _('ECS 地址'),
+			_('不填时自动使用路由器的公网 IPv4 / IPv6 地址（默认路由所在的接口），拨号重连、地址变化后自动更新。也可以填一个 IPv4 和一个 IPv6 地址固定下来；路由器前面还有一层路由器、WAN 口拿到的是私有地址时，需要在这里填公网地址。'));
+		o.datatype = 'ipaddr';
+		o.placeholder = _('自动（路由器的公网地址）');
+		o.depends('ecs', '1');
+
 		o = s.taboption('general', form.Value, 'listen_port', _('监听端口'),
 			_('不要用 5353，那是 mDNS 的端口。'));
 		o.datatype = 'port';

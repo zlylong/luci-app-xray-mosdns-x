@@ -328,4 +328,11 @@ service_triggers() {
 	for i in $ifaces; do
 		procd_add_reload_interface_trigger "$i"
 	done
+	# ECS from the router's public address: a new one (a PPPoE redial) needs
+	# a new config; the generator says which interfaces carry it
+	ecs_ifaces=$( [ -f "$OUT/runtime.env" ] && . "$OUT/runtime.env"; echo "${ECS_IFACES:-}" )
+	for i in $ecs_ifaces; do
+		case "$i" in *[!A-Za-z0-9_-]*) continue ;; esac
+		procd_add_reload_interface_trigger "$i"
+	done
 }

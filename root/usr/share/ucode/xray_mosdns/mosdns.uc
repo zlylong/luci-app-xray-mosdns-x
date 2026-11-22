@@ -116,6 +116,22 @@ export function build(cfg, plan) {
 	plugin('forward_local', 'fast_forward', {
 		upstream: map(d.domestic, addr => boot({ addr, idle_timeout: 10, ...self })),
 	});
+	// ECS: domestic queries carry the router's network (/24, /48), so that a
+	// resolver picks CDN addresses near it. Proxied ones do not: their
+	// resolver sees the proxy's address, near which they want to be answered.
+	// It sits behind the cache, which keys on the query as the client sent it,
+	// and takes the option off the answer again before the cache stores it.
+	const ecs = d.ecs ? d.ecs_addr : null;
+	if (ecs) {
+		let a = { mask4: 24, mask6: 48 };
+		if (ecs.v4)
+			a.ipv4 = ecs.v4;
+		if (ecs.v6)
+			a.ipv6 = ecs.v6;
+		plugin('ecs_local', 'ecs', a);
+	}
+	const local_fwd = ecs ? [ 'ecs_local', 'forward_local' ] : [ 'forward_local' ];
+
 	plugin('forward_remote', 'fast_forward', {
 		upstream: map(d.remote, function(addr) {
 			let u = { addr, socks5: `127.0.0.1:${g.socks_port}`, idle_timeout: 10 };
@@ -170,7 +186,7 @@ export function build(cfg, plan) {
 	// ------------------------------------------------------------ sequences
 	// the TTL floor sits behind the forwarder so the cache stores the raised value
 	const ttl = (d.min_ttl > 0) ? [ 'min_ttl' ] : [];
-	plugin('local_seq', 'sequence', { exec: [ 'cache', 'forward_local', ...ttl ] });
+	plugin('local_seq', 'sequence', { exec: [ 'cache', ...local_fwd, ...ttl ] });
 	plugin('remote_seq', 'sequence', { exec: [ 'cache', 'forward_remote', ...ttl ] });
 	// ChinaDNS behaviour for unclassified names: trust the domestic answer
 	// only when it is a mainland address, otherwise use the proxied answer.
@@ -178,7 +194,7 @@ export function build(cfg, plan) {
 		'cache',
 		{
 			primary: [
-				'forward_local',
+				...local_fwd,
 				{
 					if: '(! response_has_local_ip) && [_response_valid_answer]',
 					exec: [ '_drop_response' ],
