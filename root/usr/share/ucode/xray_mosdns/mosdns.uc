@@ -61,12 +61,6 @@ export function build(cfg, plan) {
 	// that record too and it can carry IPv6 address hints
 	const no_aaaa = { if: 'query_is_ipv6', exec: [ '_new_empty_response', '_return' ] };
 
-	// with the query log on, every way a query can end starts with a
-	// query_summary node whose message names the outcome
-	function logged(kind, exec) {
-		return d.query_log ? [ `log_${kind}`, ...exec ] : exec;
-	}
-
 	const block = (d.block_mode == 'zero') ? [ 'block_zero', '_return' ] : [ '_new_nxdomain_response', '_return' ];
 
 	// answer through the proxy; `mark` records the addresses for the kernel
@@ -127,9 +121,6 @@ export function build(cfg, plan) {
 		plugin('block_zero', 'blackhole', { ipv4: [ '0.0.0.0' ], ipv6: [ '::' ] });
 	if (d.min_ttl > 0)
 		plugin('min_ttl', 'ttl', { minimal_ttl: d.min_ttl });
-	if (d.query_log)
-		for (let kind in [ 'lan', 'block', 'direct', 'proxy', 'fallback' ])
-			plugin(`log_${kind}`, 'query_summary', { msg: kind });
 
 	// local names / reverse lookups stay with dnsmasq (DHCP leases, /etc/hosts)
 	const lan_forward = (d.redirect && d.dnsmasq_port != d.listen_port);
@@ -192,13 +183,20 @@ export function build(cfg, plan) {
 	] });
 
 	// ------------------------------------------------------------ main
+	// The query log: the preset summary node, first, so it wraps everything
+	// behind it and writes one line per query once it is answered. Plugins
+	// of type query_summary (which could name the outcome in their message)
+	// cannot be used: mosdns-x v26.05.25 panics while loading any of them
+	// (its args constructor returns new(*Args), Init asserts *Args).
+	if (d.query_log)
+		push(main, '_query_summary');
 	push(main, 'edns_cookie_filter');
 	if (length(d.hosts))
 		push(main, 'hosts');
 	if (lan_forward)
-		push(main, { if: 'query_is_lan_name || query_is_ptr', exec: logged('lan', [ 'forward_lan', '_return' ]) });
+		push(main, { if: 'query_is_lan_name || query_is_ptr', exec: [ 'forward_lan', '_return' ] });
 	if (length(node_domains))
-		push(main, { if: 'query_is_node', exec: logged('direct', [ 'local_seq', '_return' ]) });
+		push(main, { if: 'query_is_node', exec: [ 'local_seq', '_return' ] });
 
 	// rules, in the same order Xray evaluates them
 	let i = 0;
@@ -219,19 +217,19 @@ export function build(cfg, plan) {
 		}
 		switch (r.class) {
 		case 'block':
-			push(main, { if: cond, exec: logged('block', block) });
+			push(main, { if: cond, exec: block });
 			break;
 		case 'direct':
-			push(main, { if: cond, exec: logged('direct', via_local(true)) });
+			push(main, { if: cond, exec: via_local(true) });
 			break;
 		default:
-			push(main, { if: cond, exec: logged('proxy', via_proxy(true)) });
+			push(main, { if: cond, exec: via_proxy(true) });
 		}
 	}
 
 	// names no rule claimed follow the default
 	if (plan.default_class == 'direct') {
-		for (let e in logged('direct', via_local(false)))
+		for (let e in via_local(false))
 			push(main, e);
 	}
 	else if (plan.cn_ip_direct) {
@@ -239,14 +237,12 @@ export function build(cfg, plan) {
 		// The proxied side is already kept on IPv4 by the fallback itself; when
 		// direct names must not get AAAA either, the domestic answer cannot be
 		// used for AAAA at all, so such queries follow the proxy setting.
-		if (d.query_log)
-			push(main, 'log_fallback');
 		if (d.filter_direct_ipv6)
 			push(main, d.filter_proxy_ipv6 ? no_aaaa : { if: 'query_is_ipv6', exec: [ 'remote_seq', '_return' ] });
 		push(main, 'fallback_seq');
 	}
 	else {
-		for (let e in logged('proxy', via_proxy(false)))
+		for (let e in via_proxy(false))
 			push(main, e);
 	}
 

@@ -107,7 +107,7 @@ check(plugin(m, "query_is_node")["args"]["domain"] == ["full:hk1.example.net"], 
 check(plugin(m, "rule_1")["args"]["domain"] == ["provider:geosite:netflix", "full:api.example.com", "keyword:tracker"], "domain syntax conversion")
 check(plugin(m, "local_seq")["args"]["exec"] == ["cache", "forward_local"], "cache must sit inside the sequence so nftset runs on hits")
 check(plugin(m, "forward_remote")["args"]["upstream"] == [{"addr": "tcp://1.1.1.1:53", "socks5": "127.0.0.1:1070", "idle_timeout": 10, "enable_pipeline": True}], "default foreign upstream")
-check(m["log"].get("production") is False and plugin(m, "log_proxy") is None and plugin(m, "min_ttl") is None and plugin(m, "block_zero") is None, "defaults: no query log, no TTL floor, NXDOMAIN blocking")
+check(m["log"].get("production") is False and "_query_summary" not in plugin(m, "main_sequence")["args"]["exec"] and plugin(m, "min_ttl") is None and plugin(m, "block_zero") is None, "defaults: no query log, no TTL floor, NXDOMAIN blocking")
 check("disabled.example" not in json.dumps(m), "disabled rule leaked into mosdns")
 check(m["servers"][0]["listeners"][0]["addr"] == ":5335", "redirect mode listens on the wildcard address")
 pre = chain(n, "prerouting")
@@ -233,23 +233,17 @@ prov = {p["tag"]: p for p in m["data_providers"]}
 check(prov.get("adblock") == {"tag": "adblock", "file": "/tmp/xm-adlists/xray-mosdns/block.txt", "auto_reload": True} and prov.get("adallow", {}).get("file") == "/tmp/xm-adlists/xray-mosdns/allow.txt", "adlist: merged files are data providers with auto reload, in our own subdirectory of a directory set in the options")
 gmain = plugin(m, "main_sequence")["args"]["exec"]
 adrow = [e for e in gmain if isinstance(e, dict) and "query_is_ad_exception" in e.get("if", "")]
-check(len(adrow) == 1 and adrow[0]["exec"] == ["log_block", "block_zero", "_return"] and adrow[0]["if"].endswith("&& (! query_is_ad_exception)"), "adlist: blocked (0.0.0.0 mode, logged) unless one of the lists' own exceptions matches")
+check(len(adrow) == 1 and adrow[0]["exec"] == ["block_zero", "_return"] and adrow[0]["if"].endswith("&& (! query_is_ad_exception)"), "adlist: blocked (0.0.0.0 mode) unless one of the lists' own exceptions matches")
 # DNS options set in this fixture
 check(plugin(m, "block_zero")["args"] == {"ipv4": ["0.0.0.0"], "ipv6": ["::"]}, "block mode zero")
 check(plugin(m, "min_ttl")["args"] == {"minimal_ttl": 120} and plugin(m, "local_seq")["args"]["exec"] == ["cache", "forward_local", "min_ttl"] and plugin(m, "remote_seq")["args"]["exec"] == ["cache", "forward_remote", "min_ttl"] and plugin(m, "fallback_seq")["args"]["exec"][-1] == "min_ttl", "TTL floor sits behind the forwarder in every cached sequence")
 ups = plugin(m, "forward_remote")["args"]["upstream"]
 check([u["addr"] for u in ups] == ["tcp://8.8.8.8:53", "https://1.1.1.1/dns-query", "tls://dns.google"] and all(u["socks5"] == "127.0.0.1:1070" for u in ups), "several foreign upstreams, all through the proxy, junk dropped")
 check("bootstrap" in ups[2] and "bootstrap" not in ups[1] and ups[0].get("enable_pipeline") is True and "enable_pipeline" not in ups[1], "host-name upstream gets a bootstrap resolver; pipelining only for plain TCP")
-check(m["log"]["production"] is True and all(plugin(m, "log_" + k) == {"tag": "log_" + k, "type": "query_summary", "args": {"msg": k}} for k in ("lan", "block", "direct", "proxy", "fallback")), "query log: JSON log lines and one summary plugin per outcome")
-# every way through the main sequence passes a summary node: a branch either starts
-# with one, or comes after a top-level one (which wraps everything behind it)
-covered, ok_log = False, True
-for e in gmain:
-    if isinstance(e, str):
-        covered = covered or e.startswith("log_")
-    elif not covered and not e["exec"][0].startswith("log_"):
-        ok_log = False
-check(ok_log and covered, "query log: no branch of the main sequence escapes the summary nodes")
+# the preset summary node first: it wraps everything behind it, so every query is logged
+check(m["log"]["production"] is True and gmain[0] == "_query_summary" and gmain.count("_query_summary") == 1, "query log: JSON log lines, the preset summary node first in the main sequence")
+# mosdns-x v26.05.25 panics while loading any plugin of type query_summary
+check(not [p for p in m["plugins"] if p["type"] == "query_summary"] and not any(f'"log_{k}"' in json.dumps(m) for k in ("lan", "block", "direct", "proxy", "fallback")), "query log: no query_summary plugins (they crash mosdns-x), no references to them")
 check({"type": "field", "inboundTag": ["socks-in"], "balancerTag": "hk.group"} in x["routing"]["rules"], "internal SOCKS inbound follows the main target (a group here)")
 adtag = adrow[0]["if"].split(" ")[0] if adrow else "?"
 check(plugin(m, adtag)["args"]["domain"] == ["provider:adblock"] and plugin(m, "query_is_ad_exception")["args"]["domain"] == ["provider:adallow"], "adlist: matchers")
@@ -339,12 +333,30 @@ else:
           f"log mosdns: its system log lines first, then the file: {lm[:4]}")
     check(lm[4:] == ["2026-11-21T13:00:00.000+0800\tINFO\tserver started",
                      f"{utc(1763730000)} INFO cache: cache hit rate rate=0.5",
-                     f"{utc(1763730002)} WARN: upstream error error=timeout"],
-          f"log mosdns: plain lines as they are, JSON lines readable, query lines left out: {lm[4:]}")
+                     f"{utc(1763730002)} WARN: upstream error error=timeout",
+                     f"{utc(1763730003)} WARN forward_remote: upstream err addr=tcp://8.8.8.8:53"],
+          f"log mosdns: plain lines as they are, JSON lines readable (seconds or mosdns-x's ISO time), query lines left out: {lm[4:]}")
     check(txt("log-app") == sl[5:10], f"log app: the service's tags, its helpers by name, procd's notes on them: {txt('log-app')}")
     check(txt("log-all") == sl[0:2] + sl[3:10], "log: without a source, all three in order, nothing else")
     check(txt("log-legacy") == txt("log-all"), "log: `log.sh <lines>` from older pages still works")
     check(txt("log-tail") == sl[8:10], "log: the line count keeps the newest lines")
+
+    q = res("querylog")
+    qe = q.get("entries") or []
+    check(q.get("ok") is True and q.get("total") == 3 and [e["name"] for e in qe] == ["slow.example.org", "ads.example.net", "example.com"],
+          f"querylog: the preset summary lines, newest first, other lines and nameless ones skipped: {q}")
+    check(len(qe) == 3 and qe[0] == {"ts": 1763730005, "client": "192.168.1.2", "name": "slow.example.org", "type": "HTTPS",
+                                     "rcode": "NO RESPONSE", "ms": 5000, "error": "context deadline exceeded"}
+          and qe[1]["type"] == "AAAA" and qe[1]["rcode"] == "NXDOMAIN" and qe[1]["error"] is None
+          and qe[2]["type"] == "A" and qe[2]["rcode"] == "NOERROR",
+          f"querylog: types and answer codes readable, no handling kind: {qe}")
+    check(len(qe) == 3 and abs(qe[1]["ts"] - 1763730003.25) < 1e-6 and abs(qe[1]["ms"] - 0.5) < 1e-9
+          and qe[2]["ts"] == 1763730001 and abs(qe[2]["ms"] - 2.1) < 1e-9,
+          f"querylog: mosdns-x's ISO times (UTC or with an offset) and Go durations, as seconds and milliseconds: {qe}")
+    q = res("querylog-filter")
+    check(q.get("total") == 1 and [e["name"] for e in q.get("entries") or []] == ["ads.example.net"], f"querylog: filter by client address: {q}")
+    q = res("querylog-limit")
+    check(q.get("total") == 3 and [e["name"] for e in q.get("entries") or []] == ["slow.example.org"], f"querylog: the limit caps the entries, not the count: {q}")
 
 # ------------------------------------------------------------------ runtime.env (the values in effect)
 def runtime_env(case):

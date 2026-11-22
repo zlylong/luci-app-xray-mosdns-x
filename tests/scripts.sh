@@ -1,7 +1,8 @@
 #!/bin/sh
 # The helpers behind the node and overview pages: latency.sh against a local
-# listener, traffic.sh against a stand-in for `xray api statsquery`, and the
-# JSON that update.sh prints. tests/check.py checks the results.
+# listener, traffic.sh against a stand-in for `xray api statsquery`, the
+# JSON that update.sh prints, log.sh and querylog.uc against sample log
+# files. tests/check.py checks the results.
 # Runs inside an OpenWrt rootfs with ucode-mod-socket; it replaces
 # /etc/config/xray-mosdns for the duration of the run.
 # usage: tests/scripts.sh <repo> <outdir>
@@ -47,6 +48,9 @@ config node 'n1'
 	option type 'vless'
 	option address '127.0.0.1'
 	option port '$PORT'
+
+config dns 'dns'
+	option query_log '1'
 EOF
 
 run lat-target  "$LX/latency.sh" --target "127.0.0.1:$PORT"
@@ -105,8 +109,9 @@ chmod +x "$OUT/fake-logread"
 cat > "$OUT/mosdns-x.log" <<'EOF'
 2026-11-21T13:00:00.000+0800	INFO	server started
 {"level":"info","ts":1763730000.5,"logger":"cache","msg":"cache hit rate","rate":0.5}
-{"level":"info","ts":1763730001,"msg":"proxy","qname":"example.com.","qtype":1,"client":"192.168.1.2"}
+{"level":"info","time":"2025-11-21T13:00:01.000Z","logger":"_query_summary","msg":"query summary","uqid":7,"client":"192.168.1.2","protocol":"udp","qname":"example.com.","qtype":1,"qclass":1,"resp_rcode":0,"elapsed":"2.1ms"}
 {"level":"warn","ts":1763730002.25,"msg":"upstream error","error":"timeout"}
+{"level":"warn","time":"2025-11-21T21:00:03.500+08:00","logger":"forward_remote","msg":"upstream err","addr":"tcp://8.8.8.8:53"}
 EOF
 logsh() { env TZ=UTC LOGREAD="$OUT/fake-logread" MOSDNS_LOG="$OUT/mosdns-x.log" "$LX/log.sh" "$@"; }
 
@@ -121,6 +126,21 @@ if logsh nonsense >/dev/null 2>&1; then
 else
 	echo "script log-bad: ok"
 fi
+
+# querylog.uc: the preset _query_summary's lines, newest first; other lines
+# (another message, no name, not JSON) are not queries. The time and the
+# duration as mosdns-x writes them, and once as plain zap does (seconds).
+cat > "$OUT/querylog.log" <<'EOF'
+{"level":"info","time":"2025-11-21T13:00:01.000Z","logger":"_query_summary","msg":"query summary","uqid":1,"client":"192.168.1.2","protocol":"udp","qname":"example.com.","qtype":1,"qclass":1,"resp_rcode":0,"elapsed":"2.1ms"}
+{"level":"info","time":"2025-11-21T13:00:02.000Z","logger":"cache","msg":"cache hit rate","rate":0.5}
+not json
+{"level":"info","time":"2025-11-21T21:00:03.250+08:00","logger":"_query_summary","msg":"query summary","uqid":2,"client":"192.168.1.3","protocol":"tcp","qname":"ads.example.net.","qtype":28,"qclass":1,"resp_rcode":3,"elapsed":"500µs"}
+{"level":"info","time":"2025-11-21T13:00:04.000Z","logger":"_query_summary","msg":"query summary","uqid":3,"client":"192.168.1.2","protocol":"udp","qclass":1,"resp_rcode":0}
+{"level":"info","ts":1763730005,"logger":"_query_summary","msg":"query summary","uqid":4,"client":"192.168.1.2","protocol":"udp","qname":"slow.example.org.","qtype":65,"qclass":1,"resp_rcode":-1,"elapsed":5.0,"error":"context deadline exceeded"}
+EOF
+run querylog        env MOSDNS_LOG="$OUT/querylog.log" "$LX/querylog.uc" 200
+run querylog-filter env MOSDNS_LOG="$OUT/querylog.log" "$LX/querylog.uc" 200 192.168.1.3
+run querylog-limit  env MOSDNS_LOG="$OUT/querylog.log" "$LX/querylog.uc" 1
 
 kill "$LISTENER" 2>/dev/null
 if [ -f "$OUT/conf.saved" ]; then mv "$OUT/conf.saved" "$CONF"; else rm -f "$CONF"; fi
