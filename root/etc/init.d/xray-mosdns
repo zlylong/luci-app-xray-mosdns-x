@@ -173,11 +173,16 @@ generate_and_switch() {
 		[ "$(sum "$OUT/mosdns.yaml")" = "$(sum "$NEW/mosdns.yaml")" ] || flush="flush-dns"
 		if XM_RULES_DIR="$NEW" "$PLUGIN_DIR/fw.sh" apply $flush >"$NEW/.log" 2>&1; then
 			rm -f "$NEW/.log"
-			for f in "$NEW"/* "$NEW"/.[!.]*; do
-				[ -e "$f" ] && mv -f "$f" "$OUT/"
-			done
-			rm -rf "$NEW"
-			rm -f "$ERR"
+			# all files or none: when they cannot all be put in place the
+			# old set is back whole, and the code below puts its rules back
+			# too. The new set stays in $NEW to look at.
+			if "$PLUGIN_DIR/switch.sh" "$NEW" "$OUT" 2>"$OUT/.switch.log"; then
+				rm -rf "$NEW"
+				rm -f "$ERR" "$OUT/.switch.log"
+			else
+				bad="新配置无法替换到 $OUT：$(reason "$OUT/.switch.log")"
+				rm -f "$OUT/.switch.log"
+			fi
 		else
 			bad="防火墙规则加载失败：$(reason "$NEW/.log")"
 		fi

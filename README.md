@@ -53,7 +53,8 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
 - **重载不断流**：`reload` 重新生成配置，nft 规则在单个事务内替换，procd 只重启配置文件
   发生变化的进程；生成失败、或启动前检查（二进制、geo 数据缺失等）失败时保留上一份可用配置继续运行，
   概览页显示原因。生成的配置旁边有一份 `runtime.env`，记下这份配置用的端口、防火墙标记、二进制路径等；
-  防火墙脚本、看门狗、状态和流量脚本都按它工作，所以没有生效的 UCI 修改不会让它们和运行中的配置对不上
+  防火墙脚本、看门狗、节点组看护、状态页、流量和连通性检查都按它工作，所以没有生效的 UCI 修改不会让它们和
+  运行中的配置对不上。新的一套文件要么全部换上，要么整套留在旧的
 - 国外 DNS 通过 Xray 的内部 SOCKS inbound 经代理解析；从这个 inbound 进来的流量固定走总节点，不受规则表和默认出口影响。
   可以配置多个国外上游（IP 或 tcp/tls/https 地址）
 - AAAA 过滤同时作用于 HTTPS 记录（类型 65）查询，它同样能带出 IPv6 地址
@@ -93,7 +94,8 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
 ├── root/etc/init.d/xray-mosdns               procd 服务（start 幂等，兼作 reload）
 ├── root/usr/share/xray-mosdns/
 │   ├── gen-config.uc                         生成器入口：xray.json / mosdns.yaml / nft.rules
-│   ├── fw.sh                                 nftables 加载 + 策略路由 apply/clear/status
+│   ├── fw.sh                                 nftables 加载 + 策略路由 apply/clear/status，透明代理撤出/恢复
+│   ├── switch.sh                             把检查过的新一套生成文件换上：要么全部换上，要么整套恢复旧的
 │   └── dnsmasq.sh                            仅用于还原 ≤0.8 版本改写过的 dnsmasq 配置
 ├── root/usr/share/ucode/xray_mosdns/
 │   ├── config.uc                             UCI → 规范化配置 + 分流计划
@@ -134,9 +136,12 @@ podman run --rm --network none -v "$PWD":/src:ro -v /tmp/xm-test:/out \
 python3 tests/check.py /tmp/xm-test          # 对三套夹具的输出做断言
 # tests/migrate.sh（同样在 rootfs 里跑）：升级迁移前后生成结果必须逐字节一致
 # tests/scripts.sh /src /out（rootfs 里需装 ucode-mod-socket）：测速、流量、日志、update.sh 版本查询等辅助脚本的输出
-# tests/runtime.sh /src /out：用替身 nft/ip/curl/unzip 跑 fw.sh 的撤出/恢复、update.sh 的校验和替换、
-#   包的 postrm（升级与卸载）；会写 /var/etc、/etc/crontabs，只能在一次性的 rootfs 里跑
-# 以上结果都由 check.py 断言。init 脚本和 procd 的启动顺序在 rootfs 里跑不了，需要在路由器上验证
+# tests/runtime.sh /src /out：用替身 nft/ip/curl/unzip/mv 跑 fw.sh 的撤出/恢复和 status、switch.sh 的整套替换与恢复、
+#   groups.uc 和 status.sh 是否按 runtime.env 工作、update.sh 的校验和替换、adlist.uc 的共用目录和合并失败、
+#   包的 postrm（升级与卸载）；会写 /var/etc、/etc/config、/etc/crontabs，只能在一次性的 rootfs 里跑
+# 以上结果都由 check.py 断言（CI 里加 --all：哪一部分没有输出就算失败）。
+# 跑不了的两样需要在路由器上（或带 NET_ADMIN 的容器里）验证：init 脚本和 procd 的启动顺序；
+#   nft 规则的语法（测试里的 nft 是替身，不检查语法），用 nft -c -f /var/etc/xray-mosdns/nft.rules
 xray run -test -c /tmp/xm-test/chnroute/xray.json
 ```
 
@@ -240,7 +245,7 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-<版本>-r1.apk
 | group | failback | 仅 ordered：0（默认）切换后只有当前成员不可用才再切；1 前面的成员恢复后立即切回 |
 | global | probe_url / probe_interval | 节点组的探测地址与间隔，默认 gstatic generate_204 / 1m |
 | global | probe_url_backup | 备用探测地址（可选）：所有组的全部成员同时探测失败时自动换用 |
-| adblock | dir / auto_update / update_hour | 拦截列表的存放目录、是否每天自动更新、更新钟点 |
+| adblock | dir / auto_update / update_hour | 拦截列表的存放目录（可以和别的程序共用：更新和卸载只删除本插件写的文件）、是否每天自动更新、更新钟点 |
 | adlist | enabled / name / url | 一条订阅：AdGuard 规则、hosts 或纯域名格式的列表地址 |
 | adlist | catalog_id | 来自 AdGuard 列表库的订阅记录的目录编号；有它时 name 和 url 跟随目录 |
 | device | mac / network / outbound | 按设备分流：MAC 地址列表；tcp,udp / udp / tcp；main / direct / 节点 / 节点组 |

@@ -147,7 +147,8 @@ return baseclass.extend({
 			summary.replaceChildren.apply(summary, status.running
 				? [ E('em', { 'class': 'spinning' }, _('正在下载并转换列表…')) ]
 				: [ _('已安装 %s 条拦截规则').format(fmtCount(status.total)),
-					status.finished ? _('，上次更新 %s。').format(fmtTime(status.finished)) : _('。') ]);
+					status.finished ? _('，上次更新 %s。').format(fmtTime(status.finished)) : _('。') ].concat(status.error
+					? [ ' ', xm.badge(_('合并失败'), 'bad'), ' ', _('仍在使用上一份列表：%s').format(status.error) ] : []));
 			Object.keys(stateCells).forEach(function(sid) {
 				stateCells[sid].replaceChildren(listState(sid));
 			});

@@ -34,30 +34,46 @@ function load(path, dflt) {
 	}
 }
 
-const uci = cursor();
-let xray = uci.get_first('xray-mosdns', 'global', 'xray_bin') ?? '/usr/bin/xray';
-let port = uci.get_first('xray-mosdns', 'global', 'api_port') ?? '10085';
-if (!match(xray, /^[A-Za-z0-9_.\/-]+$/))
-	xray = '/usr/bin/xray';
-if (!match(port, /^[0-9]+$/))
-	port = '10085';
+const RUNTIME = '/var/etc/xray-mosdns/runtime.env';
 
-const probe_backup = uci.get_first('xray-mosdns', 'global', 'probe_url_backup');
-
-function probe_interval() {
-	const m = match(uci.get_first('xray-mosdns', 'global', 'probe_interval') ?? '1m', /^([0-9]+)([smh])$/);
-	return m ? +m[1] * { s: 1, m: 60, h: 3600 }[m[2]] : 60;
+// The binary, API port and probe settings in effect: from the runtime.env
+// next to the running config, else from UCI. The watcher reads them again
+// every round, so a reload that changes them reaches it without a restart.
+function settings() {
+	let rt = {};
+	for (let l in split(fs.readfile(RUNTIME) ?? '', '\n')) {
+		const m = match(l, /^([A-Z_]+)='?([^']*)'?$/);
+		if (m)
+			rt[m[1]] = m[2];
+	}
+	const uci = cursor();
+	const opt = (k) => uci.get_first('xray-mosdns', 'global', k);
+	let xray = rt.XRAY_BIN || opt('xray_bin') || '/usr/bin/xray';
+	let port = rt.API_PORT || opt('api_port') || '10085';
+	// both go into a shell command
+	if (!match(xray, /^[A-Za-z0-9_.\/-]+$/))
+		xray = '/usr/bin/xray';
+	if (!match(port, /^[0-9]+$/))
+		port = '10085';
+	const m = match(rt.PROBE_INTERVAL || opt('probe_interval') || '1m', /^([0-9]+)([smh])$/);
+	return {
+		xray, port,
+		probe_backup: ('PROBE_BACKUP' in rt) ? rt.PROBE_BACKUP == '1' : !!opt('probe_url_backup'),
+		probe_interval: m ? +m[1] * { s: 1, m: 60, h: 3600 }[m[2]] : 60,
+	};
 }
 
+let S = settings();
+
 function probe_target() {
-	return (probe_backup && trim(fs.readfile(PROBE_STATE) ?? '') == 'backup') ? 'backup' : 'primary';
+	return (S.probe_backup && trim(fs.readfile(PROBE_STATE) ?? '') == 'backup') ? 'backup' : 'primary';
 }
 
 const TAG = /^[A-Za-z0-9_]+\.(node|group)$/;
 
 // every argument is checked against TAG before it gets here
 function api(args) {
-	const p = fs.popen(`${xray} api ${args[0]} --server=127.0.0.1:${port} ${join(' ', slice(args, 1))} 2>/dev/null`, 'r');
+	const p = fs.popen(`${S.xray} api ${args[0]} --server=127.0.0.1:${S.port} ${join(' ', slice(args, 1))} 2>/dev/null`, 'r');
 	if (!p)
 		return null;
 	const out = p.read('all');
@@ -161,7 +177,7 @@ function cmd_list() {
 			fallback: grp.fallback,
 		});
 	}
-	print({ ok: true, groups: out, probe: probe_target(), probe_backup: !!probe_backup }, '\n');
+	print({ ok: true, groups: out, probe: probe_target(), probe_backup: S.probe_backup }, '\n');
 }
 
 function cmd_pin(group, node) {
@@ -209,19 +225,20 @@ function switch_probe() {
 }
 
 function cmd_watch() {
-	// long enough for a freshly started Xray to have finished its first probes
-	const dead_limit = 3 * probe_interval() + 60;
 	let dead_since = null;
 	let last_switch = fs.stat(PROBE_STATE)?.mtime ?? 0;
 
 	while (true) {
+		S = settings();
+		// long enough for a freshly started Xray to have finished its first probes
+		const dead_limit = 3 * S.probe_interval + 60;
 		const pins = load(PINS, {});
 		let seen = 0, alive = 0;
 		for (let grp in valid_groups()) {
 			let state = null;
 			if (grp.strategy == 'ordered' || pins[grp.name])
 				state = enforce(grp, pins);
-			else if (probe_backup)
+			else if (S.probe_backup)
 				state = balancer(grp.tag);
 			if (state) {
 				seen++;
@@ -230,7 +247,7 @@ function cmd_watch() {
 			}
 		}
 
-		if (probe_backup) {
+		if (S.probe_backup) {
 			const now = time();
 			if (seen == 0 || alive > 0)
 				dead_since = null;

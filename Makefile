@@ -27,7 +27,9 @@ LUCI_PKGARCH:=all
 # backups of replaced binaries; tens of MB on a small flash). On removal
 # those go; the config file stays. On an upgrade the scripts are still
 # there and everything stays. A blocklist directory outside
-# /etc/xray-mosdns may be shared, so only the files adlist.uc writes go.
+# /etc/xray-mosdns may be shared: only the files adlist.uc writes go, by
+# name (the merged lists, its state, and per subscription in UCI
+# <section>.block / .allow and their temporaries), never by pattern.
 define Package/$(PKG_NAME)/postrm
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] && exit 0
@@ -38,11 +40,15 @@ if grep -qs '# xray-mosdns-' /etc/crontabs/root; then
 fi
 # stop has cleared the table already; in case it could not
 nft delete table inet xray-mosdns 2>/dev/null
-dir=$$(uci -q get xray-mosdns.adblock.dir)
+dir=$$(uci -q get 'xray-mosdns.@adblock[0].dir')
 case "$$dir" in
 	''|/etc/xray-mosdns|/etc/xray-mosdns/*) ;;
-	/*) [ -d "$$dir" ] && rm -f "$$dir"/block.txt "$$dir"/allow.txt "$$dir"/state.json \
-		"$$dir"/*.block "$$dir"/*.allow "$$dir"/.*.block.tmp "$$dir"/.*.allow.tmp ;;
+	/*) if [ -d "$$dir" ]; then
+		for id in $$(uci -q -X show xray-mosdns | sed -n 's/^xray-mosdns\.\([A-Za-z0-9_]*\)=adlist$$/\1/p'); do
+			rm -f "$$dir/$$id.block" "$$dir/$$id.allow" "$$dir/.$$id.raw" "$$dir/.$$id.block.tmp" "$$dir/.$$id.allow.tmp"
+		done
+		rm -f "$$dir/block.txt" "$$dir/allow.txt" "$$dir/state.json" "$$dir/.block.tmp" "$$dir/.allow.tmp"
+	fi ;;
 esac
 rm -rf /etc/xray-mosdns /root/pw-backup/xray-mosdns-update
 rm -rf /var/etc/xray-mosdns /var/etc/xray-mosdns.new

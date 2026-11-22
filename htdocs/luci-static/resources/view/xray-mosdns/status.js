@@ -47,6 +47,11 @@ return view.extend({
 			}
 			var enabled = st.enabled == 1;
 			var fwOk = st.fw && st.fw.nft && st.fw.rule;
+			/* the settings in effect, not the ones saved: they differ after a
+			   change that was not applied or did not take */
+			var eff = st.effective || {};
+			var dnsPort = eff.dns_port || dns.listen_port || '5335';
+			var dnsRedirect = (eff.dns_redirect != null) ? eff.dns_redirect != 0 : dns.redirect !== '0';
 			var rows = [
 				[ _('服务'), enabled ? xm.badge(_('已启用'), 'ok') : xm.badge(_('未启用')) ],
 				[ 'Xray', running(st.xray_running == 1, enabled) ],
@@ -55,20 +60,20 @@ return view.extend({
 					? E('span', {}, [ xm.badge(_('已撤出'), 'warn'), ' ', _('Xray 没有监听：流量暂时直连，DNS 由 dnsmasq 解析') ])
 					: (fwOk ? xm.badge(_('已加载'), 'ok')
 						: (enabled ? xm.badge(_('未加载'), 'bad') : xm.badge(_('未加载')))) ],
-				[ _('未命中规则时'), xm.DEFAULTS[global.default_action || 'proxy'] ],
+				[ _('未命中规则时'), xm.DEFAULTS[eff.default_action || global.default_action || 'proxy'] ],
 				[ _('总节点'), xm.targetLabel(st.main_target || global.main_target || 'direct') ],
-				[ _('分流位置'), global.kernel_split === '0'
+				[ _('分流位置'), ((eff.kernel_split != null) ? eff.kernel_split == 0 : global.kernel_split === '0')
 					? _('全部进入 Xray 后分流')
 					: _('内核分流（直连流量不进 Xray）') ],
 				/* what is true right now, not what is configured: the redirect rule
 				   only exists while the service is on and mosdns-x is answering */
 				[ _('LAN DNS'), !enabled
 					? _('由 dnsmasq 解析（服务未启用，不重定向）')
-					: (dns.redirect === '0'
-						? _('由 dnsmasq 解析（已设置为不重定向），mosdns-x 监听 :%s').format(dns.listen_port || '5335')
+					: (!dnsRedirect
+						? _('由 dnsmasq 解析（已设置为不重定向），mosdns-x 监听 :%s').format(dnsPort)
 						: (st.dns_redirect
 							? E('span', {}, [ xm.badge(_('已接管'), 'ok'), ' ',
-								_('53 端口重定向到 mosdns-x :%s').format(dns.listen_port || '5335') ])
+								_('53 端口重定向到 mosdns-x :%s').format(dnsPort) ])
 							: E('span', {}, [ xm.badge(_('已回退'), 'warn'), ' ',
 								(st.fw && st.fw.gated)
 									? _('透明代理已撤出（Xray 没有监听），当前由 dnsmasq 解析')

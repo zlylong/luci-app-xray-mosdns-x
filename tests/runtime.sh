@@ -3,10 +3,16 @@
 # stand-ins for what a test rootfs cannot run (nft, ip, curl, unzip):
 #   - fw.sh gate / ungate / gated / apply: each one transaction, both chains,
 #     LAN DNS handed back and taken back, a refused transaction changes
-#     nothing, a half-done gate is completed, a reload keeps a gate in place
+#     nothing, a half-done gate is completed, a reload keeps a gate in place;
+#     fw.sh status
+#   - switch.sh: a new set of files in place whole, or the old one back whole
+#   - groups.uc and status.sh go by runtime.env, not UCI
 #   - update.sh: checksums, replacing a running binary, the lock, backups
+#   - adlist.uc update: a shared directory, merged lists that cannot be written
 #   - the package's postrm, on an upgrade and on removal
-# Results go to <outdir>/runtime/; tests/check.py checks them.
+# Results go to <outdir>/runtime/; tests/check.py checks them. nft syntax
+# is not checked here (the stand-in takes any rule): that needs a kernel,
+# `nft -c -f` on a router or in a container with NET_ADMIN.
 # Runs inside a throwaway OpenWrt rootfs: it writes /var/etc/xray-mosdns,
 # /var/run, /etc/crontabs/root and removes /etc/xray-mosdns, as the package
 # scripts do. It refuses to run where the package is installed.
@@ -29,8 +35,9 @@ export PATH="$OUT/bin:$PATH"
 cat > "$OUT/bin/nft" <<'EOF'
 #!/bin/sh
 # stand-in for nft: the chains of table inet xray-mosdns as files, one rule
-# per line with its handle. -f applies a batch all or nothing;
-# FAKE_NFT_FAIL=<text> refuses a batch with a line containing it.
+# per line with its handle, sets as set.<name> files, one element per line.
+# -f applies a batch all or nothing; FAKE_NFT_FAIL=<text> refuses a batch
+# with a line containing it.
 S=$FAKE_NFT_STATE
 T='inet xray-mosdns'
 set -f
@@ -45,7 +52,17 @@ show() { # $1 chain, $2 non-empty: with handles
 	exit 0
 }
 case "$*" in
-	"list table $T") [ -d "$S" ]; exit ;;
+	"list table $T")
+		[ -d "$S" ] || exit 1
+		printf 'table %s {\n' "$T"
+		for s in $(ls "$S" | sed -n 's/^set\.//p'); do printf '\tset %s {\n\t\ttype ipv4_addr\n\t}\n' "$s"; done
+		printf '}\n'
+		exit 0 ;;
+	"list set $T "*)
+		[ -f "$S/set.$5" ] || exit 1
+		printf 'table %s {\n\tset %s {\n\t\ttype ipv4_addr\n\t\telements = { %s }\n\t}\n}\n' "$T" "$5" \
+			"$(tr '\n' ',' < "$S/set.$5" | sed 's/,$//; s/,/, /g')"
+		exit 0 ;;
 	"delete table $T") rm -rf "$S"; exit 0 ;;
 	"list chain $T "*) show "$5" ;;
 	"-a list chain $T "*) show "$6" handles ;;
@@ -148,9 +165,80 @@ unset FAKE_NFT_FAIL
 printf 'insert rule %s prerouting return comment "xray-mosdns: Xray not listening"\n' "$T" | nft -f -
 step half gated
 step half-gate gate
+# a gate in place with the LAN DNS redirect back: gating again takes it off
+nft -f "$R/nft-dns-on.rules"
+step gate-dns gate
 runtime manage
 step ungate-managed ungate
+# status: the sets there are and how full they are
+printf '10.0.0.1\n10.0.0.2\n' > "$FAKE_NFT_STATE/set.bypass4"
+: > "$FAKE_NFT_STATE/set.proxy4_dns"
+printf '1.1.1.1\n' > "$FAKE_NFT_STATE/set.ipg4_0"
+printf '9.9.9.9\n' > "$FAKE_NFT_STATE/set.somebody_else"
+fw status > "$OUT/fw-status.txt" 2>&1
 echo "script fw-gate: done"
+
+# ---------------------------------------------------------------- switch.sh
+SW="$REPO/root/usr/share/xray-mosdns/switch.sh"
+X="$OUT/sw"
+mkdir -p "$X/bin"
+# stand-in for mv: refuses a move with FAKE_MV_FAIL in a path
+cat > "$X/bin/mv" <<'EOF'
+#!/bin/sh
+for a in "$@"; do case "$a" in *"$FAKE_MV_FAIL"*) echo "mv: stand-in refuses $a" >&2; exit 1 ;; esac; done
+exec busybox mv "$@"
+EOF
+chmod +x "$X/bin/mv"
+sw_seed() {
+	rm -rf "$X/out" "$X/new"; mkdir -p "$X/out" "$X/new"
+	echo old-a > "$X/out/a.json"; echo old-b > "$X/out/b.yaml"; echo state > "$X/out/.fw-state"
+	echo new-a > "$X/new/a.json"; echo new-b > "$X/new/b.yaml"; echo new-c > "$X/new/c.rules"; echo new-h > "$X/new/.h.env"
+}
+sw_state() { # $1 name, $2 exit status
+	{
+		echo "rc $2"
+		for f in a.json b.yaml c.rules .h.env .fw-state; do echo "out $f $(cat "$X/out/$f" 2>/dev/null || echo -)"; done
+		echo "new $(ls -A "$X/new" | tr '\n' ' ')"
+		echo "prev $([ -e "$X/out/.prev" ] && echo yes || echo no)"
+	} > "$OUT/switch-$1.txt"
+}
+sw_seed; sh "$SW" "$X/new" "$X/out" 2> "$OUT/switch-ok.err"; sw_state ok $?
+# the second file cannot be moved: the first goes back
+sw_seed; PATH="$X/bin:$PATH" FAKE_MV_FAIL=b.yaml sh "$SW" "$X/new" "$X/out" 2> "$OUT/switch-fail.err"; sw_state fail $?
+echo "script switch: done"
+
+# ---------------------------------------------------------------- groups.uc, status.sh
+# Xray's API as a stand-in: answers on whichever port, logs what was asked
+cat > "$OUT/bin/xray-api" <<EOF
+#!/bin/sh
+echo "\$*" >> "$OUT/groups-api.log"
+case "\$2" in
+	bi) printf 'Balancer: %s\n  - Selecting Override:\n  - Selects:\n    0 b.node\n' "\$4" ;;
+esac
+exit 0
+EOF
+chmod +x "$OUT/bin/xray-api"
+printf '[{"name":"hk","tag":"hk.group","strategy":"ordered","failback":false,"members":[{"name":"a","tag":"a.node"},{"name":"b","tag":"b.node"}],"fallback":"direct"}]\n' \
+	> /var/etc/xray-mosdns/groups.json
+grt() { # $1 = API port in effect
+	printf "XRAY_BIN='%s'\nAPI_PORT=%s\nPROBE_INTERVAL=30s\nPROBE_BACKUP=1\nDEFAULT_ACTION=direct\nKERNEL_SPLIT=0\nDNS_REDIRECT=0\nDNS_PORT=5353\n" \
+		"$OUT/bin/xray-api" "$1" > /var/etc/xray-mosdns/runtime.env
+}
+# what UCI says differs from what is in effect in every value
+printf "config global 'global'\n\toption xray_bin '/usr/bin/xray-missing'\n\toption api_port '10085'\n\toption default_action 'proxy'\n\toption kernel_split '1'\nconfig dns 'dns'\n\toption redirect '1'\n\toption listen_port '5335'\n" > "$CONF"
+: > "$OUT/groups-api.log"
+grt 20001
+ucode "$REPO/root/usr/libexec/xray-mosdns/groups.uc" list > "$OUT/groups-list.json" 2>&1
+# the watcher takes a changed port on its next round, without a restart
+: > "$OUT/groups-api.log"
+ucode "$REPO/root/usr/libexec/xray-mosdns/groups.uc" watch > "$OUT/groups-watch.log" 2>&1 & gw=$!
+sleep 3; grt 20002; sleep 12
+kill "$gw" 2>/dev/null
+cp "$OUT/groups-api.log" "$OUT/groups-watch-api.log"
+sh "$REPO/root/usr/libexec/xray-mosdns/status.sh" > "$OUT/status.json" 2>&1
+# update.sh below goes by the configured binary: not this one
+rm -f /var/etc/xray-mosdns/groups.json /var/etc/xray-mosdns/runtime.env "$CONF"
+echo "script groups-status: done"
 
 # ---------------------------------------------------------------- update.sh
 U="$OUT/upd"; F="$U/fix"; ROOT="$U/root"
@@ -175,6 +263,7 @@ case "\$url" in
 	*.zip) emit "$F/xray.zip" ;;
 	*.dat.sha256sum) f=\${url##*/}; f=\${f%.sha256sum}; s=\$(sha256sum "$F/\$f" | cut -d' ' -f1); [ "\${BAD:-}" = "\$f" ] && s=\$zero; printf '%s  %s\n' "\$s" "\$f" ;;
 	*/geosite.dat|*/geoip.dat) emit "$F/\${url##*/}" ;;
+	*/lists.test/list1.txt) emit "$F/list1.txt" ;;
 	*) exit 22 ;;
 esac
 EOF
@@ -211,6 +300,31 @@ upd() { env UPD_TEST_DIR="$ROOT" TMPDIR="$U/tmp" sh "$UPD" "$@"; }
 } > "$OUT/update.txt" 2>&1
 echo "script update: done"
 
+# ---------------------------------------------------------------- adlist.uc
+AD="$OUT/adlists"
+mkdir -p "$AD"
+printf '||ads.test^\n||more-ads.test^\n@@||fine.test^\n' > "$F/list1.txt"
+# a directory shared with another program, and a list this one subscribed to before
+echo theirs > "$AD/mine.block"; echo theirs > "$AD/mine.allow"
+echo old > "$AD/gone1.block"; echo old > "$AD/gone1.allow"
+printf '{"lists":{"gone1":{"name":"gone1","rules":1}},"total":1}' > "$AD/state.json"
+printf "config adblock\n\toption dir '%s'\nconfig adlist 'l1'\n\toption url 'https://lists.test/list1.txt'\n" "$AD" > "$CONF"
+adl() { ucode "$REPO/root/usr/libexec/xray-mosdns/adlist.uc" "$@" 2>&1; }
+{
+	echo "update1 $(adl update)"
+	echo "files1 $(ls -A "$AD" | tr '\n' ' ')"
+	cp "$AD/block.txt" "$OUT/block.before"
+	# the merged list cannot be written: the one in use stays
+	mkdir "$AD/.block.tmp"
+	echo "update2 $(adl update)"
+	echo "kept2 $(cmp -s "$OUT/block.before" "$AD/block.txt" && echo yes || echo no)"
+	echo "status2 $(adl status)"
+	rmdir "$AD/.block.tmp"
+	echo "update3 $(adl update)"
+	echo "status3 $(adl status)"
+} > "$OUT/adlist.txt"
+echo "script adlist: done"
+
 # ---------------------------------------------------------------- postrm
 # taken from the Makefile the way the build does ($$ -> $)
 sed -n '/^define Package\/\$(PKG_NAME)\/postrm/,/^endef/p' "$REPO/Makefile" | sed '1d;$d' | sed 's/\$\$/$/g' > "$OUT/postrm"
@@ -218,13 +332,18 @@ S="$OUT/shared"
 mkdir -p /etc/crontabs /etc/xray-mosdns/adlists /root/pw-backup/xray-mosdns-update "$S"
 printf '0 4 * * * /usr/libexec/xray-mosdns/update.sh geo-auto # xray-mosdns-geo-auto\n17 5 * * * x # xray-mosdns-adlist\n0 1 * * * keep-me\n' > /etc/crontabs/root
 touch /etc/xray-mosdns/adlists/block.txt /root/pw-backup/xray-mosdns-update/xray.1
-for f in block.txt allow.txt state.json 1.block 1.allow mine.txt; do touch "$S/$f"; done
-printf "config adblock 'adblock'\n\toption dir '%s'\n" "$S" > "$CONF"
+# the blocklist options in an anonymous section, one named and one
+# anonymous subscription; the directory also holds another program's lists
+printf "config adblock\n\toption dir '%s'\nconfig adlist 'l1'\n\toption url 'https://a.test/1'\nconfig adlist\n\toption url 'https://a.test/2'\n" "$S" > "$CONF"
+anon=$(uci -q -X show xray-mosdns | sed -n 's/^xray-mosdns\.\(cfg[0-9a-f]*\)=adlist$/\1/p')
+for f in block.txt allow.txt state.json .block.tmp l1.block l1.allow .l1.raw "$anon.block" "$anon.allow" mine.txt mine.block mine.allow; do
+	touch "$S/$f"
+done
 mkdir -p "$FAKE_NFT_STATE"
 pr_state() {
 	echo "cron-ours $(grep -c '# xray-mosdns-' /etc/crontabs/root) cron-other $(grep -c keep-me /etc/crontabs/root)"
 	echo "etc-dir $([ -d /etc/xray-mosdns ] && echo present || echo gone) backups $([ -d /root/pw-backup/xray-mosdns-update ] && echo present || echo gone) table $([ -d "$FAKE_NFT_STATE" ] && echo present || echo gone)"
-	echo "shared $(ls "$S" | tr '\n' ' ')"
+	echo "shared $(ls -A "$S" | sed "s/^$anon\./ANON./" | sort | tr '\n' ' ')"
 }
 {
 	# an upgrade: the package's scripts are still there

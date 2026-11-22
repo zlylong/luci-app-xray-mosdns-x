@@ -202,12 +202,18 @@ write('runtime.env', join('\n', [
 	`GEO_DIR='${g.geo_dir}'`,
 	`TPROXY_PORT=${g.tproxy_port}`,
 	`API_PORT=${g.api_port}`,
+	`SOCKS_PORT=${g.socks_port}`,
 	`DNS_PORT=${cfg.dns.listen_port}`,
 	`DNS_REDIRECT=${cfg.dns.redirect ? 1 : 0}`,
 	`DNS_WATCH=${(cfg.dns.redirect && cfg.dns.fallback) ? 'manage' : 'log-only'}`,
 	`FWMARK=${g.fwmark}`,
 	`ROUTE_TABLE=${g.route_table}`,
 	`IPV6=${g.ipv6 ? 1 : 0}`,
+	`KERNEL_SPLIT=${g.kernel_split ? 1 : 0}`,
+	`DEFAULT_ACTION=${g.default_action}`,
+	// the group watcher's pace and whether it may switch to the backup probe
+	`PROBE_INTERVAL=${g.probe_interval}`,
+	`PROBE_BACKUP=${g.probe_url_backup ? 1 : 0}`,
 	`MAIN_TARGET='${match(g.main_target ?? '', /^[A-Za-z0-9_-]+$/) ? g.main_target : ''}'`,
 ]) + '\n');
 

@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Assertions over the configs produced by tests/gen.sh.
 
-usage: tests/check.py <outdir>
+usage: tests/check.py <outdir> [--all]
+
+--all (CI): the output of tests/scripts.sh and tests/runtime.sh has to be
+there; without it a part that was not run is skipped.
 """
 import json
 import os
@@ -10,7 +13,9 @@ import time
 
 import yaml
 
-out = sys.argv[1] if len(sys.argv) > 1 else "/tmp/xm-test"
+args = [a for a in sys.argv[1:] if not a.startswith("--")]
+out = args[0] if args else "/tmp/xm-test"
+strict = "--all" in sys.argv[1:]
 failed = []
 
 
@@ -293,6 +298,7 @@ check(json.load(open(f"{out}/adlist/stats.json")) == {"rules": 9, "allow": 2, "s
 sd = f"{out}/scripts"
 if not os.path.isdir(sd):
     print("scripts: no output from tests/scripts.sh, skipped")
+    check(not strict, "scripts: no output from tests/scripts.sh")
 else:
     def res(name):
         return json.load(open(f"{sd}/{name}.json"))
@@ -349,16 +355,23 @@ def runtime_env(case):
 
 rt = runtime_env("chnroute")
 check(rt == {"XRAY_BIN": "/usr/bin/xray", "MOSDNS_BIN": "/usr/bin/mosdns", "GEO_DIR": "/usr/share/v2ray",
-             "TPROXY_PORT": "12345", "API_PORT": "10085", "DNS_PORT": "5335", "DNS_REDIRECT": "1", "DNS_WATCH": "manage",
-             "FWMARK": "0x1", "ROUTE_TABLE": "100", "IPV6": "0", "MAIN_TARGET": "hk1"}, f"runtime.env (chnroute): {rt}")
+             "TPROXY_PORT": "12345", "API_PORT": "10085", "SOCKS_PORT": "1070", "DNS_PORT": "5335", "DNS_REDIRECT": "1",
+             "DNS_WATCH": "manage", "FWMARK": "0x1", "ROUTE_TABLE": "100", "IPV6": "0", "KERNEL_SPLIT": "1",
+             "DEFAULT_ACTION": "proxy", "PROBE_INTERVAL": "1m", "PROBE_BACKUP": "0", "MAIN_TARGET": "hk1"},
+      f"runtime.env (chnroute): {rt}")
 rt = runtime_env("groups")
-check(rt["DNS_WATCH"] == "log-only" and rt["MAIN_TARGET"] == "hk", f"runtime.env (groups): static redirect, a group as main target: {rt}")
-check(runtime_env("gfw")["IPV6"] == "1", "runtime.env (gfw): IPv6 on")
+check(rt.get("DNS_WATCH") == "log-only" and rt.get("MAIN_TARGET") == "hk" and rt.get("PROBE_INTERVAL") == "30s",
+      f"runtime.env (groups): static redirect, a group as main target, the group probe interval: {rt}")
+rt = runtime_env("gfw")
+check(rt.get("IPV6") == "1" and rt.get("DEFAULT_ACTION") == "direct", f"runtime.env (gfw): IPv6 on, direct by default: {rt}")
+rt = runtime_env("balance")
+check(rt.get("KERNEL_SPLIT") == "0" and rt.get("DNS_REDIRECT") == "0", f"runtime.env (balance): split in Xray, no DNS redirect: {rt}")
 
 # ------------------------------------------------------------------ fw.sh gate, update.sh, postrm (tests/runtime.sh)
 rd = f"{out}/runtime"
 if not os.path.isdir(rd):
     print("runtime: no output from tests/runtime.sh, skipped")
+    check(not strict, "runtime: no output from tests/runtime.sh")
 else:
     G = 'return comment "xray-mosdns: Xray not listening"'
     REDIR = "udp dport 53 redirect to :5335"
@@ -405,9 +418,68 @@ else:
     h = state("half-gate")
     check(st["half-gate"] == "0" and h["prerouting"].count(G) == 1 and h["output"].count(G) == 1 and h["gated"] == "yes",
           f"gate: completes half a gate without doubling it {h}")
+    gd = state("gate-dns")
+    check(st["gate-dns"] == "0" and gd["dns_redirect"] == [] and gd["prerouting"].count(G) == 1 and gd["output"].count(G) == 1
+          and gd["gated"] == "yes", f"gate: a gate in place with the DNS redirect back takes it off, no second gate rule {gd}")
     m = state("ungate-managed")
     check(st["ungate-managed"] == "0" and G not in m["prerouting"] and m["dns_redirect"] == [] and m["gated"] == "no",
           f"ungate: a watched DNS redirect is left to the watchdog {m}")
+
+    fs_ = open(f"{rd}/fw-status.txt").read().splitlines()
+    check(fs_ == ["nft: loaded", "proxy: in the path", "set bypass4: 2", "set ipg4_0: 1", "set proxy4_dns: 0",
+                  "rule4: present", "route4: present"], f"fw.sh status: the sets of ours there are, with their sizes {fs_}")
+
+    def kv(name):
+        # "key value" lines; "out <file> <content>" is keyed by "out <file>"
+        d = {}
+        for line in open(f"{rd}/{name}.txt").read().splitlines():
+            k, _, v = line.partition(" ")
+            if k == "out":
+                f, _, v = v.partition(" ")
+                k = f"out {f}"
+            d[k] = v
+        return d
+
+    sw = kv("switch-ok")
+    check(sw == {"rc": "0", "out a.json": "new-a", "out b.yaml": "new-b", "out c.rules": "new-c", "out .h.env": "new-h",
+                 "out .fw-state": "state", "new": "", "prev": "no"},
+          f"switch.sh: every new file in place, files only the old set has stay, nothing left over {sw}")
+    sf = kv("switch-fail")
+    check(sf == {"rc": "1", "out a.json": "old-a", "out b.yaml": "old-b", "out c.rules": "-", "out .h.env": "-",
+                 "out .fw-state": "state", "new": ".h.env a.json b.yaml c.rules ", "prev": "no"},
+          f"switch.sh: a file that cannot be moved puts the old set back whole, the new one stays to look at {sf}")
+    check("b.yaml" in open(f"{rd}/switch-fail.err").read(), "switch.sh: says which file could not be moved")
+
+    gl = json.load(open(f"{rd}/groups-list.json"))
+    check(gl.get("ok") and gl["groups"][0]["running"] and gl["groups"][0]["current"] == "b" and gl.get("probe_backup") is True,
+          f"groups.uc list: the binary, API port and backup probe in effect, not UCI's {gl}")
+    ga = open(f"{rd}/groups-watch-api.log").read().splitlines()
+    check(len(ga) >= 4 and ga[0] == "api bi --server=127.0.0.1:20001 hk.group"
+          and "api bo --server=127.0.0.1:20001 -b hk.group b.node" in ga
+          and "api bi --server=127.0.0.1:20002 hk.group" in ga and "api bo --server=127.0.0.1:20002 -b hk.group b.node" in ga,
+          f"groups.uc watch: holds the ordered group, takes a changed port on its next round {ga}")
+    sj = json.load(open(f"{rd}/status.json"))
+    check(sj.get("effective") == {"default_action": "direct", "kernel_split": 0, "dns_redirect": 0, "dns_port": 5353},
+          f"status.sh: the default action, split, DNS redirect and port in effect, not UCI's {sj}")
+
+    ad = {}
+    for line in open(f"{rd}/adlist.txt").read().splitlines():
+        k, _, v = line.partition(" ")
+        ad[k] = v
+    def adj(k):
+        try:
+            return json.loads(ad.get(k, ""))
+        except ValueError:
+            return {"unparsed": ad.get(k)}
+    check(adj("update1").get("ok") is True and adj("update1").get("total") == 2, f"adlist update: {ad.get('update1')}")
+    check(ad.get("files1") == "allow.txt block.txt l1.allow l1.block mine.allow mine.block state.json ",
+          f"adlist update: a list no longer subscribed goes, another program's files in the directory stay {ad.get('files1')}")
+    u2 = adj("update2")
+    check(u2.get("ok") is False and "block.txt" in (u2.get("error") or "") and ad.get("kept2") == "yes",
+          f"adlist update: merged lists that cannot be written are an error, the ones in use stay {ad.get('update2')}")
+    check(adj("status2").get("error") == u2.get("error") and adj("status2").get("total") == 2,
+          f"adlist status: shows why {ad.get('status2')}")
+    check(adj("update3").get("ok") is True and adj("status3").get("error") is None, "adlist update: the next good update clears it")
 
     up = {}
     for line in open(f"{rd}/update.txt").read().splitlines():
@@ -428,10 +500,12 @@ else:
     pr = open(f"{rd}/postrm.txt").read()
     upgrade, removal = pr.split("[removal]")
     check("cron-ours 2 cron-other 1" in upgrade and "etc-dir present backups present table present" in upgrade
-          and "mine.txt" in upgrade and "1.block" in upgrade, f"postrm: an upgrade leaves everything {upgrade}")
+          and "shared .block.tmp .l1.raw ANON.allow ANON.block allow.txt block.txt l1.allow l1.block mine.allow mine.block mine.txt state.json"
+          in upgrade, f"postrm: an upgrade leaves everything {upgrade}")
     check("cron-ours 0 cron-other 1" in removal and "etc-dir gone backups gone table gone" in removal
-          and removal.strip().endswith("shared mine.txt"),
-          f"postrm: removal takes our cron lines, data, backups and files, nothing else {removal}")
+          and removal.strip().endswith("shared mine.allow mine.block mine.txt"),
+          f"postrm: removal takes our cron lines, data, backups and the files of our subscriptions (named or not), "
+          f"another program's .block / .allow stay {removal}")
 
 if failed:
     print("\n".join("FAIL: " + f for f in failed))
