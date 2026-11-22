@@ -159,6 +159,19 @@ function lock() {
 	return true;
 }
 
+// The lock, waiting up to secs seconds for another holder to let go: a
+// catalogue sync or a move holds it for a moment, an update for its whole
+// download (minutes), so still busy after a few seconds means an update.
+function lock_wait(secs) {
+	for (let i = 0; ; i++) {
+		if (lock())
+			return true;
+		if (!lock_busy || i >= secs)
+			return false;
+		system([ 'sleep', '1' ]);
+	}
+}
+
 function unlock() {
 	if (held) {
 		held.close();
@@ -313,8 +326,11 @@ function cmd_catalog() {
 }
 
 // download AdGuard's registry and keep the fields we use; null when that fails
+// An update and a catalogue sync may both do this at once: each has a
+// download file of its own, and the cache is replaced in one rename.
 function refresh_catalog() {
-	const tmp = '/tmp/xray-mosdns-adlist-catalog.json';
+	const me = fs.readlink('/proc/self') ?? `${time()}`;
+	const tmp = `/tmp/xray-mosdns-adlist-catalog.${me}.json`;
 	if (!download(REGISTRY, tmp))
 		return null;
 	const d = load(tmp, null);
@@ -337,7 +353,8 @@ function refresh_catalog() {
 		push(cat.filters, e);
 	}
 	system([ 'mkdir', '-p', '/etc/xray-mosdns' ]);
-	fs.writefile(CATALOG, sprintf('%J', cat));
+	if (fs.writefile(`${CATALOG}.${me}.tmp`, sprintf('%J', cat)) == null || !fs.rename(`${CATALOG}.${me}.tmp`, CATALOG))
+		fs.unlink(`${CATALOG}.${me}.tmp`);
 	return cat;
 }
 
@@ -385,15 +402,17 @@ function sync_catalog(cat) {
 
 // refresh the catalogue and re-sync; used by the page's button
 // It rewrites subscriptions and the state an update writes too: not while
-// one runs (the page says so and leaves it for later).
+// one runs (the page says so and leaves it for later). The download comes
+// first, without the lock, so that what waits for it (the start) waits
+// for a moment at most.
 function cmd_catalog_sync() {
-	if (!lock()) {
-		out({ ok: false, busy: lock_busy, error: lock_busy ? 'a blocklist update is running' : lock_error });
-		return 1;
-	}
 	const cat = refresh_catalog();
 	if (!cat) {
 		out({ ok: false, error: 'could not download the catalogue' });
+		return 1;
+	}
+	if (!lock_wait(5)) {
+		out({ ok: false, busy: lock_busy, error: lock_busy ? 'a blocklist update is running' : lock_error });
 		return 1;
 	}
 	const res = sync_catalog(cat);
@@ -585,8 +604,9 @@ function cmd_migrate() {
 		out({ ok: true, failed: [] });
 		return 0;
 	}
-	// and no update starts while the files move
-	if (!lock()) {
+	// and no update starts while the files move; a short holder (a
+	// catalogue sync) is waited for
+	if (!lock_wait(5)) {
 		system([ 'logger', '-t', 'xray-mosdns',
 			`blocklists: ${lock_error}; moving the lists from ${cfg.base} into ${cfg.dir} is left to the next start` ]);
 		out({ ok: false, postponed: true });
@@ -606,9 +626,9 @@ function cmd_migrate() {
 // once the list is there. Merged lists that are not what the lists there
 // make (missing, empty or cut short, or from before a list was turned off:
 // their size is the sum of the lists' sizes) are made again, which needs
-// no download. While an update runs, which writes them itself, empty ones
-// stand in for missing ones (never over a file that is there) for it to
-// rewrite. A subscribed list with no data yet is fetched in the
+// no download; a short holder of the lock is waited for. While an update
+// runs, which writes them itself, empty ones stand in for missing ones
+// (never over a file that is there) for it to rewrite. A subscribed list with no data yet is fetched in the
 // background. Whatever goes wrong is printed on stderr (the start script
 // puts it on the overview).
 function cmd_ensure() {
@@ -625,11 +645,17 @@ function cmd_ensure() {
 			n += fs.stat(`${cfg.dir}/${l.id}.${kind}`)?.size ?? 0;
 		return n;
 	};
-	const stale = filter([ 'block', 'allow' ], k => fs.lstat(live(k))?.type != 'file' || fs.lstat(live(k)).size != size(k));
+	// With a list's data missing (being fetched, a move that did not
+	// finish) the lists there make less than the list in use has: that one
+	// stays until the update below has the data. Missing, it is made from
+	// what there is.
+	const complete = !length(filter(all, l => !fs.access(`${cfg.dir}/${l.id}.block`)));
+	const stale = filter([ 'block', 'allow' ], k => fs.lstat(live(k))?.type != 'file'
+		|| (complete && fs.lstat(live(k)).size != size(k)));
 	if (length(stale)) {
 		system([ 'mkdir', '-p', cfg.dir ]);
 		let err = null;
-		if (lock()) {
+		if (lock_wait(5)) {
 			err = merge(cfg, all);
 			unlock();
 		}

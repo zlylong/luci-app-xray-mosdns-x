@@ -274,6 +274,9 @@ case "\$url" in
 	*.dat.sha256sum) f=\${url##*/}; f=\${f%.sha256sum}; s=\$(sha256sum "$F/\$f" | cut -d' ' -f1); [ "\${BAD:-}" = "\$f" ] && s=\$zero; printf '%s  %s\n' "\$s" "\$f" ;;
 	*/geosite.dat|*/geoip.dat) emit "$F/\${url##*/}" ;;
 	*/lists.test/list1.txt) emit "$F/list1.txt" ;;
+	*/HostlistsRegistry/assets/filters.json)
+		[ -n "\${REGISTRY_OK:-}" ] || exit 22
+		printf '{"groups":[{"groupId":1,"groupName":"G","displayNumber":1}],"filters":[{"filterId":7,"groupId":1,"name":"F","downloadUrl":"https://lists.test/f7.txt"}]}' > "\$out" ;;
 	*) exit 22 ;;
 esac
 EOF
@@ -401,6 +404,8 @@ same() { cmp -s "$1" "$2" && echo yes || echo no; }
 	# a subscribed list with no data yet: fetched in the background
 	mv "$ADS/l1.block" "$OUT/l1.saved"
 	echo "ensure3 $(adl ensure)"
+	# ... and the list in use keeps its rules until the update has the data
+	echo "ensure3-kept $(same "$OUT/merged.expected" "$ADS/block.txt")"
 	mv "$OUT/l1.saved" "$ADS/l1.block"
 	# one that cannot be made: said on stderr
 	mv "$ADS/allow.txt" "$OUT/allow.saved"; mkdir "$ADS/allow.txt"
@@ -422,6 +427,12 @@ same() { cmp -s "$1" "$2" && echo yes || echo no; }
 	echo "ensure7 $(ucode "$REPO/root/usr/libexec/xray-mosdns/adlist.uc" ensure 2>&1 >/dev/null)"
 	rmdir "$L"; mv "$OUT/lock.saved" "$L"
 	adl ensure >/dev/null
+	# a short holder of the lock (a catalogue sync, a move): waited for, then made
+	flock -x "$L" sleep 2 & sh_=$!
+	sleep 1; : > "$ADS/block.txt"
+	echo "ensure8 $(adl ensure)"
+	echo "ensure8-made $(same "$OUT/merged.expected" "$ADS/block.txt")"
+	wait "$sh_"
 } > "$OUT/adlist.txt"
 # One writer of the list directory at a time: an update holds the lock (here
 # the test does, with flock on fd 7). A move is left to the next start,
@@ -442,7 +453,7 @@ exec 7>"$LOCKF"; flock -x 7
 	echo "locked-standins $(ls -A "$AD3S" | tr '\n' ' ') block $(wc -c < "$AD3S/block.txt") allow $(cat "$AD3S/allow.txt")"
 	# the catalogue sync rewrites what an update writes: not now
 	printf '{"lists":{"l1":{"name":"l1","catalog":"keep"}}}' > "$AD3S/state.json"; cp "$AD3S/state.json" "$OUT/state3.before"
-	echo "locked-catalog $(adl catalog-sync)"
+	echo "locked-catalog $(REGISTRY_OK=1 adl catalog-sync)"
 	echo "locked-catalog-state $(same "$OUT/state3.before" "$AD3S/state.json")"
 } >> "$OUT/adlist.txt"
 exec 7>&-
@@ -450,8 +461,8 @@ exec 7>&-
 	o=$(adl migrate); echo "unlocked $? $o"
 	echo "unlocked-top $(ls -A "$AD3" | tr '\n' ' ') lock $([ -e "$LOCKF" ] && echo kept || echo gone)"
 	echo "unlocked-status $(adl status | grep -o '"running": [a-z]*')"
-	# once the lock is free it goes on (here to a catalogue it cannot fetch)
-	echo "unlocked-catalog $(adl catalog-sync)"
+	# once the lock is free it goes on
+	echo "unlocked-catalog $(REGISTRY_OK=1 adl catalog-sync)"
 } >> "$OUT/adlist.txt"
 # A move that cannot finish: the state stays at the top, and the next start
 # moves the rest.
@@ -516,17 +527,16 @@ pr_state() { # $1 = shared directory
 	rm -f /usr/libexec/xray-mosdns/update.sh; rmdir /usr/libexec/xray-mosdns
 	# a blocklist update still running holds the lock; who holds it is seen
 	# in /proc, which a chroot may lack
+	# ... one that ignores being asked to stop, with a child holding it too
 	if [ -r /proc/self/stat ]; then
-		flock -x /var/run/xray-mosdns-adlist.lock sleep 60 & hp=$!
+		sh -c 'trap "" TERM; exec 9>>/var/run/xray-mosdns-adlist.lock; flock -x 9; sleep 61 & exec sleep 62' & hp=$!
 		sleep 1
 	fi
 	sh "$OUT/postrm" >/dev/null 2>&1
 	if [ -n "${hp:-}" ]; then
-		sleep 1
-		# killed, it waits for this shell as a zombie (Z)
-		hs=$(cut -d' ' -f3 "/proc/$hp/stat" 2>/dev/null)
-		echo "holder $(case "$hs" in ''|Z) echo stopped ;; *) echo running ;; esac) lock $([ -e /var/run/xray-mosdns-adlist.lock ] && echo kept || echo gone)" >> "$OUT/postrm-holder.txt"
-		kill "$hp" 2>/dev/null
+		# killed, a child of this shell waits for it as a zombie: no command line
+		echo "holder $(pgrep -f 'sleep 6[12]' >/dev/null && echo running || echo stopped) lock $([ -e /var/run/xray-mosdns-adlist.lock ] && echo kept || echo gone)" >> "$OUT/postrm-holder.txt"
+		kill -9 "$hp" 2>/dev/null
 	else
 		echo "holder skipped (no /proc)" >> "$OUT/postrm-holder.txt"
 	fi
