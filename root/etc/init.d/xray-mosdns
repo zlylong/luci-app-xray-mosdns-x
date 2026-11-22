@@ -147,7 +147,7 @@ start_service() {
 	# not hold the start lock: fd 1000 is closed for it. What ensure could
 	# not fix is said on the overview, unless something else is already.
 	why=$(ucode /usr/libexec/xray-mosdns/adlist.uc ensure 2>&1 >/dev/null 1000>&-)
-	[ -n "$why" ] && [ ! -s "$ERR" ] && set_error "拦截列表：$why（mosdns 读不到它就无法启动）"
+	[ -n "$why" ] && [ ! -s "$ERR" ] && set_error "拦截列表：$why（mosdns 读不到合并后的列表时无法启动）"
 
 	# The daemons as the files in effect want them: with the previous set's
 	# binaries, ports and geo directory when the new set was not taken.

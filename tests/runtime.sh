@@ -406,6 +406,22 @@ same() { cmp -s "$1" "$2" && echo yes || echo no; }
 	mv "$ADS/allow.txt" "$OUT/allow.saved"; mkdir "$ADS/allow.txt"
 	echo "ensure4 $(ucode "$REPO/root/usr/libexec/xray-mosdns/adlist.uc" ensure 2>&1 >/dev/null)"
 	rmdir "$ADS/allow.txt"; mv "$OUT/allow.saved" "$ADS/allow.txt"
+	# cut short (a size that is not the lists' sum): made again
+	head -c 5 "$OUT/merged.expected" > "$ADS/block.txt"
+	echo "ensure5 $(adl ensure)"
+	echo "ensure5-made $(same "$OUT/merged.expected" "$ADS/block.txt")"
+	# the merge fails (the block list cut short while rewritten): said on stderr
+	mkdir -p "$OUT/badcat2"
+	printf '#!/bin/sh\nfor a in "$@"; do case "$a" in */.block.tmp) head -c 3 "$a"; exit 1 ;; esac; done\nexec busybox cat "$@"\n' > "$OUT/badcat2/cat"
+	chmod +x "$OUT/badcat2/cat"; : > "$ADS/block.txt"
+	echo "ensure6 $(PATH="$OUT/badcat2:$PATH" ucode "$REPO/root/usr/libexec/xray-mosdns/adlist.uc" ensure 2>&1 >/dev/null)"
+	adl ensure >/dev/null
+	# the lock cannot be taken at all (not an update running): said on stderr
+	L=/var/run/xray-mosdns-adlist.lock
+	mv "$L" "$OUT/lock.saved"; mkdir "$L"; : > "$ADS/block.txt"
+	echo "ensure7 $(ucode "$REPO/root/usr/libexec/xray-mosdns/adlist.uc" ensure 2>&1 >/dev/null)"
+	rmdir "$L"; mv "$OUT/lock.saved" "$L"
+	adl ensure >/dev/null
 } > "$OUT/adlist.txt"
 # One writer of the list directory at a time: an update holds the lock (here
 # the test does, with flock on fd 7). A move is left to the next start,
@@ -424,12 +440,18 @@ exec 7>"$LOCKF"; flock -x 7
 	echo "locked-status $(adl status | grep -o '"running": [a-z]*')"
 	echo "locked-ensure $(ucode "$REPO/root/usr/libexec/xray-mosdns/adlist.uc" ensure 2>&1 >/dev/null)"
 	echo "locked-standins $(ls -A "$AD3S" | tr '\n' ' ') block $(wc -c < "$AD3S/block.txt") allow $(cat "$AD3S/allow.txt")"
+	# the catalogue sync rewrites what an update writes: not now
+	printf '{"lists":{"l1":{"name":"l1","catalog":"keep"}}}' > "$AD3S/state.json"; cp "$AD3S/state.json" "$OUT/state3.before"
+	echo "locked-catalog $(adl catalog-sync)"
+	echo "locked-catalog-state $(same "$OUT/state3.before" "$AD3S/state.json")"
 } >> "$OUT/adlist.txt"
 exec 7>&-
 {
 	o=$(adl migrate); echo "unlocked $? $o"
 	echo "unlocked-top $(ls -A "$AD3" | tr '\n' ' ') lock $([ -e "$LOCKF" ] && echo kept || echo gone)"
 	echo "unlocked-status $(adl status | grep -o '"running": [a-z]*')"
+	# once the lock is free it goes on (here to a catalogue it cannot fetch)
+	echo "unlocked-catalog $(adl catalog-sync)"
 } >> "$OUT/adlist.txt"
 # A move that cannot finish: the state stays at the top, and the next start
 # moves the rest.
@@ -492,7 +514,22 @@ pr_state() { # $1 = shared directory
 	sh "$OUT/postrm" >/dev/null 2>&1
 	echo "[upgrade]"; pr_state "$S"
 	rm -f /usr/libexec/xray-mosdns/update.sh; rmdir /usr/libexec/xray-mosdns
+	# a blocklist update still running holds the lock; who holds it is seen
+	# in /proc, which a chroot may lack
+	if [ -r /proc/self/stat ]; then
+		flock -x /var/run/xray-mosdns-adlist.lock sleep 60 & hp=$!
+		sleep 1
+	fi
 	sh "$OUT/postrm" >/dev/null 2>&1
+	if [ -n "${hp:-}" ]; then
+		sleep 1
+		# killed, it waits for this shell as a zombie (Z)
+		hs=$(cut -d' ' -f3 "/proc/$hp/stat" 2>/dev/null)
+		echo "holder $(case "$hs" in ''|Z) echo stopped ;; *) echo running ;; esac) lock $([ -e /var/run/xray-mosdns-adlist.lock ] && echo kept || echo gone)" >> "$OUT/postrm-holder.txt"
+		kill "$hp" 2>/dev/null
+	else
+		echo "holder skipped (no /proc)" >> "$OUT/postrm-holder.txt"
+	fi
 	echo "[removal]"; pr_state "$S"
 	adconf "$S2"
 	sh "$OUT/postrm" >/dev/null 2>&1

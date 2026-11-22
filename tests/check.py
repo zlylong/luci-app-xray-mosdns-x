@@ -527,8 +527,14 @@ else:
     check(ad.get("ensure2b") == "" and ad.get("ensure2b-made") == "yes",
           f"adlist ensure: an empty merged list while the lists have data is made again {ad.get('ensure2b-made')}")
     check(adj("ensure3") == {"ok": True, "running": True}, f"adlist ensure: a list with no data yet is fetched {ad.get('ensure3')}")
-    check("allow.txt is missing and cannot be made" in (ad.get("ensure4") or ""),
+    check("cannot make the merged lists" in (ad.get("ensure4") or "") and "allow.txt: not a file" in (ad.get("ensure4") or ""),
           f"adlist ensure: a merged list that cannot be made is said on stderr {ad.get('ensure4')!r}")
+    check(ad.get("ensure5") == "" and ad.get("ensure5-made") == "yes",
+          f"adlist ensure: a merged list cut short (not the lists' size) is made again {ad.get('ensure5-made')}")
+    check("cannot make the merged lists" in (ad.get("ensure6") or "") and "cannot rewrite" in (ad.get("ensure6") or ""),
+          f"adlist ensure: a merge that fails is said on stderr, not taken for done {ad.get('ensure6')!r}")
+    check("cannot open /var/run/xray-mosdns-adlist.lock" in (ad.get("ensure7") or ""),
+          f"adlist ensure: a lock that cannot be taken at all is said, not taken for an update running {ad.get('ensure7')!r}")
     lk, ul = ad.get("locked", ""), ad.get("unlocked", "")
     check(lk.startswith("2 ") and '"postponed": true' in lk and ad.get("locked-top") == "block.txt state.json xray-mosdns ",
           f"adlist migrate: while an update holds the lock nothing moves, it is left to the next start {lk} | {ad.get('locked-top')}")
@@ -536,6 +542,11 @@ else:
           f"adlist: a second update refuses, and the status says one runs {ad.get('locked-update')} {ad.get('locked-status')}")
     check(ad.get("locked-ensure") == "" and ad.get("locked-standins") == "allow.txt block.txt  block 0 allow kept",
           f"adlist ensure: with an update running, an empty stand-in for the missing list only {ad.get('locked-standins')}")
+    lc = adj("locked-catalog")
+    check(lc.get("ok") is False and lc.get("busy") is True and ad.get("locked-catalog-state") == "yes",
+          f"adlist catalog-sync: while an update runs it does nothing and says so {ad.get('locked-catalog')}")
+    check("could not download the catalogue" in ad.get("unlocked-catalog", ""),
+          f"adlist catalog-sync: with the lock free it goes on {ad.get('unlocked-catalog')}")
     check(ul.startswith("0 ") and ad.get("unlocked-top") == "xray-mosdns  lock kept" and ad.get("unlocked-status") == '"running": false',
           f"adlist migrate: once the lock is free the move happens; the lock file stays (a new one would be a second lock) "
           f"{ul} | {ad.get('unlocked-top')} {ad.get('unlocked-status')}")
@@ -556,6 +567,12 @@ else:
     check(up.get("backups-geosite") == "3" and up.get("backups-xray") == "3", "update: three backups of each file kept")
     check(up.get("mode-backups") == "drwx------" and up.get("mode-geo") == "-rw-------", "update: backups and downloads are root's")
 
+    ph = open(f"{rd}/postrm-holder.txt").read().strip()
+    if ph == "holder skipped (no /proc)":
+        print("postrm with a blocklist update running: skipped (no /proc here)")
+    else:
+        check(ph == "holder stopped lock gone",
+              f"postrm: a blocklist update still running (holding the lock) is stopped before its files go {ph}")
     pr = open(f"{rd}/postrm.txt").read()
     upgrade, rest = pr.split("[removal]\n")
     removal, theirs = rest.split("[removal-theirs]\n")
