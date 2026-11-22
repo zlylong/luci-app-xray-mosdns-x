@@ -268,6 +268,7 @@ write('runtime.env', join('\n', [
 	`SOCKS_PORT=${g.socks_port}`,
 	`DNS_PORT=${cfg.dns.listen_port}`,
 	`STATS_PORT=${cfg.dns.stats_port}`,
+	`LOG_DAYS=${g.log_days}`,
 	`DNS_REDIRECT=${cfg.dns.redirect ? 1 : 0}`,
 	`DNS_WATCH=${(cfg.dns.redirect && cfg.dns.fallback) ? 'manage' : 'log-only'}`,
 	`FWMARK=${g.fwmark}`,

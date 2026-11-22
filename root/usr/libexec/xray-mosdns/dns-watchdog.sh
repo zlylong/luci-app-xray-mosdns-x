@@ -51,8 +51,11 @@ ports() {
 
 # Any DNS reply counts, including SERVFAIL or NXDOMAIN: a dead uplink is not
 # something dnsmasq would handle better. Only silence means mosdns-x is gone.
+# A reserved name that mosdns-x answers first thing, without logging or
+# counting it (the DNS counts and the query log are the LAN's queries).
+PROBE=xray-mosdns-probe.invalid
 healthy() {
-	out=$(nslookup -port="$PORT" -timeout=2 -retry=1 localhost 127.0.0.1 2>&1)
+	out=$(nslookup -port="$PORT" -timeout=2 -retry=1 "$PROBE" 127.0.0.1 2>&1)
 	case "$out" in
 		*"timed out"*|*"no servers could be reached"*) return 1 ;;
 	esac
@@ -121,11 +124,14 @@ watch_xray() {
 	fi
 }
 
-# the DNS counts (stats.uc): a sample every 10 minutes, onto flash every hour
+# the DNS counts (stats.uc): a sample every 10 minutes, onto flash every hour;
+# the plugin's logs cut to global.log_days (logs.uc): now, then every 6 hours
 STATS=/usr/libexec/xray-mosdns/stats.uc
-SAMPLE_ROUNDS=$((600 / INTERVAL)); FLUSH_ROUNDS=$((3600 / INTERVAL))
+LOGS=/usr/libexec/xray-mosdns/logs.uc
+SAMPLE_ROUNDS=$((600 / INTERVAL)); FLUSH_ROUNDS=$((3600 / INTERVAL)); PRUNE_ROUNDS=$((21600 / INTERVAL))
 round=0
 stats() {
+	[ $((round % PRUNE_ROUNDS)) -eq 0 ] && ucode "$LOGS" prune >/dev/null 2>&1
 	round=$((round + 1))
 	if [ $((round % FLUSH_ROUNDS)) -eq 0 ]; then
 		ucode "$STATS" flush >/dev/null 2>&1

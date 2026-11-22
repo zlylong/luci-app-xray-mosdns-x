@@ -538,6 +538,16 @@ merged() { echo "a=$(grep -c a-only "$AD4S/block.txt") b=$(grep -c b-only "$AD4S
 	rmdir "$AD4S/$sa.allow"
 	echo "swap-update8 $(adl update)"
 	echo "swap-merged8 $(grep -c a-new "$AD4S/block.txt")"
+	# An update cut short between putting a list's files aside and the new
+	# ones in place (#91): at start, the data aside goes back; an update that
+	# then fails keeps it, and nothing is left aside.
+	cp "$AD4S/$sa.block" "$OUT/swap.a9"; cp "$AD4S/block.txt" "$OUT/swap.before9"
+	mv "$AD4S/$sa.block" "$AD4S/.$sa.block.old"; mv "$AD4S/$sa.allow" "$AD4S/.$sa.allow.old"
+	echo "swap-cut-ensure $(adl ensure)"
+	echo "swap-cut-back $(same "$OUT/swap.a9" "$AD4S/$sa.block") $([ -f "$AD4S/$sa.allow" ] && echo allow) $(ls -A "$AD4S" | grep -c '\.old$') $(same "$OUT/swap.before9" "$AD4S/block.txt")"
+	mv "$AD4S/$sa.block" "$AD4S/.$sa.block.old"; mv "$AD4S/$sa.allow" "$AD4S/.$sa.allow.old"
+	echo "swap-cut-update $(FAIL_SWAP=1 adl update)"
+	echo "swap-cut-kept $(same "$OUT/swap.a9" "$AD4S/$sa.block") $(ls -A "$AD4S" | grep -c '\.old$') $(same "$OUT/swap.before9" "$AD4S/block.txt")"
 } > "$OUT/adlist-swap.txt" 2>&1
 # One writer of the list directory at a time: an update holds the lock (here
 # the test does, with flock on fd 7). A move is left to the next start,

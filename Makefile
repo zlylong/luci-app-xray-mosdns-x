@@ -89,7 +89,8 @@ case "$$dir" in
 			ids="$$(uci -q -X show xray-mosdns | sed -n 's/^xray-mosdns\.\([A-Za-z0-9_]*\)=adlist$$/\1/p')
 $$(grep -o '"[A-Za-z0-9_]*":{' "$$dir/state.json" | sed 's/^"\(.*\)":{$$/\1/' | grep -v '^lists$$')"
 			for id in $$ids; do
-				rm -f "$$dir/$$id.block" "$$dir/$$id.allow" "$$dir/.$$id.raw" "$$dir/.$$id.block.tmp" "$$dir/.$$id.allow.tmp"
+				rm -f "$$dir/$$id.block" "$$dir/$$id.allow" "$$dir/.$$id.raw" "$$dir/.$$id.block.tmp" "$$dir/.$$id.allow.tmp" \
+					"$$dir/.$$id.block.old" "$$dir/.$$id.allow.old"
 			done
 			rm -f "$$dir/block.txt" "$$dir/allow.txt" "$$dir/state.json" "$$dir/.block.tmp" "$$dir/.allow.tmp"
 		fi

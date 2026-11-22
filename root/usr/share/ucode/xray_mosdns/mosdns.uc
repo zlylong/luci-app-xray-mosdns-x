@@ -169,6 +169,8 @@ export function build(cfg, plan) {
 	}
 
 	qmatch('query_is_ipv6', { qtype: [ 28, 65 ] });
+	// the DNS watchdog's health check (every few seconds; a reserved name)
+	qmatch('query_is_probe', { domain: [ 'full:xray-mosdns-probe.invalid' ] });
 	if (lan_forward) {
 		qmatch('query_is_ptr', { qtype: [ 12 ] });
 		qmatch('query_is_lan_name', {
@@ -212,11 +214,15 @@ export function build(cfg, plan) {
 	] });
 
 	// ------------------------------------------------------------ main
-	// The query log: the preset summary node, first, so it wraps everything
-	// behind it and writes one line per query once it is answered. Plugins
+	// The query log: the preset summary node, first after the health check,
+	// so it wraps everything behind it and writes one line per query once it
+	// is answered. Plugins
 	// of type query_summary (which could name the outcome in their message)
 	// cannot be used: mosdns-x v26.05.25 panics while loading any of them
 	// (its args constructor returns new(*Args), Init asserts *Args).
+	// The watchdog's health check first: answered at once, neither logged nor
+	// counted (it would be a third of the queries of a quiet LAN).
+	push(main, { if: 'query_is_probe', exec: [ '_new_nxdomain_response', '_return' ] });
 	if (d.query_log)
 		push(main, '_query_summary');
 	push(main, 'metrics_all');

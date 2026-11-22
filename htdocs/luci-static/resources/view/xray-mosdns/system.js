@@ -72,6 +72,11 @@ return view.extend({
 		[ 'debug', 'info', 'warning', 'error', 'none' ].forEach(function(v) { o.value(v); });
 		o.default = 'warning';
 
+		o = s.taboption('proxy', form.Value, 'log_days', _('日志保留天数'),
+			_('插件自己的日志（mosdns-x 的日志和查询日志、geo 数据定时更新日志、拦截列表更新日志）只保留这么多天，每 6 小时清理一次。这些日志都在内存里，另有大小上限（mosdns-x 的 4 MB，其余 256 KB），重启路由器后清空。Xray 的日志写在系统日志里，由系统管理。'));
+		o.datatype = 'range(1,365)';
+		o.placeholder = '30';
+
 		o = s.taboption('ports', form.Value, 'xray_bin', _('Xray 程序路径'));
 		o.default = '/usr/bin/xray';
 
