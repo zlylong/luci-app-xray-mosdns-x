@@ -124,7 +124,7 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
 │   ├── adblock.js                            DNS 页的“广告过滤”标签：订阅拦截列表（AdGuard 列表库或自定义地址）
 │   └── querylog.js                           DNS 页的“查询日志”标签：最近的 DNS 查询及其处理方式
 ├── tests/                                    夹具配置 + 生成/运行/断言脚本
-└── .gitea/workflows/build.yml                Gitea Actions：推送后用 SDK 编译并上传产物
+└── .gitea/workflows/ci.yml                   Gitea Actions：推送和合并请求跑测试；版本标签和手动运行时再用 SDK 打包
 ```
 
 ## 测试
@@ -167,8 +167,10 @@ xray run -test -c /tmp/xm-test/chnroute/xray.json
 ## 代码仓库与 CI
 
 - 仓库：<https://github.com/zlylong/luci-app-xray-mosdns-x>
-- Gitea Actions（`.gitea/workflows/build.yml`）：推送 master、每个合并请求和每个标签都会先在
-  ImmortalWrt rootfs 里跑 `tests/`，通过后在官方镜像 `immortalwrt/sdk:x86-64-openwrt-25.12.2` 里编译，产物作为构建产物上传
+- Gitea Actions（`.gitea/workflows/ci.yml`）：推送 master 和每个合并请求只在 ImmortalWrt rootfs 里跑 `tests/`，不打包。
+  打包只在推送版本标签时，或在 Actions 页面手动运行这个工作流时进行：先跑测试，通过后在官方镜像
+  `immortalwrt/sdk:x86-64-openwrt-25.12.2` 里编译，产物作为构建产物上传。改了 Makefile 或包脚本（postrm 等）时，
+  发版前可以手动运行一次，提前发现打包问题
 - 发版：推送 `v<版本号>` 标签（须与 Makefile 的 `PKG_VERSION` 一致），编译后自动创建发布并附上安装包和校验和。
   发布说明取自带注释标签的内容；带连字符的标签（如 `v1.0.0-rc1`）发布为预发布版本
 
