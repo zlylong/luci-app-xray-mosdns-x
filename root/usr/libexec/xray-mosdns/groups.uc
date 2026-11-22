@@ -70,8 +70,9 @@ function probe_target() {
 }
 
 const TAG = /^[A-Za-z0-9_]+\.(node|group)$/;
+const ALIVE_TAG = /^[A-Za-z0-9_]+\.alive$/;
 
-// every argument is checked against TAG before it gets here
+// every argument is checked against TAG (or ALIVE_TAG) before it gets here
 function api(args) {
 	const p = fs.popen(`${S.xray} api ${args[0]} --server=127.0.0.1:${S.port} ${join(' ', slice(args, 1))} 2>/dev/null`, 'r');
 	if (!p)
@@ -109,8 +110,11 @@ function override(group_tag, node_tag) {
 }
 
 function valid_groups() {
-	return filter(load(GROUPS, []), grp =>
-		match(grp.tag, TAG) && length(filter(grp.members, m => !match(m.tag, TAG))) == 0);
+	return filter(load(GROUPS, []), grp => {
+		if (grp.alive != null && !match(grp.alive, ALIVE_TAG))
+			grp.alive = null;
+		return match(grp.tag, TAG) && length(filter(grp.members, m => !match(m.tag, TAG))) == 0;
+	});
 }
 
 function member_tags(grp) {
@@ -123,12 +127,23 @@ function desired(grp, state, pins) {
 	if (pin && (pin in member_tags(grp)))
 		return pin;
 	if (grp.strategy == 'ordered') {
+		// usable: no failed probe lately (the balancer's tolerance)
 		// sticky: the member in use is only given up when it stops being usable
 		if (!grp.failback && state.override
 		    && (state.override in member_tags(grp)) && (state.override in state.selects))
 			return state.override;
 		for (let m in grp.members)
 			if (m.tag in state.selects)
+				return m.tag;
+		// Every member failed a probe lately: the probe target or the uplink
+		// may be what failed. A member Xray still has as alive (not every
+		// probe it keeps failed) beats the group's fallback: the one in use
+		// first, then the first in order.
+		const alive = (grp.alive ? balancer(grp.alive)?.selects : null) ?? [];
+		if (state.override && (state.override in member_tags(grp)) && (state.override in alive))
+			return state.override;
+		for (let m in grp.members)
+			if (m.tag in alive)
 				return m.tag;
 	}
 	return null;

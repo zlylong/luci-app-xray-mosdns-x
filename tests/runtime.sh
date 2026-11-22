@@ -223,12 +223,22 @@ cat > "$OUT/bin/xray-api" <<EOF
 #!/bin/sh
 echo "\$*" >> "$OUT/groups-api.log"
 case "\$2" in
-	bi) printf 'Balancer: %s\n  - Selecting Override:\n  - Selects:\n    0 b.node\n' "\$4" ;;
+	bi)
+		# api-mode strict-none: every member failed a probe lately (the group's
+		# balancer has none), Xray still has a.node as alive
+		if [ "\$(cat "$OUT/api-mode" 2>/dev/null)" = strict-none ]; then
+			case "\$4" in
+				*.alive) printf 'Balancer: %s\n  - Selects:\n    0 a.node\n' "\$4" ;;
+				*) printf 'Balancer: %s\n  - Selecting Override:\n  - Selects:\n' "\$4" ;;
+			esac
+		else
+			printf 'Balancer: %s\n  - Selecting Override:\n  - Selects:\n    0 b.node\n' "\$4"
+		fi ;;
 esac
 exit 0
 EOF
 chmod +x "$OUT/bin/xray-api"
-printf '[{"name":"hk","tag":"hk.group","strategy":"ordered","failback":false,"members":[{"name":"a","tag":"a.node"},{"name":"b","tag":"b.node"}],"fallback":"direct"}]\n' \
+printf '[{"name":"hk","tag":"hk.group","alive":"hk.alive","strategy":"ordered","failback":false,"members":[{"name":"a","tag":"a.node"},{"name":"b","tag":"b.node"}],"fallback":"direct"}]\n' \
 	> /var/etc/xray-mosdns/groups.json
 grt() { # $1 = API port in effect
 	printf "XRAY_BIN='%s'\nAPI_PORT=%s\nPROBE_INTERVAL=30s\nPROBE_BACKUP=1\nDEFAULT_ACTION=direct\nKERNEL_SPLIT=0\nDNS_REDIRECT=0\nDNS_PORT=5353\n" \
@@ -245,6 +255,14 @@ ucode "$REPO/root/usr/libexec/xray-mosdns/groups.uc" watch > "$OUT/groups-watch.
 sleep 3; grt 20002; sleep 12
 kill "$gw" 2>/dev/null
 cp "$OUT/groups-api.log" "$OUT/groups-watch-api.log"
+# every member failed a probe lately, one is still alive: held on that one
+echo strict-none > "$OUT/api-mode"
+: > "$OUT/groups-api.log"
+ucode "$REPO/root/usr/libexec/xray-mosdns/groups.uc" watch > "$OUT/groups-watch2.log" 2>&1 & gw=$!
+sleep 3
+kill "$gw" 2>/dev/null
+cp "$OUT/groups-api.log" "$OUT/groups-alive-api.log"
+rm -f "$OUT/api-mode"
 sh "$REPO/root/usr/libexec/xray-mosdns/status.sh" > "$OUT/status.json" 2>&1
 # update.sh below goes by the configured binary: not this one
 rm -f /var/etc/xray-mosdns/groups.json /var/etc/xray-mosdns/runtime.env "$CONF"
@@ -274,6 +292,7 @@ case "\$url" in
 	*.dat.sha256sum) f=\${url##*/}; f=\${f%.sha256sum}; s=\$(sha256sum "$F/\$f" | cut -d' ' -f1); [ "\${BAD:-}" = "\$f" ] && s=\$zero; printf '%s  %s\n' "\$s" "\$f" ;;
 	*/geosite.dat|*/geoip.dat) emit "$F/\${url##*/}" ;;
 	*/lists.test/list1.txt) emit "$F/list1.txt" ;;
+	*/lists.test/swap-a.txt|*/lists.test/swap-b.txt) emit "$F/\${url##*/}" ;;
 	*/HostlistsRegistry/assets/filters.json)
 		[ -n "\${REGISTRY_OK:-}" ] || { [ -n "\$out" ] && echo '{"filt' > "\$out"; exit 22; }
 		[ -n "\${SLOW_REGISTRY:-}" ] && sleep "\$SLOW_REGISTRY"
@@ -440,6 +459,46 @@ same() { cmp -s "$1" "$2" && echo yes || echo no; }
 	echo "ensure8-made $(same "$OUT/merged.expected" "$ADS/block.txt")"
 	wait "$sh_"
 } > "$OUT/adlist.txt"
+# Two anonymous subscriptions that change places (a section added or moved
+# before them): their names go with the place, not with the list. What is
+# there under a name from another address is not used, and the next update
+# gives each its own data.
+AD4="$OUT/adlists4"; AD4S="$AD4/xray-mosdns"; mkdir -p "$AD4"
+printf '||a-only.test^\n' > "$F/swap-a.txt"; printf '||b-only.test^\n||b-two.test^\n' > "$F/swap-b.txt"
+swapconf() { # $1 $2 = the two lists' files, in this order
+	printf "config adblock\n\toption dir '%s'\nconfig adlist\n\toption url 'https://lists.test/%s'\nconfig adlist\n\toption url 'https://lists.test/%s'\n" "$AD4" "$1" "$2" > "$CONF"
+}
+secs() { # every section: its name, its list, what its data file holds
+	for s in $(uci -q -X show xray-mosdns | sed -n 's/^xray-mosdns\.\([^.=]*\)=adlist$/\1/p'); do
+		printf '%s %s a=%s b=%s; ' "$s" "$(uci -q get "xray-mosdns.$s.url" | sed 's#.*/##')" \
+			"$(grep -c a-only "$AD4S/$s.block" 2>/dev/null)" "$(grep -c b-only "$AD4S/$s.block" 2>/dev/null)"
+	done
+}
+merged() { echo "a=$(grep -c a-only "$AD4S/block.txt") b=$(grep -c b-only "$AD4S/block.txt") lines=$(wc -l < "$AD4S/block.txt")"; }
+{
+	swapconf swap-a.txt swap-b.txt
+	echo "swap-update1 $(adl update)"
+	echo "swap-merged1 $(merged)"
+	echo "swap-secs1 $(secs)"
+	cp "$AD4S/block.txt" "$OUT/swap.before"
+	# the other way round: each name now has the other list
+	swapconf swap-b.txt swap-a.txt
+	echo "swap-secs2 $(secs)"
+	echo "swap-status2 $(adl status)"
+	# at start: not merged in, fetched again; the merged list in use stays until then
+	echo "swap-ensure2 $(adl ensure)"
+	echo "swap-kept2 $(same "$OUT/swap.before" "$AD4S/block.txt")"
+	echo "swap-update3 $(adl update)"
+	echo "swap-merged3 $(merged)"
+	echo "swap-secs3 $(secs)"
+	echo "swap-status3 $(adl status)"
+	cp "$AD4S/block.txt" "$OUT/swap.after3"
+	# state from before addresses were recorded: as if from another address
+	sed -i 's/"url": *"[^"]*", *//g' "$AD4S/state.json"
+	echo "swap-legacy-status $(adl status)"
+	echo "swap-legacy-ensure $(adl ensure)"
+	echo "swap-legacy-kept $(same "$OUT/swap.after3" "$AD4S/block.txt") $(merged)"
+} > "$OUT/adlist-swap.txt" 2>&1
 # One writer of the list directory at a time: an update holds the lock (here
 # the test does, with flock on fd 7). A move is left to the next start,
 # another update refuses, missing merged lists get empty stand-ins for the

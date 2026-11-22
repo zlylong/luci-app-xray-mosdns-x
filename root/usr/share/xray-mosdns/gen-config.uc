@@ -182,6 +182,7 @@ write('nft-dns-off.rules', redir.off);
 // what the group watcher and the status page need to talk to the balancers
 write('groups.json', sprintf('%.J\n', map(filter(plan.groups, grp => length(grp.members) > 0), grp => ({
 	name: grp.name, remarks: grp.remarks, tag: grp.tag, strategy: grp.strategy, failback: grp.failback,
+	alive: grp.alive_tag,
 	members: map(grp.members, m => ({ name: m, tag: plan.tag(m) })),
 	fallback: grp.fallback_tag,
 }))));

@@ -111,10 +111,16 @@ function outbound(n, tag) {
 //           members keeps every healthy one selectable); the group watcher
 //           pins the first healthy member in list order. Xray's own
 //           "costs" weight probe jitter, not latency, so they cannot
-//           express a strict priority.
+//           express a strict priority. Healthy means no failed probe among
+//           the last ones (tolerance): Xray itself calls a member alive
+//           until every probe it keeps (sampling: 3) has failed, and a
+//           member whose probes fail every other time, with its traffic,
+//           would never be given up. The watcher falls back to the alive
+//           ones (the group's ".alive" balancer) when none is healthy.
+const ORDERED_TOLERANCE = 0.3;	// one failed probe of three is too many
 function strategy(grp) {
 	switch (grp.strategy) {
-	case 'ordered':    return { type: 'leastLoad', settings: { expected: length(grp.members) } };
+	case 'ordered':    return { type: 'leastLoad', settings: { expected: length(grp.members), tolerance: ORDERED_TOLERANCE } };
 	case 'roundrobin': return { type: 'roundRobin' };
 	case 'random':     return { type: 'random' };
 	}
@@ -257,6 +263,8 @@ export function build(cfg, plan, env) {
 		// selectors are prefix matches; every node tag ends in ".node", so a
 		// full tag can only match itself
 		push(balancers, { tag: grp.tag, selector: tags, strategy: strategy(grp), fallbackTag: grp.fallback_tag });
+		if (grp.alive_tag)
+			push(balancers, { tag: grp.alive_tag, selector: tags, strategy: { type: 'leastLoad', settings: { expected: length(tags) } } });
 	}
 	if (length(balancers)) {
 		conf.burstObservatory = {

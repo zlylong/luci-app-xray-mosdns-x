@@ -16,3 +16,12 @@ plain.example.org
 plain2.example.org # note
 not a domain
 ||noanchor.example.com
+||rw-nx.example.com^$dnsrewrite=NXDOMAIN
+||rw-refused.example.com^$dnsrewrite=REFUSED;;
+||rw-zero.example.com^$dnsrewrite=0.0.0.0
+||rw-adguard.example.com^$dnsrewrite=ad-block.dns.adguard.com
+||rw-imp.example.com^$important,dnsrewrite=nxdomain
+||rw-record.example.com^$dnsrewrite=NOERROR;A;1.2.3.4
+||rw-cname.example.com^$dnsrewrite=safe.example.net
+@@||rw-allow.example.com^$dnsrewrite=NXDOMAIN
+||rw-type.example.com^$dnstype=AAAA,dnsrewrite=NOERROR;;

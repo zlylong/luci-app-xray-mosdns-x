@@ -184,13 +184,17 @@ tags = [o["tag"] for o in x["outbounds"]]
 check(tags == ["a.node", "b.node", "c.node", "direct", "block"], f"balance: outbound tags {tags}")
 bal = {b["tag"]: b for b in x["routing"]["balancers"]}
 check(bal["balance.group"] == {"tag": "balance.group", "selector": ["a.node", "b.node"], "strategy": {"type": "leastLoad"}, "fallbackTag": "c.node"}, "legacy balancer becomes a 'fastest' group of the enabled nodes")
-check(bal["failover.group"] == {"tag": "failover.group", "selector": ["a.node", "b.node"], "strategy": {"type": "leastLoad", "settings": {"expected": 2}}, "fallbackTag": "direct"}, "legacy failover becomes an 'ordered' group whose members are all probed")
+check(bal["failover.group"] == {"tag": "failover.group", "selector": ["a.node", "b.node"], "strategy": {"type": "leastLoad", "settings": {"expected": 2, "tolerance": 0.3}}, "fallbackTag": "direct"}, "legacy failover becomes an 'ordered' group whose members are all probed; one failed probe makes a member unusable")
+check(bal.get("failover.alive") == {"tag": "failover.alive", "selector": ["a.node", "b.node"], "strategy": {"type": "leastLoad", "settings": {"expected": 2}}}
+      and "balance.alive" not in bal, "an ordered group also gets a balancer that reports the members Xray still has as alive; a 'fastest' one does not")
+check(not [r for r in x["routing"]["rules"] if str(r.get("balancerTag", "")).endswith(".alive")], "no rule routes through an '.alive' balancer")
 check(x["burstObservatory"]["subjectSelector"] == ["a.node", "b.node"], "every group member is probed once")
 check("RoutingService" in x["api"]["services"], "RoutingService is needed to read and pin balancer choices")
 check({"type": "field", "domain": ["geosite:openai"], "balancerTag": "failover.group"} in x["routing"]["rules"], "rule -> failover group")
 check(x["routing"]["rules"][-1].get("balancerTag") == "balance.group", "balance: default is the balancer group")
 gj = json.load(open(f"{out}/balance/groups.json"))
 check([g["name"] for g in gj] == ["balance", "failover"] and gj[1]["members"] == [{"name": "a", "tag": "a.node"}, {"name": "b", "tag": "b.node"}], "groups.json lists the ordered members for the watcher")
+check(gj[1].get("alive") == "failover.alive" and gj[0].get("alive") is None, "groups.json names the ordered group's '.alive' balancer for the watcher")
 check(plugin(m, "add_proxy") is None, "kernel split off: no nftset plugins")
 bmain = plugin(m, "main_sequence")["args"]["exec"]
 check(bmain[-2:] == ["remote_seq", "_return"], "default proxy without a mainland rule: unclassified names resolve through the proxy")
@@ -206,7 +210,8 @@ x, m, n = load("groups")
 check_mosdns_refs("groups", m)
 tags = [o["tag"] for o in x["outbounds"]]
 check(tags == ["a.node", "b.node", "direct", "block"], f"groups: a disabled node gets no outbound ({tags})")
-check(x["routing"]["balancers"] == [{"tag": "hk.group", "selector": ["a.node", "b.node"], "strategy": {"type": "leastLoad", "settings": {"expected": 2}}, "fallbackTag": "block"}], "groups: disabled member skipped, unused and empty groups produce no balancer")
+check(x["routing"]["balancers"] == [{"tag": "hk.group", "selector": ["a.node", "b.node"], "strategy": {"type": "leastLoad", "settings": {"expected": 2, "tolerance": 0.3}}, "fallbackTag": "block"},
+                                    {"tag": "hk.alive", "selector": ["a.node", "b.node"], "strategy": {"type": "leastLoad", "settings": {"expected": 2}}}], "groups: disabled member skipped, unused and empty groups produce no balancer")
 check(x["burstObservatory"]["pingConfig"]["destination"] == "https://probe.example/204" and x["burstObservatory"]["pingConfig"]["interval"] == "30s", "groups: probe settings")
 check({"type": "field", "domain": ["geosite:netflix"], "outboundTag": "a.node"} in x["routing"]["rules"], "groups: a group without usable members resolves to its fallback")
 check({"type": "field", "ip": ["192.0.2.0/24"], "outboundTag": "b.node"} in x["routing"]["rules"], "groups: plain node target")
@@ -292,9 +297,51 @@ block = open(f"{out}/adlist/block.txt").read().split()
 allow = open(f"{out}/adlist/allow.txt").read().split()
 check(block == ["domain:ads.example.com", "domain:tracker.example.net", "full:exact.example.org", "full:hosts.example.com",
                 "full:other.example.com", "full:v6hosts.example.com", "full:plain.example.org", "full:plain2.example.org",
-                "domain:noanchor.example.com"], f"adlist: block rules {block}")
+                "domain:noanchor.example.com", "domain:rw-nx.example.com", "domain:rw-refused.example.com",
+                "domain:rw-zero.example.com", "domain:rw-adguard.example.com", "domain:rw-imp.example.com"],
+      f"adlist: block rules, $dnsrewrite blocks (an error, a null address, AdGuard's block host) among them {block}")
 check(allow == ["domain:good.example.com", "domain:good2.example.com"], f"adlist: exceptions {allow}")
-check(json.load(open(f"{out}/adlist/stats.json")) == {"rules": 9, "allow": 2, "skipped": 5}, "adlist: counts (wildcard, regex, other modifiers, localhost and junk are skipped)")
+check(json.load(open(f"{out}/adlist/stats.json")) == {"rules": 14, "allow": 2, "skipped": 9},
+      "adlist: counts (wildcard, regex, other modifiers, a $dnsrewrite that answers with a record or a name, localhost and junk are skipped)")
+
+# ------------------------------------------------------------------ blocklists that change places (tests/runtime.sh)
+swp = f"{out}/runtime/adlist-swap.txt"
+if os.path.exists(swp):
+    sw = {}
+    for line in open(swp).read().splitlines():
+        k, _, v = line.partition(" ")
+        sw[k] = v
+    def swj(k):
+        try:
+            return json.loads(sw.get(k, ""))
+        except ValueError:
+            return {}
+    def secmap(v):  # "name list a=.. b=..; ..." -> {list: (a, b)}
+        res = {}
+        for part in filter(None, (p.strip() for p in v.split(";"))):
+            f = part.split()
+            res[f[1]] = (f[2], f[3])
+        return res
+    check(swj("swap-update1").get("ok") is True and sw.get("swap-merged1") == "a=1 b=1 lines=3"
+          and secmap(sw.get("swap-secs1", "")) == {"swap-a.txt": ("a=1", "b=0"), "swap-b.txt": ("a=0", "b=1")},
+          f"adlist swap: two anonymous lists, each with its own data {sw.get('swap-secs1')}")
+    check(secmap(sw.get("swap-secs2", "")) == {"swap-b.txt": ("a=1", "b=0"), "swap-a.txt": ("a=0", "b=1")}
+          and swj("swap-status2").get("lists") == {},
+          f"adlist swap: after changing places each name holds the other's data, and its state is not shown for it {sw.get('swap-status2')}")
+    check(swj("swap-ensure2").get("running") is True and sw.get("swap-kept2") == "yes",
+          f"adlist swap: at start that data is not used, the lists are fetched, the merged list in use stays {sw.get('swap-ensure2')}")
+    st3 = swj("swap-status3").get("lists") or {}
+    check(swj("swap-update3").get("ok") is True and sw.get("swap-merged3") == "a=1 b=1 lines=3"
+          and secmap(sw.get("swap-secs3", "")) == {"swap-b.txt": ("a=0", "b=1"), "swap-a.txt": ("a=1", "b=0")}
+          and sorted((e.get("url", "").rsplit("/", 1)[-1], e.get("rules")) for e in st3.values()) == [("swap-a.txt", 1), ("swap-b.txt", 2)],
+          f"adlist swap: the next update gives each its own data, nothing twice in the merged list {sw.get('swap-secs3')} {st3}")
+    check(swj("swap-legacy-status").get("lists") == {} and swj("swap-legacy-ensure").get("running") is True
+          and sw.get("swap-legacy-kept") == "yes a=1 b=1 lines=3",
+          f"adlist swap: state without addresses (older versions) counts as another address: fetched again, the list in use stays "
+          f"{sw.get('swap-legacy-status')} {sw.get('swap-legacy-kept')}")
+else:
+    print("adlist swap: no output from tests/runtime.sh, skipped")
+    check(not strict, "adlist swap: no output from tests/runtime.sh")
 
 # ------------------------------------------------------------------ helper scripts (tests/scripts.sh)
 sd = f"{out}/scripts"
@@ -493,6 +540,9 @@ else:
           and "api bo --server=127.0.0.1:20001 -b hk.group b.node" in ga
           and "api bi --server=127.0.0.1:20002 hk.group" in ga and "api bo --server=127.0.0.1:20002 -b hk.group b.node" in ga,
           f"groups.uc watch: holds the ordered group, takes a changed port on its next round {ga}")
+    gal = open(f"{rd}/groups-alive-api.log").read().splitlines()
+    check("api bi --server=127.0.0.1:20002 hk.alive" in gal and "api bo --server=127.0.0.1:20002 -b hk.group a.node" in gal,
+          f"groups.uc watch: every member failed a probe lately, one is still alive: held on that one, not dropped to the fallback {gal}")
     sj = json.load(open(f"{rd}/status.json"))
     check(sj.get("effective") == {"default_action": "direct", "kernel_split": 0, "dns_redirect": 0, "dns_port": 5353},
           f"status.sh: the default action, split, DNS redirect and port in effect, not UCI's {sj}")
