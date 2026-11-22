@@ -358,6 +358,24 @@ if os.path.exists(swp):
           and sw.get("swap-legacy-kept") == "yes a=1 b=1 lines=3",
           f"adlist swap: state without addresses (older versions) counts as another address: fetched again, the list in use stays "
           f"{sw.get('swap-legacy-status')} {sw.get('swap-legacy-kept')}")
+    # #84: a failed update throws nothing away
+    fu = swj("swap-fail-update")
+    check(fu.get("ok") is False and fu.get("failed") == 2 and sw.get("swap-fail-kept") == "yes files-same",
+          f"adlist #84: downloads fail with state from older versions: both lists keep their data, the lists in use are as they were {fu} {sw.get('swap-fail-kept')}")
+    fst = swj("swap-fail-status").get("lists") or {}
+    check(len(fst) == 2 and all(e.get("error") == "download failed" and str(e.get("tried", "")).startswith("https://lists.test/swap-")
+                                and not e.get("url") for e in fst.values()),
+          f"adlist #84: the status shows the failure for each list's address, not a success {fst}")
+    check(swj("swap-update6").get("ok") is True and sw.get("swap-merged6") == "a=1 b=1 lines=3",
+          f"adlist #84: the next update that gets them gives each its own data {sw.get('swap-merged6')}")
+    ru = swj("swap-rename-update")
+    check(ru.get("ok") is False and "the lists in use stay as they are" in str(ru.get("error")) and sw.get("swap-rename-kept") == "yes yes 0",
+          f"adlist #84: a list's files cannot be replaced: its old data and the lists in use stay, nothing left behind {ru} {sw.get('swap-rename-kept')}")
+    ra = [e for e in (swj("swap-rename-status").get("lists") or {}).values() if str(e.get("url", "")).endswith("swap-a.txt")]
+    check(len(ra) == 1 and "not a file" in str(ra[0].get("error")),
+          f"adlist #84: ... and its status says so instead of a success {ra}")
+    check(swj("swap-update8").get("ok") is True and sw.get("swap-merged8") == "1",
+          f"adlist #84: once replaceable the new data goes in {swj('swap-update8')} {sw.get('swap-merged8')}")
 else:
     print("adlist swap: no output from tests/runtime.sh, skipped")
     check(not strict, "adlist swap: no output from tests/runtime.sh")
