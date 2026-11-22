@@ -4,6 +4,7 @@
 //   adlist.uc update            download and convert every enabled list
 //   adlist.uc start             the same, detached (the web UI cannot wait)
 //   adlist.uc ensure            start an update if an enabled list has no data yet
+//   adlist.uc migrate           move what 0.9.8 kept at the top of a shared directory (start script)
 //   adlist.uc status            what is installed, as JSON
 //   adlist.uc catalog           the AdGuard blocklist catalogue, as JSON
 //   adlist.uc catalog-sync      refresh the catalogue and bring subscriptions in line with it
@@ -68,31 +69,56 @@ function settings() {
 }
 
 // Up to 0.9.8 the lists of a directory set in the options were kept at its
-// top. They move into the subdirectory once, by name: what the state file
-// there (ours if it has the lists we wrote) and UCI name, nothing else.
+// top. The start script has them moved into the subdirectory (adlist.uc
+// migrate) once a configuration that reads them there is in place, and
+// never before: a start that falls back to the previous configuration
+// leaves that one reading the top. By name: what the state file there
+// (ours if it has the lists we wrote) and UCI name, nothing else. A file
+// the subdirectory already has (an update ran since) is newer, and the one
+// at the top just goes. The state file goes last, and only once every
+// other file has: a migration that did not finish is done again at the
+// next start. Returns the names that could not be moved.
 function migrate(cfg) {
 	if (cfg.own)
-		return;
+		return [];
 	const st = load(`${cfg.base}/state.json`, null);
 	if (type(st?.lists) != 'object')
-		return;
+		return [];
 	let ids = keys(st.lists);
 	uci.foreach(CONF, 'adlist', (s) => push(ids, s['.name']));
 	let names = [ 'block.txt', 'allow.txt', '.block.tmp', '.allow.tmp' ];
 	for (let id in uniq(ids))
 		if (match(id, /^[A-Za-z0-9_]+$/))
 			push(names, `${id}.block`, `${id}.allow`, `.${id}.raw`, `.${id}.block.tmp`, `.${id}.allow.tmp`);
-	// the state last: until it has moved, a migration cut short is done again
 	push(names, 'state.json');
-	system([ 'mkdir', '-p', cfg.dir ]);
-	let moved = 0;
-	for (let n in names) {
-		if (fs.lstat(`${cfg.base}/${n}`)?.type != 'file')
-			continue;
-		if (fs.rename(`${cfg.base}/${n}`, `${cfg.dir}/${n}`))
-			moved++;
+	if (system([ 'mkdir', '-p', cfg.dir ]) != 0 || fs.lstat(cfg.dir)?.type != 'directory') {
+		system([ 'logger', '-p', 'daemon.err', '-t', 'xray-mosdns', `blocklists: cannot create ${cfg.dir}; the lists stay in ${cfg.base}` ]);
+		return [ cfg.dir ];
 	}
-	system([ 'logger', '-t', 'xray-mosdns', `blocklists: ${moved} files moved from ${cfg.base} into ${cfg.dir}` ]);
+	let moved = 0, failed = [];
+	for (let n in names) {
+		const from = `${cfg.base}/${n}`, to = `${cfg.dir}/${n}`;
+		if (fs.lstat(from)?.type != 'file')
+			continue;
+		if (n == 'state.json' && length(failed))
+			break;
+		if ((fs.lstat(to)?.type == 'file') ? fs.unlink(from) : fs.rename(from, to))
+			moved++;
+		else
+			push(failed, n);
+	}
+	if (length(failed))
+		system([ 'logger', '-p', 'daemon.err', '-t', 'xray-mosdns',
+			`blocklists: cannot move ${join(' ', failed)} from ${cfg.base} into ${cfg.dir}; tried again at the next start` ]);
+	else if (moved)
+		system([ 'logger', '-t', 'xray-mosdns', `blocklists: moved from ${cfg.base} into ${cfg.dir}` ]);
+	return failed;
+}
+
+function cmd_migrate() {
+	const failed = migrate(settings());
+	out({ ok: !length(failed), failed });
+	return length(failed) ? 1 : 0;
 }
 
 function lists() {
@@ -327,7 +353,6 @@ function cmd_catalog_sync() {
 	}
 	const res = sync_catalog(cat);
 	const cfg = settings();
-	migrate(cfg);
 	let state = load(state_path(cfg), null);
 	if (state?.lists) {
 		for (let id in keys(state.lists))
@@ -371,14 +396,21 @@ function merge(cfg, all) {
 		if (!err && t != null && t != 'file')
 			err = `cannot replace ${live(kind)}: not a file`;
 	}
+	// the copy kept has to be the list in use: with a directory named like
+	// it, ln would put the link inside and there would be no copy at all
 	for (let kind in kinds) {
 		if (err)
 			break;
-		fs.unlink(prev(kind));
-		if (fs.access(live(kind)) && system([ 'ln', '-f', live(kind), prev(kind) ]) != 0)
+		const p = fs.lstat(prev(kind))?.type;
+		if (p != null && p != 'file')
+			err = `cannot keep ${live(kind)} while replacing it: ${prev(kind)} is in the way`;
+		else if (p != null && !fs.unlink(prev(kind)))
+			err = `cannot keep ${live(kind)} while replacing it: ${fs.error()}`;
+		else if (fs.access(live(kind)) && (system([ 'ln', '-f', live(kind), prev(kind) ]) != 0
+		         || fs.lstat(prev(kind))?.inode != fs.lstat(live(kind))?.inode))
 			err = `cannot keep ${live(kind)} while replacing it`;
 	}
-	let replaced = [];
+	let replaced = [], stuck = {};
 	for (let kind in kinds) {
 		if (err)
 			break;
@@ -388,17 +420,18 @@ function merge(cfg, all) {
 		}
 		err = `cannot replace ${live(kind)}: ${fs.error()}`;
 		for (let k in replaced) {
-			if (fs.access(prev(k)))
-				fs.rename(prev(k), live(k));
-			else
-				fs.unlink(live(k));
+			if (fs.access(prev(k)) ? fs.rename(prev(k), live(k)) : fs.unlink(live(k)))
+				continue;
+			// the list in use could not be put back: its copy stays
+			stuck[k] = true;
+			err += `; ${live(k)} could not be put back, the one it replaced is ${prev(k)}`;
 		}
 	}
 	for (let kind in kinds) {
 		// a directory in the way is not ours to remove
 		if (fs.lstat(tmp(kind))?.type == 'file')
 			fs.unlink(tmp(kind));
-		if (fs.lstat(prev(kind))?.type == 'file')
+		if (!stuck[kind] && fs.lstat(prev(kind))?.type == 'file')
 			fs.unlink(prev(kind));
 	}
 	return err;
@@ -411,7 +444,6 @@ function cmd_update() {
 	}
 	fs.writefile(LOCK, fs.readlink('/proc/self') ?? '0');
 	const cfg = settings();
-	migrate(cfg);
 	system([ 'mkdir', '-p', cfg.dir ]);
 
 	// follow the catalogue first, so a moved list is fetched from its new address;
@@ -491,11 +523,8 @@ function cmd_start() {
 	return 0;
 }
 
-// at every start, before the config is generated: the lists are where
-// mosdns will look for them
 function cmd_ensure() {
 	const cfg = settings();
-	migrate(cfg);
 	for (let l in lists())
 		if (!fs.access(`${cfg.dir}/${l.id}.block`))
 			return cmd_start();
@@ -532,6 +561,7 @@ switch (ARGV[0]) {
 case 'update':         exit(cmd_update()); break;
 case 'start':          exit(cmd_start()); break;
 case 'ensure':         exit(cmd_ensure()); break;
+case 'migrate':        exit(cmd_migrate()); break;
 case 'status':         cmd_status(); break;
 case 'catalog':        cmd_catalog(); break;
 case 'catalog-sync':   exit(cmd_catalog_sync()); break;

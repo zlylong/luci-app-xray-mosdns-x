@@ -30,8 +30,8 @@ LUCI_PKGARCH:=all
 # /etc/xray-mosdns may be shared: adlist.uc keeps everything in its own
 # subdirectory there, xray-mosdns/, and that goes whole. What a version up
 # to 0.9.8 left at the top of it goes by name (the merged lists, the state,
-# per subscription in UCI <section>.block / .allow and temporaries), and
-# only when the state file there is ours.
+# per subscription in UCI or list in that state <id>.block / .allow and
+# temporaries), and only when the state file there is ours.
 define Package/$(PKG_NAME)/postrm
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] && exit 0
@@ -49,7 +49,11 @@ case "$$dir" in
 	/*) if [ -d "$$dir" ]; then
 		rm -rf "$$dir/xray-mosdns"
 		if grep -qs '"lists"' "$$dir/state.json"; then
-			for id in $$(uci -q -X show xray-mosdns | sed -n 's/^xray-mosdns\.\([A-Za-z0-9_]*\)=adlist$$/\1/p'); do
+			# the subscriptions in UCI and the lists that state names (one
+			# unsubscribed since): its only objects are "lists" and one per list
+			ids="$$(uci -q -X show xray-mosdns | sed -n 's/^xray-mosdns\.\([A-Za-z0-9_]*\)=adlist$$/\1/p')
+$$(grep -o '"[A-Za-z0-9_]*":{' "$$dir/state.json" | sed 's/^"\(.*\)":{$$/\1/' | grep -v '^lists$$')"
+			for id in $$ids; do
 				rm -f "$$dir/$$id.block" "$$dir/$$id.allow" "$$dir/.$$id.raw" "$$dir/.$$id.block.tmp" "$$dir/.$$id.allow.tmp"
 			done
 			rm -f "$$dir/block.txt" "$$dir/allow.txt" "$$dir/state.json" "$$dir/.block.tmp" "$$dir/.allow.tmp"

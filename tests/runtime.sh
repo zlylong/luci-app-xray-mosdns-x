@@ -326,9 +326,17 @@ printf "config adblock\n\toption dir '%s'\nconfig adlist 'l1'\n\toption url 'htt
 adl() { ucode "$REPO/root/usr/libexec/xray-mosdns/adlist.uc" "$@" 2>&1; }
 same() { cmp -s "$1" "$2" && echo yes || echo no; }
 {
+	# an update writes into the subdirectory and leaves the top alone: a
+	# configuration still running reads its lists there
 	echo "update1 $(adl update)"
 	echo "top1 $(ls -A "$AD" | tr '\n' ' ')"
 	echo "sub1 $(ls -A "$ADS" | tr '\n' ' ')"
+	# the start script's move once a new configuration is in place: what the
+	# subdirectory has already just goes, the rest moves
+	echo "migrate1 $(adl migrate)"
+	echo "top1m $(ls -A "$AD" | tr '\n' ' ')"
+	echo "sub1m $(ls -A "$ADS" | tr '\n' ' ')"
+	echo "migrate1b $(adl migrate)"
 	# another program's lists and state under the same names at the top
 	echo theirs-block > "$AD/block.txt"; echo theirs-allow > "$AD/allow.txt"; echo '{"theirs":1}' > "$AD/state.json"
 	cp "$AD/block.txt" "$OUT/theirs.block"
@@ -336,6 +344,7 @@ same() { cmp -s "$1" "$2" && echo yes || echo no; }
 	echo "update2 $(adl update)"
 	echo "theirs2 $(same "$OUT/theirs.block" "$AD/block.txt") $(cat "$AD/allow.txt") $(cat "$AD/state.json")"
 	echo "new2 $(grep -c new1.test "$ADS/block.txt")"
+	echo "sub2u $(ls -A "$ADS" | tr '\n' ' ')"
 	cp "$ADS/block.txt" "$OUT/block.before"
 	# the merged block list cannot be written: both lists in use stay
 	mkdir "$ADS/.block.tmp"; list1 new2.test
@@ -348,10 +357,32 @@ same() { cmp -s "$1" "$2" && echo yes || echo no; }
 	echo "update4 $(adl update)"
 	echo "kept4 $(same "$OUT/block.before" "$ADS/block.txt") $(ls -A "$ADS" | grep -c '\.prev$')"
 	rmdir "$ADS/allow.txt"
+	# a directory where the copy of a list in use goes: no copy, no replacing
+	mkdir "$ADS/.allow.prev"; list1 new4.test
 	echo "update5 $(adl update)"
-	echo "new5 $(grep -c new3.test "$ADS/block.txt") $([ -f "$ADS/allow.txt" ] && echo allow)"
-	echo "status5 $(adl status)"
+	echo "kept5 $(same "$OUT/block.before" "$ADS/block.txt") $(ls -A "$ADS/.allow.prev" | wc -l)"
+	rmdir "$ADS/.allow.prev"
+	echo "update6 $(adl update)"
+	echo "new6 $(grep -c new4.test "$ADS/block.txt") $([ -f "$ADS/allow.txt" ] && echo allow)"
+	echo "status6 $(adl status)"
+	echo "theirs6 $(same "$OUT/theirs.block" "$AD/block.txt") $(adl migrate) $(cat "$AD/state.json")"
 } > "$OUT/adlist.txt"
+# A move that cannot finish: the state stays at the top, and the next start
+# moves the rest.
+AD2="$OUT/adlists2"
+mkdir -p "$AD2/xray-mosdns/l1.allow"
+echo old > "$AD2/l1.block"; echo old > "$AD2/l1.allow"; echo old > "$AD2/block.txt"
+printf '{"lists":{"l1":{"name":"l1","rules":1}},"total":1}' > "$AD2/state.json"
+printf "config adblock\n\toption dir '%s'\nconfig adlist 'l1'\n\toption url 'https://lists.test/list1.txt'\n" "$AD2" > "$CONF"
+{
+	echo "migrate2 $(adl migrate)"
+	echo "top2 $(ls -A "$AD2" | tr '\n' ' ')"
+	echo "sub2 $(ls -A "$AD2/xray-mosdns" | tr '\n' ' ')"
+	rmdir "$AD2/xray-mosdns/l1.allow"
+	echo "migrate3 $(adl migrate)"
+	echo "top3 $(ls -A "$AD2" | tr '\n' ' ')"
+	echo "sub3 $(ls -A "$AD2/xray-mosdns" | tr '\n' ' ')"
+} >> "$OUT/adlist.txt"
 echo "script adlist: done"
 
 # ---------------------------------------------------------------- postrm
@@ -372,10 +403,12 @@ adconf "$S"
 anon=$(uci -q -X show xray-mosdns | sed -n 's/^xray-mosdns\.\(cfg[0-9a-f]*\)=adlist$/\1/p')
 mkdir -p "$S/xray-mosdns"
 for f in block.txt allow.txt state.json l1.block gone2.block .gone2.raw; do touch "$S/xray-mosdns/$f"; done
-for f in block.txt allow.txt .block.tmp l1.block l1.allow .l1.raw "$anon.block" "$anon.allow" mine.txt mine.block mine.allow; do
+# gone3: a list 0.9.8 wrote, unsubscribed since; only its state names it
+for f in block.txt allow.txt .block.tmp l1.block l1.allow .l1.raw "$anon.block" "$anon.allow" gone3.block .gone3.raw \
+	mine.txt mine.block mine.allow; do
 	touch "$S/$f"
 done
-printf '{"lists":{"l1":{"name":"l1"}}}' > "$S/state.json"
+printf '{"lists":{"l1":{"name":"l1","rules":1,"error":null},"gone3":{"name":"gone3","rules":1,"error":null}},"total":2,"finished":1,"error":null}' > "$S/state.json"
 # another shared directory: there the generic names at the top are the other program's
 S2="$OUT/shared2"
 mkdir -p "$S2/xray-mosdns"
