@@ -143,6 +143,8 @@ python3 tests/check.py /tmp/xm-test          # 对三套夹具的输出做断言
 #   groups.uc 和 status.sh 是否按 runtime.env 工作、update.sh 的校验和替换、adlist.uc 的共用目录和合并失败、
 #   包的 postrm（升级与卸载）；会写 /var/etc、/etc/config、/etc/crontabs，只能在一次性的 rootfs 里跑
 # 以上结果都由 check.py 断言（CI 里加 --all：哪一部分没有输出就算失败）。
+# python3 tests/jslint.py：编译时页面会被 jsmin 压缩，它会误读紧跟在 return 等关键字后面的正则，检查页面里没有这种写法；
+#   打包任务还会对压缩后的页面逐个做语法检查
 # 跑不了的两样需要在路由器上（或带 NET_ADMIN 的容器里）验证：init 脚本和 procd 的启动顺序；
 #   nft 规则的语法（测试里的 nft 是替身，不检查语法），用 nft -c -f /var/etc/xray-mosdns/nft.rules
 xray run -test -c /tmp/xm-test/chnroute/xray.json

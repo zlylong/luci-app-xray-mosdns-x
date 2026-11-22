@@ -78,6 +78,10 @@ jobs:
       - name: Run the runtime scripts
         run: chroot "$R" /bin/sh /src/tests/runtime.sh /src /out
 
+      # the package build minifies the pages (jsmin); what it misreads
+      - name: Pages survive the minifier
+        run: python3 tests/jslint.py .
+
       - name: Check the results
         run: |
           python3 -c 'import yaml' 2>/dev/null || {
@@ -144,6 +148,19 @@ jobs:
             cd "$SDK"
             TERM=dumb make package/luci-app-xray-mosdns-x/compile V=s -j"$(nproc)"
           '
+
+      # What the package ships is minified: every page of it has to parse
+      # (a misread regex cut adblock.js short in 1.0.0)
+      - name: The minified pages parse
+        run: |
+          n=0
+          for f in $(find "$SDK/build_dir" -path '*luci-app-xray-mosdns-x*' -path '*/www/luci-static/resources/*' -name '*.js'); do
+            node -e "new Function(require('fs').readFileSync(process.argv[1], 'utf8'))" "$f" ||
+              { echo "does not parse after minifying: $f" >&2; exit 1; }
+            n=$((n + 1))
+          done
+          echo "$n minified pages parse"
+          [ "$n" -gt 0 ]
 
       - name: Collect artifacts
         run: |
