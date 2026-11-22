@@ -4,7 +4,7 @@
 //   adlist.uc update            download and convert every enabled list
 //   adlist.uc start             the same, detached (the web UI cannot wait)
 //   adlist.uc ensure            start an update if an enabled list has no data yet
-//   adlist.uc migrate           move what 0.9.8 kept at the top of a shared directory (start script)
+//   adlist.uc migrate           move what 0.9.7 kept at the top of a shared directory (start script)
 //   adlist.uc status            what is installed, as JSON
 //   adlist.uc catalog           the AdGuard blocklist catalogue, as JSON
 //   adlist.uc catalog-sync      refresh the catalogue and bring subscriptions in line with it
@@ -70,7 +70,7 @@ function settings() {
 	};
 }
 
-// Up to 0.9.8 the lists of a directory set in the options were kept at its
+// Up to 0.9.7 the lists of a directory set in the options were kept at its
 // top. The start script has them moved into the subdirectory (adlist.uc
 // migrate) once a configuration that reads them there is in place, and
 // never before: a start that falls back to the previous configuration

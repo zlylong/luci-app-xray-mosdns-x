@@ -1,7 +1,7 @@
 # luci-app-xray-mosdns-x
 
 LuCI 管理界面：用 **Xray**（TProxy 透明代理）+ **mosdns-x**（DNS 分流/缓存/去广告）
-替代 PassWall、ChinaDNS 和 dnsmasq 解析功能的插件。当前为 **v0.9.7 开发版**，默认 **不启用**：
+替代 PassWall、ChinaDNS 和 dnsmasq 解析功能的插件。当前为 **v1.0.0**，默认 **不启用**：
 安装后 `xray-mosdns.global.enabled` 仍为 `0`，不会改动现有代理/DNS 链路。
 
 ## 架构
@@ -250,7 +250,7 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-<版本>-r1.apk
 | group | failback | 仅 ordered：0（默认）切换后只有当前成员不可用才再切；1 前面的成员恢复后立即切回 |
 | global | probe_url / probe_interval | 节点组的探测地址与间隔，默认 gstatic generate_204 / 1m |
 | global | probe_url_backup | 备用探测地址（可选）：所有组的全部成员同时探测失败时自动换用 |
-| adblock | dir / auto_update / update_hour | 拦截列表的存放目录、是否每天自动更新、更新钟点。/etc/xray-mosdns 以外的目录可以和别的程序共用：列表放在其中的 xray-mosdns 子目录里（≤0.9.8 放在目录顶层的，在新配置成功换上之后搬进去；回退到上一份配置的启动不搬，上一份配置仍从顶层读取），卸载时只删除这个子目录 |
+| adblock | dir / auto_update / update_hour | 拦截列表的存放目录、是否每天自动更新、更新钟点。/etc/xray-mosdns 以外的目录可以和别的程序共用：列表放在其中的 xray-mosdns 子目录里（≤0.9.7 放在目录顶层的，在新配置成功换上之后搬进去；回退到上一份配置的启动不搬，上一份配置仍从顶层读取），卸载时只删除这个子目录 |
 | adlist | enabled / name / url | 一条订阅：AdGuard 规则、hosts 或纯域名格式的列表地址 |
 | adlist | catalog_id | 来自 AdGuard 列表库的订阅记录的目录编号；有它时 name 和 url 跟随目录 |
 | device | mac / network / outbound | 按设备分流：MAC 地址列表；tcp,udp / udp / tcp；main / direct / 节点 / 节点组 |
