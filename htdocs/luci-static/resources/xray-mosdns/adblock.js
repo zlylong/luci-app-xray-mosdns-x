@@ -145,7 +145,9 @@ return baseclass.extend({
 
 		function renderStatus() {
 			summary.replaceChildren.apply(summary, status.running
-				? [ E('em', { 'class': 'spinning' }, _('正在下载并转换列表…')) ]
+				? [ E('em', { 'class': 'spinning' }, (status.progress && status.progress.of)
+					? _('正在下载并转换列表…（第 %d/%d 个：%s）').format(status.progress.index, status.progress.of, status.progress.name || '')
+					: _('正在下载并转换列表…')) ]
 				: [ _('已安装 %s 条拦截规则').format(fmtCount(status.total)),
 					status.finished ? _('，上次更新 %s。').format(fmtTime(status.finished)) : _('。') ].concat(status.error
 					? [ ' ', xm.badge(_('合并失败'), 'bad'), ' ', _('仍在使用上一份列表：%s').format(status.error) ] : []));
@@ -270,7 +272,7 @@ return baseclass.extend({
 
 		o = ss.option(form.ListValue, 'update_hour', _('更新时间'));
 		for (var h = 0; h < 24; h++)
-			o.value(String(h), '%d:17'.format(h));
+			o.value(String(h), '%d:00'.format(h));
 		o.default = '5';
 		o.depends('auto_update', '1');
 

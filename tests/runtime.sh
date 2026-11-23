@@ -504,9 +504,12 @@ merged() { echo "a=$(grep -c a-only "$AD4S/block.txt") b=$(grep -c b-only "$AD4S
 	swapconf swap-b.txt swap-a.txt
 	echo "swap-secs2 $(secs)"
 	echo "swap-status2 $(adl status)"
-	# at start: not merged in, fetched again; the merged list in use stays until then
-	echo "swap-ensure2 $(adl ensure)"
-	echo "swap-kept2 $(same "$OUT/swap.before" "$AD4S/block.txt")"
+	# at start the data goes to its list's new name, by its address: nothing
+	# is fetched (it could not be: FAIL_SWAP), the merged list in use stays
+	echo "swap-ensure2 $(FAIL_SWAP=1 adl ensure)"
+	echo "swap-kept2 $(same "$OUT/swap.before" "$AD4S/block.txt") $(ls -A "$AD4S" | grep -c 'rekey$')"
+	echo "swap-secs2b $(secs)"
+	echo "swap-status2b $(adl status)"
 	echo "swap-update3 $(adl update)"
 	echo "swap-merged3 $(merged)"
 	echo "swap-secs3 $(secs)"
@@ -548,6 +551,25 @@ merged() { echo "a=$(grep -c a-only "$AD4S/block.txt") b=$(grep -c b-only "$AD4S
 	mv "$AD4S/$sa.block" "$AD4S/.$sa.block.old"; mv "$AD4S/$sa.allow" "$AD4S/.$sa.allow.old"
 	echo "swap-cut-update $(FAIL_SWAP=1 adl update)"
 	echo "swap-cut-kept $(same "$OUT/swap.a9" "$AD4S/$sa.block") $(ls -A "$AD4S" | grep -c '\.old$') $(same "$OUT/swap.before9" "$AD4S/block.txt")"
+	# A section added before the lists (as deleting or adding a rule does)
+	# gives every list the name of the next: at start the data follows, and
+	# an update whose downloads fail finds each list with its own data.
+	echo "shift-update0 $(adl update)"
+	cp "$AD4S/block.txt" "$OUT/swap.before10"
+	{ printf "config rule\n\toption enabled '0'\n"; cat "$CONF"; } > "$CONF.shift"; mv "$CONF.shift" "$CONF"
+	echo "shift-secs-before $(secs)"
+	echo "shift-ensure $(FAIL_SWAP=1 adl ensure)"
+	echo "shift-secs $(secs)"
+	echo "shift-status $(adl status)"
+	echo "shift-kept $(same "$OUT/swap.before10" "$AD4S/block.txt") $(ls -A "$AD4S" | grep -c 'rekey$')"
+	{ printf "config rule\n\toption enabled '0'\n"; cat "$CONF"; } > "$CONF.shift"; mv "$CONF.shift" "$CONF"
+	echo "shift-update $(FAIL_SWAP=1 adl update)"
+	echo "shift-secs2 $(secs)"
+	echo "shift-kept2 $(same "$OUT/swap.before10" "$AD4S/block.txt") progress=$([ -e /var/run/xray-mosdns-adlist.progress ] && echo left || echo gone)"
+	# the daily job: on the hour
+	: > "$OUT/adlist.cron"
+	ADLIST_CRON="$OUT/adlist.cron" adl cron-sync
+	echo "cron-line $(cat "$OUT/adlist.cron")"
 } > "$OUT/adlist-swap.txt" 2>&1
 # One writer of the list directory at a time: an update holds the lock (here
 # the test does, with flock on fd 7). A move is left to the next start,
@@ -624,7 +646,7 @@ echo "catalog-tmp-left $(ls /tmp/xray-mosdns-adlist-catalog.*.json 2>/dev/null |
 sed -n '/^define Package\/\$(PKG_NAME)\/postrm/,/^endef/p' "$REPO/Makefile" | sed '1d;$d' | sed 's/\$\$/$/g' > "$OUT/postrm"
 S="$OUT/shared"
 mkdir -p /etc/crontabs /etc/xray-mosdns/adlists /root/pw-backup/xray-mosdns-update "$S"
-printf '0 4 * * * /usr/libexec/xray-mosdns/update.sh geo-auto # xray-mosdns-geo-auto\n17 5 * * * x # xray-mosdns-adlist\n0 1 * * * keep-me\n' > /etc/crontabs/root
+printf '0 4 * * * /usr/libexec/xray-mosdns/update.sh geo-auto # xray-mosdns-geo-auto\n0 5 * * * x # xray-mosdns-adlist\n0 1 * * * keep-me\n' > /etc/crontabs/root
 touch /etc/xray-mosdns/adlists/block.txt /root/pw-backup/xray-mosdns-update/xray.1
 # The blocklist options in an anonymous section, one named and one
 # anonymous subscription. The directory is shared with another program; it

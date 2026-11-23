@@ -24,11 +24,13 @@
 //
 // A list's data files and state go by its UCI section's name. For an
 // anonymous section ("cfg140306") that name is only its place in the file:
-// a section added before it gives the name to the next list down. So the
-// state records the address each list's data came from, and data from
-// another address is not used: not merged, not counted as there, the list
-// is fetched again. State written before addresses were recorded counts as
-// another address (fetched again once).
+// a section added or removed before it gives every list the name of its
+// neighbour. So the state records the address each list's data came from,
+// and data from another address is not used: not merged, not counted as
+// there. When a list's data is there under another name it is moved to the
+// list's name (rekey(): at start and before an update), nothing is fetched;
+// otherwise the list is fetched again. State written before addresses were
+// recorded counts as another address (fetched again once).
 //
 // An update that fails for a list throws nothing away: what was there stays
 // and stays merged as it was, whatever address it came from, until a
@@ -46,8 +48,11 @@ const REGISTRY = 'https://adguardteam.github.io/HostlistsRegistry/assets/filters
 // merge at start. Never removed: a new file would be a second lock.
 const LOCK = '/var/run/xray-mosdns-adlist.lock';
 const LOG = '/tmp/xray-mosdns-adlist.log';
+// which list a running update is at, for the page
+const PROGRESS = '/var/run/xray-mosdns-adlist.progress';
 const SELF = '/usr/libexec/xray-mosdns/adlist.uc';
-const CRON = '/etc/crontabs/root';
+// ADLIST_CRON: another crontab, for the tests (cron is left alone then)
+const CRON = getenv('ADLIST_CRON') || '/etc/crontabs/root';
 const CRON_TAG = '# xray-mosdns-adlist';
 
 const uci = cursor();
@@ -220,7 +225,9 @@ function xray_socks() {
 // download falls back to uclient-fetch / wget, which every OpenWrt has, direct only.
 function download(url, dest) {
 	if (system('command -v curl >/dev/null 2>&1') == 0) {
-		const base = `curl -fsSL --connect-timeout 15 --max-time 300 --max-filesize 67108864 -o '${dest}' '${url}'`;
+		// --speed-*: a transfer that stalls (under 1 KB/s for 30 s) is given
+		// up at once, not after the 5 minutes a whole list may take
+		const base = `curl -fsSL --connect-timeout 15 --max-time 300 --speed-limit 1024 --speed-time 30 --max-filesize 67108864 -o '${dest}' '${url}'`;
 		const port = xray_socks();
 		if (port && system(`${base} -x socks5h://127.0.0.1:${port} 2>/dev/null`) == 0)
 			return true;
@@ -350,6 +357,90 @@ function has_files(cfg, l) {
 // a list's data is there, and is from its address (see the top)
 function has_data(cfg, state, l) {
 	return state?.lists?.[l.id]?.url == l.url && has_files(cfg, l);
+}
+
+// Lists whose data is there under another name (see the top: a section
+// added or removed before the lists renames them all): each list's two
+// files and its state go to its name, by the address they came from.
+// Nothing is fetched and the merged lists stay what they are (the same
+// data). All of them are taken out first and put in place after, so lists
+// that changed places do not overwrite each other. Only with the lock held.
+// Returns the state to go on with (written when something moved).
+function rekey(cfg, all, state) {
+	const sl = state?.lists;
+	if (type(sl) != 'object')
+		return state;
+	const kinds = [ 'block', 'allow' ];
+	const cur = (id, k) => `${cfg.dir}/${id}.${k}`;
+	const tmp = (id, k) => `${cfg.dir}/.${id}.${k}.rekey`;
+	// left by a run that was cut short: no telling whose it is any more
+	for (let f in (fs.lsdir(cfg.dir) ?? []))
+		if (match(f, /^\.[A-Za-z0-9_]+\.(block|allow)\.rekey$/))
+			fs.unlink(`${cfg.dir}/${f}`);
+
+	let url_of = {};
+	for (let l in all)
+		url_of[l.id] = l.url;
+	let moves = [], taken = {};
+	for (let l in all) {
+		if (sl[l.id]?.url == l.url && has_files(cfg, l))
+			continue;	// its own data is there
+		// where it goes must be free, or files
+		if (length(filter(kinds, k => (fs.lstat(cur(l.id, k))?.type ?? 'file') != 'file')))
+			continue;
+		for (let id, e in sl) {
+			if (id == l.id || taken[id] || e?.url != l.url || !match(id, /^[A-Za-z0-9_]+$/))
+				continue;
+			// the section of that name has this address too (twice the same list): its own
+			if (url_of[id] == e.url || !has_files(cfg, { id }))
+				continue;
+			taken[id] = true;
+			push(moves, { from: id, to: l.id, entry: e, name: l.name });
+			break;
+		}
+	}
+	if (!length(moves))
+		return state;
+
+	// out, all of them; any that cannot be goes back, nothing changes
+	let out_ok = true;
+	for (let m in moves)
+		for (let k in kinds)
+			if (out_ok && fs.rename(cur(m.from, k), tmp(m.to, k)))
+				m[k] = true;
+			else
+				out_ok = false;
+	if (!out_ok) {
+		for (let m in moves)
+			for (let k in kinds)
+				if (m[k])
+					fs.rename(tmp(m.to, k), cur(m.from, k));
+		return state;
+	}
+	// in place; what was under that name was another list's
+	let lists_state = {}, moved = 0;
+	for (let id, e in sl)
+		if (!taken[id])
+			lists_state[id] = e;
+	for (let m in moves) {
+		let ok = true;
+		for (let k in kinds)
+			if (!fs.rename(tmp(m.to, k), cur(m.to, k))) {
+				ok = false;
+				fs.unlink(tmp(m.to, k));
+			}
+		if (ok) {
+			m.entry.name = m.name;
+			lists_state[m.to] = m.entry;
+			moved++;
+		}
+		else
+			delete lists_state[m.to];	// half there: fetched again
+	}
+	state.lists = lists_state;
+	fs.writefile(state_path(cfg), sprintf('%J', state));
+	system([ 'logger', '-t', 'xray-mosdns', `blocklists: the data of ${moved} list(s) moved to their sections' new names (nothing fetched)` ]);
+	return state;
 }
 
 // A list's data that replace_data() put aside and did not put back (the
@@ -655,8 +746,13 @@ function cmd_update() {
 
 	const all = lists();
 	let state = load(state_path(cfg), {});
+	// data under another name (sections renamed) first to its list
+	for (let l in all)
+		recover_aside(cfg, l);
+	state = rekey(cfg, all, state);
 	let lists_state = {};
 	let failed = 0;
+	let at = 0;
 
 	// lists whose update failed: their data (from another address) stays
 	// merged as it was; `lost`: ones that had something there (merged into
@@ -665,6 +761,7 @@ function cmd_update() {
 	for (let l in all) {
 		const raw = `${cfg.dir}/.${l.id}.raw`;
 		const prev = state.lists?.[l.id] ?? {};
+		fs.writefile(PROGRESS, sprintf('%J', { index: ++at, of: length(all), name: l.name }));
 		recover_aside(cfg, l);
 		const had = fs.lstat(`${cfg.dir}/${l.id}.block`) != null || fs.lstat(`${cfg.dir}/${l.id}.allow`) != null;
 		// what is there under this name is this list's (see the top)
@@ -733,6 +830,7 @@ function cmd_update() {
 	if (merr)
 		total = state.total ?? 0;
 	fs.writefile(state_path(cfg), sprintf('%J', { lists: lists_state, total, finished: time(), error: merr }));
+	fs.unlink(PROGRESS);
 	unlock();
 	if (merr) {
 		system([ 'logger', '-p', 'daemon.err', '-t', 'xray-mosdns', `blocklists: ${merr}; the previous lists stay in use` ]);
@@ -799,9 +897,12 @@ function cmd_ensure() {
 	const all = lists();
 	// data an update that was cut short left aside, back first (not while
 	// one runs: it may be in the middle of replacing)
+	// ... and data under another name (sections renamed) to its list:
+	// nothing to fetch for those
 	if (lock_wait(5)) {
 		for (let l in all)
 			recover_aside(cfg, l);
+		rekey(cfg, all, load(state_path(cfg), {}));
 		unlock();
 	}
 	const state = load(state_path(cfg), {});
@@ -861,15 +962,16 @@ function cmd_status() {
 		if (e && (e.url == s.url || e.tried == s.url))
 			shown[s['.name']] = e;
 	});
-	out({ ok: true, running: !!running(), dir: cfg.dir, lists: shown, total: state.total ?? 0, finished: state.finished ?? null,
-		error: state.error ?? null });
+	const busy = !!running();
+	out({ ok: true, running: busy, progress: busy ? load(PROGRESS, null) : null, dir: cfg.dir, lists: shown,
+		total: state.total ?? 0, finished: state.finished ?? null, error: state.error ?? null });
 }
 
 // ---------------------------------------------------------------- cron
 function cmd_cron_sync() {
 	const cfg = settings();
 	const want = (cfg.auto && length(lists()))
-		? `17 ${cfg.hour} * * * ucode ${SELF} update >${LOG} 2>&1 ${CRON_TAG}`
+		? `0 ${cfg.hour} * * * ucode ${SELF} update >${LOG} 2>&1 ${CRON_TAG}`
 		: null;
 	const cur = split(fs.readfile(CRON) ?? '', '\n');
 	const have = filter(cur, l => index(l, CRON_TAG) >= 0)[0] ?? null;
@@ -878,9 +980,12 @@ function cmd_cron_sync() {
 	let lines = filter(cur, l => index(l, CRON_TAG) < 0 && length(l));
 	if (want)
 		push(lines, want);
-	system([ 'mkdir', '-p', '/etc/crontabs' ]);
+	const test = !!getenv('ADLIST_CRON');
+	if (!test)
+		system([ 'mkdir', '-p', '/etc/crontabs' ]);
 	fs.writefile(CRON, join('\n', lines) + '\n');
-	system('/etc/init.d/cron restart >/dev/null 2>&1');
+	if (!test)
+		system('/etc/init.d/cron restart >/dev/null 2>&1');
 	return 0;
 }
 

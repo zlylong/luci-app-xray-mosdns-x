@@ -363,8 +363,13 @@ if os.path.exists(swp):
     check(secmap(sw.get("swap-secs2", "")) == {"swap-b.txt": ("a=1", "b=0"), "swap-a.txt": ("a=0", "b=1")}
           and swj("swap-status2").get("lists") == {},
           f"adlist swap: after changing places each name holds the other's data, and its state is not shown for it {sw.get('swap-status2')}")
-    check(swj("swap-ensure2").get("running") is True and sw.get("swap-kept2") == "yes",
-          f"adlist swap: at start that data is not used, the lists are fetched, the merged list in use stays {sw.get('swap-ensure2')}")
+    st2b = swj("swap-status2b").get("lists") or {}
+    check(sw.get("swap-ensure2", "") == "" and sw.get("swap-kept2") == "yes 0"
+          and secmap(sw.get("swap-secs2b", "")) == {"swap-b.txt": ("a=0", "b=1"), "swap-a.txt": ("a=1", "b=0")}
+          and sorted((e.get("url", "").rsplit("/", 1)[-1], e.get("rules")) for e in st2b.values()) == [("swap-a.txt", 1), ("swap-b.txt", 2)]
+          and swj("swap-status2b").get("running") is False and swj("swap-status2b").get("progress") is None,
+          f"adlist swap: at start the data goes to its list's new name by its address, nothing fetched, the merged list in use stays "
+          f"{sw.get('swap-ensure2')!r} {sw.get('swap-secs2b')} {st2b}")
     st3 = swj("swap-status3").get("lists") or {}
     check(swj("swap-update3").get("ok") is True and sw.get("swap-merged3") == "a=1 b=1 lines=3"
           and secmap(sw.get("swap-secs3", "")) == {"swap-b.txt": ("a=0", "b=1"), "swap-a.txt": ("a=1", "b=0")}
@@ -396,6 +401,20 @@ if os.path.exists(swp):
           f"adlist #91: data an update left aside (cut short) goes back at start, the lists in use as they were {sw.get('swap-cut-back')}")
     check(swj("swap-cut-update").get("failed") == 2 and sw.get("swap-cut-kept") == "yes 0 yes",
           f"adlist #91: ... and an update that then fails keeps it, nothing left aside {swj('swap-cut-update')} {sw.get('swap-cut-kept')}")
+    own = {"swap-b.txt": ("a=0", "b=1"), "swap-a.txt": ("a=1", "b=0")}
+    before = secmap(sw.get("shift-secs-before", ""))
+    sst = swj("shift-status").get("lists") or {}
+    check(swj("shift-update0").get("ok") is True and before != own and len(before) == 2
+          and sw.get("shift-ensure", "") == "" and secmap(sw.get("shift-secs", "")) == own and sw.get("shift-kept") == "yes 0"
+          and sorted((e.get("url", "").rsplit("/", 1)[-1], e.get("rules")) for e in sst.values()) == [("swap-a.txt", 2), ("swap-b.txt", 2)],
+          f"adlist: a section added before the lists renames them all; at start each list's data follows it, nothing fetched "
+          f"{sw.get('shift-secs-before')} -> {sw.get('shift-secs')} {sw.get('shift-ensure')!r} {sst}")
+    su = swj("shift-update")
+    check(su.get("failed") == 2 and su.get("total") == 4 and secmap(sw.get("shift-secs2", "")) == own
+          and sw.get("shift-kept2") == "yes progress=gone",
+          f"adlist: ... and an update whose downloads fail finds each list with its own data; no progress file left {su} {sw.get('shift-secs2')} {sw.get('shift-kept2')}")
+    check(sw.get("cron-line", "").startswith("0 5 * * * ucode ") and sw.get("cron-line", "").endswith("# xray-mosdns-adlist"),
+          f"adlist: the daily update runs on the hour {sw.get('cron-line')}")
 else:
     print("adlist swap: no output from tests/runtime.sh, skipped")
     check(not strict, "adlist swap: no output from tests/runtime.sh")

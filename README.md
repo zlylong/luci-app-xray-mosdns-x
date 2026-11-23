@@ -75,8 +75,10 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
   `adlist.uc` 把列表转换成 mosdns 的域名文件：`||example.com^` → 域名及子域名，hosts 行和纯域名 → 精确匹配，
   `@@` 例外单独存放；`$dnsrewrite` 指向“域名不存在”、拒绝、空地址或 AdGuard 拦截主机的规则也按拦截处理
   （AdGuard DNS 系列列表这样写拦截）；通配符、正则和带其他修饰符的规则会被跳过并计数。
-  每个订阅的数据记着它来自哪个地址：匿名小节的名字随它在配置文件里的位置变化，
-  不是这个地址的数据不会被使用，会重新下载。合并后的文件由 mosdns 自动重载，
+  每个订阅的数据记着它来自哪个地址：匿名小节的名字随它在配置文件里的位置变化（在它前面增删一条规则，
+  后面的列表就都换了名字）。数据在别的名字下面时，启动和更新前按地址把它挪到列表现在的名字下，不重新下载；
+  哪里都没有这个地址的数据才重新下载。下载走代理优先、直连兜底，传输停住（30 秒内低于 1 KB/s）就放弃这一次；
+  更新期间页面显示正在处理第几个列表。每天的自动更新在整点运行。合并后的文件由 mosdns 自动重载，
   更新列表不需要重启：新内容先完整写好，再就地改写 mosdns 正在读的那个文件（mosdns-x 只监视它打开的文件，
   换成另一个文件只会重载一次），两份列表要么都换、要么都不换。mosdns 启动时缺合并后的列表会直接起不来，
   所以每次启动前先用已有的列表把它们合并出来。订阅通过规则表里的“广告（订阅列表）”一行（`adlist:all`）生效。
@@ -262,7 +264,7 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-<版本>-r1.apk
 | group | failback | 仅 ordered：0（默认）切换后只有当前成员不可用才再切；1 前面的成员恢复后立即切回 |
 | global | probe_url / probe_interval | 节点组的探测地址与间隔，默认 gstatic generate_204 / 1m |
 | global | probe_url_backup | 备用探测地址（可选）：所有组的全部成员同时探测失败时自动换用 |
-| adblock | dir / auto_update / update_hour | 拦截列表的存放目录、是否每天自动更新、更新钟点。/etc/xray-mosdns 以外的目录可以和别的程序共用：列表放在其中的 xray-mosdns 子目录里（≤0.9.7 放在目录顶层的，在新配置成功换上之后搬进去；回退到上一份配置的启动不搬，上一份配置仍从顶层读取），卸载时只删除这个子目录 |
+| adblock | dir / auto_update / update_hour | 拦截列表的存放目录、是否每天自动更新、更新钟点（整点）。/etc/xray-mosdns 以外的目录可以和别的程序共用：列表放在其中的 xray-mosdns 子目录里（≤0.9.7 放在目录顶层的，在新配置成功换上之后搬进去；回退到上一份配置的启动不搬，上一份配置仍从顶层读取），卸载时只删除这个子目录 |
 | adlist | enabled / name / url | 一条订阅：AdGuard 规则、hosts 或纯域名格式的列表地址 |
 | adlist | catalog_id | 来自 AdGuard 列表库的订阅记录的目录编号；有它时 name 和 url 跟随目录 |
 | device | mac / network / outbound | 按设备分流：MAC 地址列表；tcp,udp / udp / tcp；main / direct / 节点 / 节点组 |
