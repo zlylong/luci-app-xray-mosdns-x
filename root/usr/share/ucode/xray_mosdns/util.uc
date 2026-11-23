@@ -12,6 +12,15 @@ export function note(msg) {
 	system([ 'logger', '-t', 'xray-mosdns-gen', msg ]);
 };
 
+// A short name for a text's content (FNV-1a, 32 bits, as 8 hex digits):
+// to tell whether two generated things are the same, not for security.
+export function hash(s) {
+	let h = 2166136261;
+	for (let i = 0; i < length(s); i++)
+		h = ((h ^ ord(s, i)) * 16777619) & 0xffffffff;
+	return sprintf('%08x', h);
+};
+
 export function bool(v, dflt) {
 	if (v == null || v === '')
 		return !!dflt;

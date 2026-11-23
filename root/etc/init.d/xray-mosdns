@@ -4,7 +4,8 @@
 # start is idempotent and doubles as reload. The configuration is generated
 # into a staging directory and checked: Xray has to accept it and the
 # firewall rules have to load. Only then do the daemons' files change, and
-# procd restarts only the daemon whose file did. Anything that fails leaves
+# procd restarts only the daemon whose file did (Xray's routing rules go
+# into the running Xray instead). Anything that fails leaves
 # the running state as it was, and the reason is kept for the overview page.
 START=96
 USE_PROCD=1
@@ -14,6 +15,10 @@ OUT=/var/etc/xray-mosdns
 NEW=/var/etc/xray-mosdns.new
 ERR=/var/run/xray-mosdns.error
 MOSDNS_LOG=/tmp/mosdns-x.log
+# the routing rules Xray had before a switch; a number that changes when
+# Xray has to be restarted although its files say it need not
+RULES_WAS=/var/run/xray-mosdns-rules.was
+XRAY_GEN=/var/run/xray-mosdns-xray.gen
 
 get_opt() { uci -q get "xray-mosdns.$1" 2>/dev/null; }
 sum() { [ -f "$1" ] && md5sum "$1" 2>/dev/null | cut -d' ' -f1; }
@@ -204,6 +209,9 @@ generate_and_switch() {
 			# all files or none: when they cannot all be put in place the
 			# old set is back whole, and the code below puts its rules back
 			# too. The new set stays in $NEW to look at.
+			was=$(cat "$OUT/xray.restart" 2>/dev/null)
+			rm -f "$RULES_WAS"
+			cp -p "$OUT/xray-rules.json" "$RULES_WAS" 2>/dev/null
 			"$PLUGIN_DIR/switch.sh" "$NEW" "$OUT" 2>"$OUT/.switch.log"
 			rc=$?
 			# its first line says what failed
@@ -221,13 +229,32 @@ generate_and_switch() {
 					# running, is only logged: it writes where the new set
 					# reads.
 					why=$(ucode /usr/libexec/xray-mosdns/adlist.uc migrate 2>&1 >/dev/null 1000>&-)
-					[ "$?" = 1 ] && set_error "拦截列表有文件没能搬进 xray-mosdns 子目录：$why（见系统日志，下次启动重试）" ;;
+					[ "$?" = 1 ] && set_error "拦截列表有文件没能搬进 xray-mosdns 子目录：$why（见系统日志，下次启动重试）"
+					hot_rules "$was" ;;
 				3) broken=1 ;;
 			esac
 			rm -f "$OUT/.switch.log"
 		else
 			bad="防火墙规则加载失败：$(reason "$NEW/.log")"
 		fi
+	fi
+}
+
+# $1 = xray.restart of the set that was in place. When Xray's rules are all
+# that changed for it, they go into the running Xray through its API: no
+# restart, so connections and the node groups' state stay. When that does
+# not work (Xray is down, the API refuses) Xray is restarted instead: a
+# start reads the same rules from xray.json.
+hot_rules() {
+	[ -n "$1" ] && [ -f "$RULES_WAS" ] && [ "$1" = "$(cat "$OUT/xray.restart" 2>/dev/null)" ] || return 0
+	cmp -s "$RULES_WAS" "$OUT/xray-rules.json" && return 0
+	runtime_values
+	if why=$(XRAY_BIN="$XRAY_BIN" API_PORT="$API_PORT" GEO_DIR="$GEO_DIR" \
+		"$PLUGIN_DIR/xray-rules.sh" apply "$RULES_WAS" "$OUT/xray-rules.json" 2>&1 1000>&-); then
+		logger -t xray-mosdns "Xray: the routing rules were replaced through its API, no restart"
+	else
+		echo $(($(cat "$XRAY_GEN" 2>/dev/null || echo 0) + 1)) > "$XRAY_GEN"
+		logger -p daemon.warn -t xray-mosdns "Xray: the routing rules could not be replaced through its API ($(echo "$why" | tail -n 1 | cut -c1-200)): restarting it"
 	fi
 }
 
@@ -269,8 +296,16 @@ declare_instances() {
 	procd_set_param command "$XRAY_BIN" run -c "$OUT/xray.json"
 	# Xray looks for geoip.dat / geosite.dat next to its binary and under
 	# */share/xray; the rules need the same files mosdns and the kernel use
-	procd_set_param env XRAY_LOCATION_ASSET="$GEO_DIR"
-	procd_set_param file "$OUT/xray.json"
+	# XM_GEN: see hot_rules
+	procd_set_param env XRAY_LOCATION_ASSET="$GEO_DIR" XM_GEN="$(cat "$XRAY_GEN" 2>/dev/null)"
+	# xray.restart names everything of xray.json but the routing rules:
+	# those are replaced in the running Xray (hot_rules). A set from before
+	# that file existed restarts Xray whenever xray.json changes.
+	if [ -f "$OUT/xray.restart" ]; then
+		procd_set_param file "$OUT/xray.restart"
+	else
+		procd_set_param file "$OUT/xray.json"
+	fi
 	procd_set_param respawn 3600 5 5
 	procd_set_param stdout 1
 	procd_set_param stderr 1

@@ -220,6 +220,31 @@ cp "$LG/a.log" "$OUT/logs-a.txt"; cp "$LG/b.log" "$OUT/logs-b.txt"
 run logs-cap env LOGS_FILES="$LG/c.log" LOGS_MAX=600 LOGS_DAYS=30 LOGS_NOW=1763730000 "$LX/logs.uc" prune
 wc -l < "$LG/c.log" | tr -d ' ' > "$OUT/logs-c.txt"
 
+# Xray's routing rules into a running Xray (xray-rules.sh). The same
+# configuration with one rule more differs in its rules and their tags, not
+# in what Xray is restarted for (xray.restart); another node port does.
+HR="$OUT/hot"; mkdir -p "$HR/a" "$HR/b" "$HR/c" "$HR/conf-b" "$HR/conf-c"
+gen() { ucode -L "$REPO/root/usr/share/ucode" "$REPO/root/usr/share/xray-mosdns/gen-config.uc" -o "$1" -c "$2" -g "$REPO/tests/fixtures/geoip.dat" -l br-lan -n >/dev/null 2>&1; }
+cp "$REPO/tests/fixtures/chnroute/xray-mosdns" "$HR/conf-b/"; cp "$REPO/tests/fixtures/chnroute/xray-mosdns" "$HR/conf-c/"
+printf "\nconfig rule\n\toption enabled '1'\n\toption rule_type 'domain'\n\toption value 'domain:hot.example.net'\n\toption outbound 'direct'\n" >> "$HR/conf-b/xray-mosdns"
+sed -i "s/option port '8443'/option port '8444'/" "$HR/conf-c/xray-mosdns"
+gen "$HR/a" "$REPO/tests/fixtures/chnroute" && gen "$HR/b" "$HR/conf-b" && gen "$HR/c" "$HR/conf-c" || { echo "script hot-gen: FAILED"; rc=1; }
+hr_tags() { sed -n 's/^[[:space:]]*"ruleTag": *"\([A-Za-z0-9_]*\)".*/\1/p' "$1" | tr '\n' ' '; }
+{
+	echo "key-a $(cat "$HR/a/xray.restart")"; echo "key-b $(cat "$HR/b/xray.restart")"; echo "key-c $(cat "$HR/c/xray.restart")"
+	echo "tags-a $(hr_tags "$HR/a/xray-rules.json")"; echo "tags-b $(hr_tags "$HR/b/xray-rules.json")"; echo "tags-c $(hr_tags "$HR/c/xray-rules.json")"
+	# a stand-in for the xray command line: what it was asked, FAIL=<command> makes that one fail
+	printf '#!/bin/sh\necho "$XRAY_LOCATION_ASSET $*" >> "%s/calls"\n[ "$2" = "${FAIL:-}" ] && exit 1\nexit 0\n' "$HR" > "$HR/xray"; chmod +x "$HR/xray"
+	apply() { XRAY_BIN="$HR/xray" API_PORT=10099 GEO_DIR=/geo sh "$REPO/root/usr/share/xray-mosdns/xray-rules.sh" apply "$@" 2>&1; }
+	: > "$HR/calls"; out=$(apply "$HR/a/xray-rules.json" "$HR/b/xray-rules.json"); echo "apply rc=$? out=$out"
+	sed 's/^/apply-call /' "$HR/calls"
+	: > "$HR/calls"; out=$(apply "$HR/a/xray-rules.json" "$HR/a/xray-rules.json"); echo "same rc=$? calls=$(wc -l < "$HR/calls" | tr -d ' ')"
+	: > "$HR/calls"; out=$(FAIL=adrules apply "$HR/a/xray-rules.json" "$HR/b/xray-rules.json"); echo "addfail rc=$? calls=$(wc -l < "$HR/calls" | tr -d ' ') out=$out"
+	: > "$HR/calls"; out=$(FAIL=rmrules apply "$HR/a/xray-rules.json" "$HR/b/xray-rules.json"); echo "rmfail rc=$? calls=$(wc -l < "$HR/calls" | tr -d ' ') out=$out"
+	echo '{}' > "$HR/untagged.json"
+	: > "$HR/calls"; out=$(apply "$HR/untagged.json" "$HR/b/xray-rules.json"); echo "untagged rc=$? calls=$(wc -l < "$HR/calls" | tr -d ' ') out=$out"
+} > "$OUT/hot-rules.txt" 2>&1
+
 kill "$LISTENER" 2>/dev/null
 if [ -f "$OUT/conf.saved" ]; then mv "$OUT/conf.saved" "$CONF"; else rm -f "$CONF"; fi
 exit $rc

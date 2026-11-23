@@ -1,7 +1,7 @@
 // luci-app-xray-mosdns-x - Xray configuration (returned as a plain object)
 'use strict';
 
-import { fail } from 'xray_mosdns.util';
+import { fail, hash } from 'xray_mosdns.util';
 
 function stream_settings(n) {
 	let st = { network: n.transport, security: 'none' };
@@ -283,6 +283,12 @@ export function build(cfg, plan, env) {
 		};
 		routing.balancers = balancers;
 	}
+	// Every rule tagged, the tag starting with the hash of the whole set:
+	// another set of rules has no tag of this one, so it can be added to a
+	// running Xray before this one is removed (xray-rules.sh).
+	const set = hash(sprintf('%J', rules));
+	for (let i = 0; i < length(rules); i++)
+		rules[i].ruleTag = `r${set}_${i}`;
 	routing.rules = rules;
 	conf.routing = routing;
 

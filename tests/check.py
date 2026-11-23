@@ -7,6 +7,7 @@ usage: tests/check.py <outdir> [--all]
 there; without it a part that was not run is skipped.
 """
 import json
+import re
 import os
 import sys
 import time
@@ -26,6 +27,18 @@ def check(cond, msg):
 
 def load(case):
     x = json.load(open(f"{out}/{case}/xray.json"))
+    # every rule tagged, one prefix for the set; the rules alone as Xray's
+    # API takes them; a name for the rest (what Xray is restarted for)
+    rtags = [r.get("ruleTag", "") for r in x["routing"]["rules"]]
+    pre = rtags[0].rsplit("_", 1)[0] if rtags else ""
+    check(re.fullmatch(r"r[0-9a-f]{8}", pre) is not None and rtags == [f"{pre}_{i}" for i in range(len(rtags))],
+          f"{case}: every routing rule tagged by its set and place {rtags[:3]}")
+    check(json.load(open(f"{out}/{case}/xray-rules.json")) == {"routing": {"rules": x["routing"]["rules"]}}
+          and re.fullmatch(r"[0-9a-f]{8}\n", open(f"{out}/{case}/xray.restart").read()) is not None,
+          f"{case}: xray-rules.json has the rules alone, xray.restart names the rest")
+    # the checks below compare rules as generated from the configuration
+    for r in x["routing"]["rules"]:
+        r.pop("ruleTag", None)
     m = yaml.safe_load(open(f"{out}/{case}/mosdns.yaml"))
     n = open(f"{out}/{case}/nft.rules").read()
     return x, m, n
@@ -482,6 +495,29 @@ else:
 
     def txt(name):
         return open(f"{sd}/{name}.txt").read().splitlines()
+
+    # xray-rules.sh: the routing rules into a running Xray
+    hot = {}
+    hcalls = []
+    for line in open(f"{sd}/hot-rules.txt").read().splitlines():
+        k, _, v = line.partition(" ")
+        if k == "apply-call":
+            hcalls.append(v)
+        else:
+            hot[k] = v
+    ta, tb, tc = hot.get("tags-a", "").split(), hot.get("tags-b", "").split(), hot.get("tags-c", "").split()
+    check(hot.get("key-a") == hot.get("key-b") and hot.get("key-a") != hot.get("key-c") and len(hot.get("key-a", "")) == 8,
+          f"hot rules: a rule more leaves what Xray is restarted for as it was, another node port does not {hot.get('key-a')} {hot.get('key-b')} {hot.get('key-c')}")
+    check(len(tb) == len(ta) + 1 and not set(ta) & set(tb) and ta == tc and len(set(tb)) == len(tb),
+          f"hot rules: another set of rules has no tag of the first, the same rules have the same tags {ta[:2]} {tb[:2]} {tc[:2]}")
+    check(hot.get("apply") == "rc=0 out=" and len(hcalls) == 2
+          and hcalls[0].startswith("/geo api adrules --server=127.0.0.1:10099 -t 30 -append ") and hcalls[0].endswith("/hot/b/xray-rules.json")
+          and hcalls[1] == " api rmrules --server=127.0.0.1:10099 -t 30 " + " ".join(ta),
+          f"hot rules: the new set is added behind the old one, then the old one's tags are removed {hot.get('apply')} {hcalls}")
+    check(hot.get("same") == "rc=0 calls=0", f"hot rules: the same rules, nothing to do {hot.get('same')}")
+    check(hot.get("addfail", "").startswith("rc=1 calls=1 ") and hot.get("rmfail", "").startswith("rc=1 calls=2 ")
+          and hot.get("untagged", "").startswith("rc=1 calls=0 "),
+          f"hot rules: a failure says so (the caller restarts Xray), nothing removed when adding failed {hot.get('addfail')} | {hot.get('rmfail')} | {hot.get('untagged')}")
 
     # logs.uc (the plugin's logs kept for global.log_days)
     check(txt("logs-a") == ['2025-11-20T08:00:00+0800 {"ok":true,"message":"geo already up to date"}', "\tcontinuation of the kept one",
