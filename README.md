@@ -258,6 +258,7 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-<版本>-r1.apk
 | dns | block_mode | 拦截方式：nxdomain（默认）/ zero（返回 0.0.0.0 和 ::） |
 | dns | min_ttl | 最小 TTL，0 = 不改动（默认） |
 | dns | query_log | 记录每次查询，在 DNS 页的“查询日志”标签里查看（默认 0） |
+| dns | query_log_size | 查询日志（mosdns-x 的日志文件，在内存里）最多占用的大小，1–64 MB，默认 4；超过时只保留较新的一半 |
 | dns | stats_port | mosdns-x 的本机 HTTP 接口端口（默认 5336，只监听 127.0.0.1）：解析和拦截计数从这里读，DNS 页“拦截与日志”标签显示最近 30 天的汇总和今天的数字 |
 | dns | filter_proxy_ipv6 | 代理域名不返回 AAAA（默认 1） |
 | dns | filter_direct_ipv6 | 直连域名不返回 AAAA（默认 0） |

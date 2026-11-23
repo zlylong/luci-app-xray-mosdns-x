@@ -67,6 +67,8 @@ reason() {
 }
 
 start_service() {
+	# why, when a trigger asked (service_triggers)
+	RELOAD_WHY=${1:+reload ($1)}
 	# One start at a time, and none while a stop runs: rc.common takes this
 	# lock (fd 1000) around stop but not around start, and a reload is a
 	# start here (LuCI's restart, Save & Apply, interface events and the
@@ -219,6 +221,7 @@ generate_and_switch() {
 			# all files or none: when they cannot all be put in place the
 			# old set is back whole, and the code below puts its rules back
 			# too. The new set stays in $NEW to look at.
+			changed=$(changes)
 			was=$(cat "$OUT/xray.restart" 2>/dev/null)
 			rm -f "$RULES_WAS"
 			cp -p "$OUT/xray-rules.json" "$RULES_WAS" 2>/dev/null
@@ -229,6 +232,7 @@ generate_and_switch() {
 			case $rc in
 				0)
 					rm -rf "$NEW"; rm -f "$ERR"
+					logger -t xray-mosdns "${RELOAD_WHY:-start}: ${changed:-nothing changed}"
 					# The new set reads the blocklists from where they are
 					# now kept; lists an older version kept elsewhere move
 					# there only at this point, never on a start that falls
@@ -248,6 +252,23 @@ generate_and_switch() {
 			bad="防火墙规则加载失败：$(reason "$NEW/.log")"
 		fi
 	fi
+}
+
+# What the new set ($NEW) changes against the one in place ($OUT), in a
+# few words for the log: which daemon restarts, what is replaced without.
+changes() {
+	c=""
+	differ() { ! cmp -s "$OUT/$1" "$NEW/$1"; }
+	if [ ! -f "$OUT/xray.restart" ] || differ xray.restart; then c="$c, Xray restarts"
+	elif differ xray-rules.json; then c="$c, Xray's rules replaced"; fi
+	differ mosdns.yaml && c="$c, mosdns-x restarts"
+	for f in "$NEW"/rule_*.domains; do
+		[ -f "$f" ] && differ "${f##*/}" && { c="$c, rule names reloaded"; break; }
+	done
+	differ dns-rules.sum && c="$c, learned addresses flushed"
+	differ nft.rules && c="$c, firewall rules replaced"
+	differ groups.json && c="$c, group watcher restarts"
+	echo "${c#, }"
 }
 
 # $1 = xray.restart of the set that was in place. When Xray's rules are all
@@ -370,18 +391,30 @@ stop_service() {
 	rm -f "$ERR"
 }
 
+# The triggers ask for a start (a reload is one here) with a word on why,
+# for the log. Not through reload_service: rc.common would take its lock
+# without waiting and drop a reload that arrives while another runs.
+# $1 = interface: when it changes
+reload_on_interface() {
+	procd_open_trigger
+	procd_add_interface_trigger "interface.*" "$1" /etc/init.d/xray-mosdns start "interface $1"
+	procd_close_trigger
+}
+
 service_triggers() {
-	procd_add_reload_trigger "xray-mosdns"
+	procd_open_trigger
+	procd_add_config_trigger "config.change" "xray-mosdns" /etc/init.d/xray-mosdns start "configuration saved"
+	procd_close_trigger
 	# the LAN device name is baked into the ruleset
 	ifaces=$(get_opt '@global[0].lan_ifaces'); [ -n "$ifaces" ] || ifaces=lan
 	for i in $ifaces; do
-		procd_add_reload_interface_trigger "$i"
+		reload_on_interface "$i"
 	done
 	# ECS from the router's public address: a new one (a PPPoE redial) needs
 	# a new config; the generator says which interfaces carry it
 	ecs_ifaces=$( [ -f "$OUT/runtime.env" ] && . "$OUT/runtime.env"; echo "${ECS_IFACES:-}" )
 	for i in $ecs_ifaces; do
 		case "$i" in *[!A-Za-z0-9_-]*) continue ;; esac
-		procd_add_reload_interface_trigger "$i"
+		reload_on_interface "$i"
 	done
 }

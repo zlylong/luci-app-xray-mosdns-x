@@ -24,6 +24,16 @@ const LOGS = [
 	[ '/tmp/xray-mosdns-adlist.log', 262144 ],
 ];
 
+// the size mosdns-x's log may have (the query log option)
+function mosdns_max() {
+	for (let l in split(fs.readfile(RUNTIME) ?? '', '\n')) {
+		const m = match(l, /^QUERY_LOG_MAX=([0-9]+)$/);
+		if (m && +m[1] >= 1048576)
+			return +m[1];
+	}
+	return 4194304;
+}
+
 function days() {
 	let d = getenv('LOGS_DAYS');
 	if (!d)
@@ -102,7 +112,8 @@ function keep(text, cutoff, max) {
 function cmd_prune() {
 	const now = getenv('LOGS_NOW') ? +getenv('LOGS_NOW') : time();
 	const cutoff = now - days() * DAY;
-	const files = getenv('LOGS_FILES') ? map(split(getenv('LOGS_FILES'), ' '), p => [ p, +(getenv('LOGS_MAX') ?? 262144) ]) : LOGS;
+	const files = getenv('LOGS_FILES') ? map(split(getenv('LOGS_FILES'), ' '), p => [ p, +(getenv('LOGS_MAX') ?? 262144) ])
+		: map(LOGS, f => (f[0] == '/tmp/mosdns-x.log') ? [ f[0], mosdns_max() ] : f);
 	let out = {};
 	for (let f in files) {
 		if (fs.lstat(f[0])?.type != 'file')

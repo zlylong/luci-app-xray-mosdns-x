@@ -129,8 +129,14 @@ return view.extend({
 		o.default = 'nxdomain';
 
 		o = s.taboption('logtab', form.Flag, 'query_log', _('记录查询'),
-			_('把每一次查询写进 /tmp/mosdns-x.log，在“查询日志”标签里查看。日志在内存里，超过 4 MB 时只保留最新的 4000 行，重启后清空。'));
+			_('把每一次查询写进 /tmp/mosdns-x.log，在“查询日志”标签里查看。日志在内存里，超过下面的大小时只保留较新的一半，重启后清空。'));
 		o.default = '0';
+
+		o = s.taboption('logtab', form.Value, 'query_log_size', _('查询日志大小（MB）'),
+			_('查询日志最多占用的内存，1–64 MB，默认 4。查询多的网络里 4 MB 只够存一两个小时；内存充裕时可以调大。'));
+		o.datatype = 'range(1,64)';
+		o.placeholder = '4';
+		o.depends('query_log', '1');
 
 		/* ------------------------------------------------------------ ad filtering */
 		adblock.tab(s, 'adblock', res[1]);

@@ -116,6 +116,8 @@ export function load(confdir) {
 			// lower bound for answer TTLs, 0 = leave them alone
 			min_ttl: +str(d.min_ttl, '0'),
 			query_log: bool(d.query_log),
+			// MB the mosdns-x log (the query log) may take in RAM
+			query_log_size: +str(d.query_log_size, '4'),
 			// EDNS client subnet on domestic queries; addresses given by hand,
 			// else the generator finds the router's public ones
 			ecs: bool(d.ecs),
@@ -146,6 +148,10 @@ export function load(confdir) {
 			fail(`invalid ${p[0]} '${p[1]}' (an absolute file path)`);
 	// values passed on to Xray and mosdns as they are: caught here, with the
 	// option's name, rather than by a daemon that then will not start
+	if (!(type(cfg.dns.query_log_size) == 'int' && cfg.dns.query_log_size >= 1 && cfg.dns.query_log_size <= 64)) {
+		note(`dns.query_log_size: ignoring '${d.query_log_size}' (1 to 64 MB), 4 then`);
+		cfg.dns.query_log_size = 4;
+	}
 	if (!(type(cfg.global.log_days) == 'int' && cfg.global.log_days >= 1 && cfg.global.log_days <= 365)) {
 		note(`global.log_days: ignoring '${g.log_days}' (1 to 365 days), 30 then`);
 		cfg.global.log_days = 30;

@@ -283,6 +283,7 @@ write('runtime.env', join('\n', [
 	`DNS_PORT=${cfg.dns.listen_port}`,
 	`STATS_PORT=${cfg.dns.stats_port}`,
 	`LOG_DAYS=${g.log_days}`,
+	`QUERY_LOG_MAX=${cfg.dns.query_log_size * 1048576}`,
 	`DNS_REDIRECT=${cfg.dns.redirect ? 1 : 0}`,
 	`DNS_WATCH=${(cfg.dns.redirect && cfg.dns.fallback) ? 'manage' : 'log-only'}`,
 	`FWMARK=${g.fwmark}`,

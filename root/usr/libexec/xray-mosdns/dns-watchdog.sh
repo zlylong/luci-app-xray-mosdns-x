@@ -26,8 +26,7 @@ MODE=${1:-manage}
 umask 077	# the log trim writes a copy of the query log
 OUT=/var/etc/xray-mosdns
 LOG=/tmp/mosdns-x.log
-LOG_MAX=4194304		# bytes; trimmed back to the newest LOG_KEEP lines
-LOG_KEEP=4000
+LOG_MAX=4194304		# bytes (runtime.env's QUERY_LOG_MAX); trimmed back to the newer half
 ON="$OUT/nft-dns-on.rules"
 OFF="$OUT/nft-dns-off.rules"
 STAMP=/var/run/xray-mosdns-dns.stamp
@@ -70,8 +69,10 @@ active() {
 # rotates it; /tmp is RAM
 trim_log() {
 	[ -f "$LOG" ] || return 0
-	[ "$(wc -c < "$LOG")" -gt "$LOG_MAX" ] || return 0
-	tail -n "$LOG_KEEP" "$LOG" > "$LOG.trim" 2>/dev/null && cat "$LOG.trim" > "$LOG"
+	max=${QUERY_LOG_MAX:-$LOG_MAX}
+	[ "$(wc -c < "$LOG")" -gt "$max" ] || return 0
+	# the newer half, from its first whole line; in place, mosdns keeps writing to the file
+	tail -c $((max / 2)) "$LOG" 2>/dev/null | sed 1d > "$LOG.trim" && cat "$LOG.trim" > "$LOG"
 	rm -f "$LOG.trim"
 }
 
