@@ -591,6 +591,13 @@ else:
     check(len(qe) == 3 and abs(qe[1]["ts"] - 1763730003.25) < 1e-6 and abs(qe[1]["ms"] - 0.5) < 1e-9
           and qe[2]["ts"] == 1763730001 and abs(qe[2]["ms"] - 2.1) < 1e-9,
           f"querylog: mosdns-x's ISO times (UTC or with an offset) and Go durations, as seconds and milliseconds: {qe}")
+    qt = res("querylog-top")
+    qc = qt.get("clients") or []
+    check(qt.get("ok") is True and qt.get("queries") == sum(c["queries"] for c in qc) and qc
+          and qc == sorted(qc, key=lambda c: -c["queries"]) and qc[0].get("client") == "192.168.1.2" and qc[0].get("host") == "tablet"
+          and all(c["nxdomain"] <= c["queries"] for c in qc) and isinstance(qt.get("from"), (int, float)) and qt["from"] <= qt["to"]
+          and (qt.get("names") or [{}])[0].get("queries", 0) >= 1 and all("." not in n["name"][-1:] for n in qt.get("names") or []),
+          f"querylog top: clients (with their DHCP names) and names by number of queries, with the 'no such name' share: {qt}")
     q = res("querylog-filter")
     check(q.get("total") == 1 and [e["name"] for e in q.get("entries") or []] == ["ads.example.net"], f"querylog: filter by client address: {q}")
     q = res("querylog-limit")

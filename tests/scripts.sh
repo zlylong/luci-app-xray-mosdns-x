@@ -176,6 +176,8 @@ EOF
 run querylog        env MOSDNS_LOG="$OUT/querylog.log" "$LX/querylog.uc" 200
 run querylog-filter env MOSDNS_LOG="$OUT/querylog.log" "$LX/querylog.uc" 200 192.168.1.3
 run querylog-limit  env MOSDNS_LOG="$OUT/querylog.log" "$LX/querylog.uc" 1
+printf '1 aa:bb:cc:dd:ee:01 192.168.1.2 tablet *\n2 aa:bb:cc:dd:ee:02 192.168.1.3 * *\n' > "$OUT/leases"
+run querylog-top    env MOSDNS_LOG="$OUT/querylog.log" DHCP_LEASES="$OUT/leases" "$LX/querylog.uc" top
 
 # stats.uc: counters as mosdns-x serves them (a file here), the time given;
 # RAM and flash files in the output directory

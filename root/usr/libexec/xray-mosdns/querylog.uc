@@ -2,6 +2,8 @@
 // luci-app-xray-mosdns-x - recent DNS queries, as JSON
 //
 //   querylog.uc [limit] [filter]
+//   querylog.uc top           who asked most, and for what, in what the
+//                             log holds (its newest TOP_SCAN lines)
 //
 // With dns.query_log on, mosdns writes one JSON line per query (the preset
 // _query_summary node, message "query summary"). It does not say how the
@@ -15,6 +17,9 @@ import { cursor } from 'uci';
 
 const LOG = getenv('MOSDNS_LOG') || '/tmp/mosdns-x.log';	// the environment only for the tests
 const SCAN = 6000;	// newest log lines looked at
+const TOP_SCAN = 60000;	// ... for the ranking
+const TOP = 10;
+const LEASES = getenv('DHCP_LEASES') || '/tmp/dhcp.leases';	// the environment only for the tests
 const SUMMARY = 'query summary';	// the message of the preset _query_summary
 const QTYPES = { '1': 'A', '2': 'NS', '5': 'CNAME', '6': 'SOA', '12': 'PTR', '15': 'MX', '16': 'TXT',
                  '28': 'AAAA', '33': 'SRV', '64': 'SVCB', '65': 'HTTPS', '255': 'ANY' };
@@ -69,6 +74,55 @@ if (cursor().get('xray-mosdns', 'dns', 'query_log') != '1') {
 
 if (!fs.access(LOG)) {
 	out({ ok: true, entries: [], total: 0, note: 'no log file' });
+	exit(0);
+}
+
+// The ranking: clients and names by number of queries, with how many of
+// them got "no such name" (a blocked name, or a client that keeps asking
+// for one that does not exist). The lines are not parsed as JSON: there
+// may be tens of thousands.
+if (ARGV[0] == 'top') {
+	let hosts = {};
+	for (let l in split(fs.readfile(LEASES) ?? '', '\n')) {
+		const f = split(l, ' ');
+		if (length(f) >= 4 && f[3] != '*')
+			hosts[f[2]] = f[3];
+	}
+	const tp = fs.popen(`tail -n ${TOP_SCAN} ${LOG}`, 'r');
+	let clients = {}, names = {}, n = 0, first = null, last = null;
+	if (tp) {
+		for (let line = tp.read('line'); length(line); line = tp.read('line')) {
+			if (index(line, `"msg":"${SUMMARY}"`) < 0)
+				continue;
+			const c = match(line, /"client":"([^"]*)"/), q = match(line, /"qname":"([^"]*)"/);
+			if (!c || !q)
+				continue;
+			const nx = index(line, '"resp_rcode":3,') >= 0 || index(line, '"resp_rcode":3}') >= 0;
+			const name = rtrim(q[1], '.');
+			clients[c[1]] ??= [ 0, 0 ];
+			clients[c[1]][0]++;
+			names[name] ??= [ 0, 0 ];
+			names[name][0]++;
+			if (nx) {
+				clients[c[1]][1]++;
+				names[name][1]++;
+			}
+			const t = match(line, /"time":"([^"]*)"/);
+			if (t) {
+				first ??= t[1];
+				last = t[1];
+			}
+			n++;
+		}
+		tp.close();
+	}
+	const rank = (m, key) => map(slice(sort(keys(m), (a, b) => m[b][0] - m[a][0]), 0, TOP),
+		k => ({ [key]: k, queries: m[k][0], nxdomain: m[k][1] }));
+	let cl = rank(clients, 'client');
+	for (let e in cl)
+		e.host = hosts[e.client] ?? null;
+	out({ ok: true, queries: n, from: first ? log_time({ time: first }) : null, to: last ? log_time({ time: last }) : null,
+		clients: cl, names: rank(names, 'name') });
 	exit(0);
 }
 

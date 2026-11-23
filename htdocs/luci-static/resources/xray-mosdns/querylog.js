@@ -66,6 +66,44 @@ return baseclass.extend({
 			});
 		}
 
+		/* who asked most and for what, in what the log holds: on demand,
+		 * it reads the whole log */
+		var topBox = E('div', {});
+		function pct(a, b) { return b ? '%d%%'.format(Math.round(a * 100 / b)) : '-'; }
+		function topTable(title, rows, key) {
+			return E('table', { 'class': 'table', 'style': 'margin-bottom:1em' }, [
+				E('tr', { 'class': 'tr table-titles' }, [
+					E('th', { 'class': 'th' }, title),
+					E('th', { 'class': 'th' }, _('查询')),
+					E('th', { 'class': 'th' }, _('其中“不存在”'))
+				])
+			].concat(rows.map(function(r) {
+				var label = (key === 'client' && r.host) ? '%s（%s）'.format(r.host, r.client) : r[key];
+				return E('tr', { 'class': 'tr' }, [
+					E('td', { 'class': 'td', 'style': 'word-break:break-all' }, E('a', {
+						'href': '#', 'title': _('在下面的记录里筛选'),
+						'click': function(ev) { ev.preventDefault(); filter.value = r[key]; refresh(); }
+					}, label)),
+					E('td', { 'class': 'td' }, String(r.queries)),
+					E('td', { 'class': 'td' }, '%d（%s）'.format(r.nxdomain, pct(r.nxdomain, r.queries)))
+				]);
+			})));
+		}
+		function showTop() {
+			return xm.exec('querylog.uc', [ 'top' ]).then(function(t) {
+				if (!t || t.ok === false || !t.queries) {
+					topBox.replaceChildren(E('em', {}, _('日志里还没有查询。')));
+					return;
+				}
+				topBox.replaceChildren(
+					E('div', { 'class': 'cbi-section-descr' },
+						_('日志里现有的 %d 条查询（%s 到 %s）。“不存在”多的域名通常是被拦截的，或者设备在反复查一个查不到的名字。点一项可以在下面筛选。')
+							.format(t.queries, fmtTime(t.from), fmtTime(t.to))),
+					topTable(_('客户端'), t.clients || [], 'client'),
+					topTable(_('域名'), t.names || [], 'name'));
+			});
+		}
+
 		filter.addEventListener('keydown', function(ev) {
 			if (ev.key === 'Enter') {
 				ev.preventDefault();
@@ -89,6 +127,10 @@ return baseclass.extend({
 					follow, E('label', { 'for': 'xm-ql-follow' }, ' ' + _('每 5 秒刷新'))
 				])
 			]),
+			enabled ? E('div', { 'style': 'margin:.8em 0' }, [
+				E('button', { 'class': 'cbi-button', 'click': ui.createHandlerFn(this, showTop) }, _('查询排行')),
+				topBox
+			]) : '',
 			summary,
 			E('table', { 'class': 'table' }, [
 				E('thead', {}, E('tr', { 'class': 'tr table-titles' }, [
