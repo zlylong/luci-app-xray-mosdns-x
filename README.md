@@ -1,7 +1,7 @@
 # luci-app-xray-mosdns-x
 
 LuCI 管理界面：用 **Xray**（TProxy 透明代理）+ **mosdns-x**（DNS 分流/缓存/去广告）
-替代 PassWall、ChinaDNS 和 dnsmasq 解析功能的插件。当前为 **v1.0.7**，默认 **不启用**：
+替代 PassWall、ChinaDNS 和 dnsmasq 解析功能的插件。当前为 **v1.0.8**，默认 **不启用**：
 安装后 `xray-mosdns.global.enabled` 仍为 `0`，不会改动现有代理/DNS 链路。
 
 ## 架构
