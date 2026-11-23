@@ -304,6 +304,9 @@ check(all(u.get("so_mark") == 255 for u in fl) and plugin(m, "forward_lan")["arg
 # blocklist subscriptions
 prov = {p["tag"]: p for p in m["data_providers"]}
 check(prov.get("adblock") == {"tag": "adblock", "file": "/tmp/xm-adlists/xray-mosdns/block.txt", "auto_reload": True} and prov.get("adallow", {}).get("file") == "/tmp/xm-adlists/xray-mosdns/allow.txt", "adlist: merged files are data providers with auto reload, in our own subdirectory of a directory set in the options")
+check(prov.get("adwild") == {"tag": "adwild", "file": "/tmp/xm-adlists/xray-mosdns/wild.txt", "auto_reload": True}
+      and prov.get("adkeys") == {"tag": "adkeys", "file": "/tmp/xm-adlists/xray-mosdns/keys.txt", "auto_reload": True},
+      "adlist: the lists' patterns and their keywords are providers too")
 gmain = plugin(m, "main_sequence")["args"]["exec"]
 adrow = [e for e in gmain if isinstance(e, dict) and "query_is_ad_exception" in e.get("if", "")]
 check(len(adrow) == 1 and adrow[0]["exec"] == ["metrics_block", "block_zero", "_return"] and adrow[0]["if"].endswith("&& (! query_is_ad_exception)"), "adlist: blocked (0.0.0.0 mode) unless one of the lists' own exceptions matches")
@@ -331,8 +334,11 @@ check(m["log"]["production"] is True and gmain[0].get("if") == "query_is_probe" 
 # mosdns-x v26.05.25 panics while loading any plugin of type query_summary
 check(not [p for p in m["plugins"] if p["type"] == "query_summary"] and not any(f'"log_{k}"' in json.dumps(m) for k in ("lan", "block", "direct", "proxy", "fallback")), "query log: no query_summary plugins (they crash mosdns-x), no references to them")
 check({"type": "field", "inboundTag": ["socks-in"], "balancerTag": "hk.group"} in x["routing"]["rules"], "internal SOCKS inbound follows the main target (a group here)")
-adtag = adrow[0]["if"].split(" ")[0] if adrow else "?"
+adtag = adrow[0]["if"].split(" ")[0].lstrip("(") if adrow else "?"
 check(plugin(m, adtag)["args"]["domain"] == ["provider:adblock"] and plugin(m, "query_is_ad_exception")["args"]["domain"] == ["provider:adallow"], "adlist: matchers")
+check(adrow[0]["if"] == f"({adtag} || (query_has_ad_keyword && query_is_ad_pattern)) && (! query_is_ad_exception)"
+      and plugin(m, "query_has_ad_keyword")["args"]["domain"] == ["provider:adkeys"] and plugin(m, "query_is_ad_pattern")["args"]["domain"] == ["provider:adwild"],
+      f"adlist: a name is also blocked by a pattern, which is only tried for a name that has a pattern's keyword in it {adrow[0]['if']}")
 check("adlist:" not in json.dumps(x), "adlist: the pseudo value never reaches Xray")
 
 # per-device routing
@@ -413,10 +419,24 @@ check(block == ["domain:ads.example.com", "domain:tracker.example.net", "full:ex
                 "domain:pipe.example.com", "domain:gone-sub.gone.example.com", "full:bare.example.org"],
       f"adlist: block rules, $dnsrewrite blocks (an error, a null address, AdGuard's block host) among them, a rule ending in ^|; "
       f"what a $badfilter line withdraws is not there (before or after it, with $important too), a name under it stays {block}")
-check(allow == ["domain:good.example.com", "domain:good2.example.com", "domain:good3.example.com"],
-      f"adlist: exceptions, one ending in ^|, not the one a $badfilter line withdraws {allow}")
-check(json.load(open(f"{out}/adlist/stats.json")) == {"rules": 17, "allow": 3, "skipped": 9},
-      "adlist: counts (wildcard, regex, other modifiers, a $dnsrewrite that answers with a record or a name, localhost and junk are skipped)")
+check(allow == ["domain:good.example.com", "domain:good2.example.com", "domain:good3.example.com", "regexp:(^|\\.)ok.*\\.pattern\\.example$"],
+      f"adlist: exceptions, one ending in ^|, not the one a $badfilter line withdraws; one that is a pattern, as a regular expression {allow}")
+wild = open(f"{out}/adlist/wild.txt").read().split()
+akeys = open(f"{out}/adlist/keys.txt").read().split()
+check(wild == ["regexp:(^|\\.)wild-.*\\.example\\.com$", "regexp:(^|\\.)ad.*\\.pattern\\.example$", "regexp:(^|\\.)anytld\\..*$",
+               "regexp:\\.sub-only\\.example\\.org$", "regexp:(^|\\.)open-end\\.", "regexp:(^|\\.)trail\\.example\\.",
+               "regexp:^start.*\\.example\\.org$", "regexp:(^|\\.)two.*stars.*\\.example\\.net$"],
+      f"adlist: patterns as regular expressions: * anywhere, any ending, a leading dot (names under it only), an open end "
+      f"(a trailing * says nothing there), | for the very start, ** as *; not the one a $badfilter line withdraws {wild}")
+check(akeys == ["keyword:.example.com", "keyword:.pattern.example", "keyword:anytld.", "keyword:.sub-only.example.org", "keyword:open-end.",
+                "keyword:trail.example.", "keyword:start", "keyword:stars"],
+      f"adlist: for each pattern a piece of text a matching name must contain: one before the zone when it says enough "
+      f"(five letters or digits), else the longest {akeys}")
+check(all(re.fullmatch(r"regexp:(\(\^\|\\\.\)|\^)?([a-z0-9_-]|\\\.|\.\*)+\$?", w) for w in wild + allow[3:]),
+      "adlist: the expressions are made of names' characters, an escaped dot, .* and the anchors only (one mosdns cannot compile stops it)")
+check(json.load(open(f"{out}/adlist/stats.json")) == {"rules": 25, "allow": 4, "skipped": 12},
+      "adlist: counts, patterns among the rules (regex, other modifiers, a $dnsrewrite that answers with a record or a name, localhost, junk, "
+      "a pattern of an ending alone or of one letter, one with a character no name has, and a bare word are skipped)")
 
 # ------------------------------------------------------------------ blocklists that change places (tests/runtime.sh)
 swp = f"{out}/runtime/adlist-swap.txt"
@@ -801,13 +821,16 @@ else:
     check(adj("update1").get("ok") is True and adj("update1").get("total") == 2, f"adlist update: {ad.get('update1')}")
     check(ad.get("top1") == "allow.txt block.txt gone1.allow gone1.block l1.allow l1.block mine.allow mine.block state.json xray-mosdns ",
           f"adlist update: writes into xray-mosdns/ and moves nothing at the top, where a configuration still running reads its lists {ad.get('top1')}")
-    check(ad.get("sub1") == "allow.txt block.txt l1.allow l1.block state.json ", f"adlist update: the subdirectory {ad.get('sub1')}")
+    check(ad.get("sub1") == "allow.txt block.txt keys.txt l1.allow l1.block l1.keys l1.wild state.json wild.txt ", f"adlist update: the subdirectory {ad.get('sub1')}")
     check(adj("migrate1").get("ok") is True and ad.get("top1m") == "mine.allow mine.block xray-mosdns "
-          and ad.get("sub1m") == "allow.txt block.txt gone1.allow gone1.block l1.allow l1.block state.json "
+          and ad.get("sub1m") == "allow.txt block.txt gone1.allow gone1.block keys.txt l1.allow l1.block l1.keys l1.wild state.json wild.txt "
           and adj("migrate1b").get("ok") is True,
           f"adlist migrate: what 0.9.7 kept at the top goes (moved, or dropped where the subdirectory has newer), "
           f"another program's files stay, a second run does nothing {ad.get('top1m')} | {ad.get('sub1m')}")
-    check(ad.get("sub2u") == "allow.txt block.txt l1.allow l1.block state.json ",
+    check(ad.get("oldfmt-ensure") == "" and ad.get("oldfmt") == "allow.txt block.txt keys.txt l1.allow l1.block state.json wild.txt | 0 0 yes 1",
+          f"adlist ensure: data from before patterns were kept: the two merged files mosdns now reads are made, empty; nothing fetched, "
+          f"the lists in use as they were {ad.get('oldfmt-ensure')} | {ad.get('oldfmt')}")
+    check(ad.get("sub2u") == "allow.txt block.txt keys.txt l1.allow l1.block l1.keys l1.wild state.json wild.txt ",
           f"adlist update: a list no longer subscribed goes from the subdirectory {ad.get('sub2u')}")
     check(adj("update2").get("ok") is True and ad.get("theirs2") == 'yes theirs-allow {"theirs":1}' and ad.get("new2") == "1",
           f"adlist: another program's block.txt / allow.txt / state.json at the top are neither moved nor written {ad}")
@@ -878,7 +901,7 @@ else:
           f"adlist migrate: while an update holds the lock nothing moves, it is left to the next start {lk} | {ad.get('locked-top')}")
     check("an update is already running" in ad.get("locked-update", "") and ad.get("locked-status") == '"running": true',
           f"adlist: a second update refuses, and the status says one runs {ad.get('locked-update')} {ad.get('locked-status')}")
-    check(ad.get("locked-ensure") == "" and ad.get("locked-standins") == "allow.txt block.txt  block 0 allow kept",
+    check(ad.get("locked-ensure") == "" and ad.get("locked-standins") == "allow.txt block.txt keys.txt wild.txt  block 0 allow kept",
           f"adlist ensure: with an update running, an empty stand-in for the missing list only {ad.get('locked-standins')}")
     lc = adj("locked-catalog")
     check(lc.get("ok") is False and lc.get("busy") is True and ad.get("locked-catalog-state") == "yes",

@@ -268,11 +268,17 @@ export function build(cfg, plan) {
 			push(refs, `provider:${tag}`);
 		}
 		qmatch(tag, { domain: refs });
-		// exceptions (@@ rules) shipped inside the subscribed lists
-		const cond = ('provider:adblock' in entries) ? `${tag} && (! query_is_ad_exception)` : tag;
+		// The subscribed lists: besides their names (in the rule's own
+		// matcher) the patterns, regular expressions that mosdns tries one
+		// at a time: only for a name that contains a keyword of one (see
+		// adlist.uc). And the exceptions (@@ rules) shipped inside the lists.
+		const cond = ('provider:adblock' in entries)
+			? `(${tag} || (query_has_ad_keyword && query_is_ad_pattern)) && (! query_is_ad_exception)` : tag;
 		if (cond != tag && !ad_exception) {
 			ad_exception = true;
 			qmatch('query_is_ad_exception', { domain: [ 'provider:adallow' ] });
+			qmatch('query_has_ad_keyword', { domain: [ 'provider:adkeys' ] });
+			qmatch('query_is_ad_pattern', { domain: [ 'provider:adwild' ] });
 		}
 		switch (r.class) {
 		case 'block':
@@ -336,6 +342,8 @@ export function build(cfg, plan) {
 			...(ad_exception ? [
 				{ tag: 'adblock', file: `${cfg.adblock.dir}/block.txt`, auto_reload: true },
 				{ tag: 'adallow', file: `${cfg.adblock.dir}/allow.txt`, auto_reload: true },
+				{ tag: 'adwild', file: `${cfg.adblock.dir}/wild.txt`, auto_reload: true },
+				{ tag: 'adkeys', file: `${cfg.adblock.dir}/keys.txt`, auto_reload: true },
 			] : []),
 			...rule_providers,
 		],

@@ -16,6 +16,6 @@ done
 # blocklist conversion: one sample covering every kind of line
 mkdir -p "$OUT/adlist"
 ucode -L "$REPO/root/usr/share/ucode" "$REPO/root/usr/libexec/xray-mosdns/adlist.uc" convert \
-	"$REPO/tests/adlist/sample.txt" "$OUT/adlist/block.txt" "$OUT/adlist/allow.txt" > "$OUT/adlist/stats.json" \
+	"$REPO/tests/adlist/sample.txt" "$OUT/adlist/block.txt" "$OUT/adlist/allow.txt" "$OUT/adlist/wild.txt" "$OUT/adlist/keys.txt" > "$OUT/adlist/stats.json" \
 	&& echo "gen adlist: ok" || { echo "gen adlist: FAILED"; rc=1; }
 exit $rc

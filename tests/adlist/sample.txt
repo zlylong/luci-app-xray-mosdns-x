@@ -36,3 +36,17 @@ not a domain
 ||gone-imp.example.com^$important
 ||gone-imp.example.com^$badfilter
 |bare.example.org
+||ad*.pattern.example^
+||anytld.*^
+.sub-only.example.org^
+||open-end.
+||Trail.Example.*
+|start*.example.org^|
+||two**stars*.example.net^
+@@||ok*.pattern.example^|
+||*.com^
+||x*.com^
+||gone*.pat.example^
+||gone*.pat.example^$badfilter
+||slash/*.example.com^
+bareword

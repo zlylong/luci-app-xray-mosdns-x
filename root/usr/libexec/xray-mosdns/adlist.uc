@@ -23,9 +23,21 @@
 //                       withdraw a source's rule that way)
 //   ||example.org^$dnsrewrite=NXDOMAIN (or REFUSED, 0.0.0.0, ::, AdGuard's
 //                       blocking host) -> blocked like the first form
-// Rules with wildcards, regular expressions or other modifiers (a
-// $dnsrewrite that answers with a record is a rewrite, not a block) are
-// counted as skipped.
+//   ||ad*.example.org^, ||example.*^, .example.org^, ||example.
+//                       -> a pattern ("*" anything; the name may go on where
+//                       no "^" or "|" ends it): a regular expression, kept
+//                       apart (see below)
+// Regular expressions (/.../), patterns with anything but names in them
+// and rules with other modifiers (a $dnsrewrite that answers with a record
+// is a rewrite, not a block) are counted as skipped.
+//
+// A list's patterns go into two more files, <id>.wild (regexp: lines) and
+// <id>.keys (keyword: lines, for each pattern a piece of text every name it
+// matches contains), merged into wild.txt and keys.txt. mosdns tries a
+// regular expression at a time, about 2 µs each for every query; the
+// keywords cost a hundredth of that, and only a name that contains one is
+// held against the expressions. Exceptions that are patterns sit in the
+// allow file as they are: those are only looked at for a blocked name.
 //
 // A list's data files and state go by its UCI section's name. For an
 // anonymous section ("cfg140306") that name is only its place in the file:
@@ -59,6 +71,11 @@ const SELF = '/usr/libexec/xray-mosdns/adlist.uc';
 // ADLIST_CRON: another crontab, for the tests (cron is left alone then)
 const CRON = getenv('ADLIST_CRON') || '/etc/crontabs/root';
 const CRON_TAG = '# xray-mosdns-adlist';
+
+// a list's data files, and the two it cannot do without (lists converted
+// before patterns were kept have no others)
+const KINDS = [ 'block', 'allow', 'wild', 'keys' ];
+const MAIN = [ 'block', 'allow' ];
 
 const uci = cursor();
 
@@ -261,6 +278,67 @@ const BLOCKING_REWRITES = [ 'nxdomain', 'nxdomain;;', 'refused', 'refused;;', 'n
 	'0.0.0.0', '::', '127.0.0.1', '::1',
 	'ad-block.dns.adguard.com', 'family-block.dns.adguard.com', 'standard-block.dns.adguard.com' ];
 
+// A rule that is a pattern and not a name, as [ [ kind, "regexp:...",
+// "keyword:..." ] ], or null. "||" stands for the start of the name or of a
+// label, "|" for the very start, "^" and "|" at the end for the end; "*" is
+// anything. Without a start (or an end) the name may begin (or go on)
+// anywhere. Only names' characters besides: the expression is made of
+// those, "\.", ".*" and the anchors, so mosdns can always compile it (one
+// it cannot stops it from starting). The keyword is a piece between the
+// "*" (which one: below); an ending like ".com" only when it is all there
+// is to the pattern. A pattern that names less than two letters or digits
+// is not used.
+const RE_BODY = /^[a-z0-9_.*-]+$/;
+function pattern(kind, line) {
+	let s = lc(line), start = '', end = '';
+	if (substr(s, 0, 2) == '||') {
+		start = '(^|\\.)';
+		s = substr(s, 2);
+	}
+	else if (substr(s, 0, 1) == '|') {
+		start = '^';
+		s = substr(s, 1);
+	}
+	const e = match(s, RE_END);
+	if (e) {
+		end = '$';
+		s = substr(s, 0, length(s) - length(e[1]));
+	}
+	// a bare word is not written as a pattern
+	if (!start && !end && index(s, '*') < 0)
+		return null;
+	if (!match(s, RE_BODY))
+		return null;
+	s = replace(s, /\*+/g, '*');
+	// where the name may go on anyway, "anything" says nothing
+	if (!end && substr(s, -1) == '*')
+		s = substr(s, 0, length(s) - 1);
+	if (!start && substr(s, 0, 1) == '*')
+		s = substr(s, 1);
+	const chunks = split(s, '*');
+	// The keyword: a piece before the last one when it names five letters
+	// or digits (the last piece of a pattern with an end is the zone, and
+	// "amazonaws.com" is in a great many names, while "reachableads-av."
+	// is in next to none); else the longest piece.
+	const alnum = c => length(replace(c, /[^a-z0-9]/g, ''));
+	let key = '', lead = '';
+	for (let i = 0; i < length(chunks); i++) {
+		const c = chunks[i], last = (end && length(chunks) > 1 && i == length(chunks) - 1);
+		if (last && match(c, /^\.[a-z0-9-]+$/))
+			continue;
+		if (length(c) > length(key))
+			key = c;
+		if (!last && alnum(c) >= 5 && length(c) > length(lead))
+			lead = c;
+	}
+	if (length(lead))
+		key = lead;
+	if (alnum(key) < 2)
+		return null;
+	const re = start + join('.*', map(chunks, c => replace(c, /\./g, '\\.'))) + end;
+	return [ [ kind, `regexp:${re}`, `keyword:${key}` ] ];
+}
+
 // returns [ [ kind, rule ], ... ] with kind "block" | "allow", or "-block" |
 // "-allow" for a $badfilter line (that rule is taken out of the list);
 // false for a line that is no rule, null when the line is not usable
@@ -317,19 +395,20 @@ function convert(line) {
 	if (substr(line, 0, 2) == '||') {
 		let name = lc(substr(line, 2));
 		name = replace(name, RE_END, '');
-		return match(name, RE_NAME) ? [ [ kind, `domain:${name}` ] ] : null;
+		return match(name, RE_NAME) ? [ [ kind, `domain:${name}` ] ] : pattern(kind, line);
 	}
 	if (substr(line, 0, 1) == '|') {
 		let name = lc(replace(substr(line, 1), RE_END, ''));
-		return match(name, RE_NAME) ? [ [ kind, `full:${name}` ] ] : null;
+		return match(name, RE_NAME) ? [ [ kind, `full:${name}` ] ] : pattern(kind, line);
 	}
 
 	// a plain name, possibly followed by a comment
 	const name = lc(trim(replace(line, /[ \t]#.*$/, '')));
-	return match(name, RE_NAME) ? [ [ kind, `full:${name}` ] ] : null;
+	return match(name, RE_NAME) ? [ [ kind, `full:${name}` ] ] : pattern(kind, line);
 }
 
-function convert_file(src, block_path, allow_path) {
+// wild_path, keys_path: where the block rules that are patterns go (see the top)
+function convert_file(src, block_path, allow_path, wild_path, keys_path) {
 	// The rules this list withdraws ($badfilter), looked for first: such a
 	// line may stand before its rule or after it. By what the rule converts
 	// to, so the same rule written with $important goes as well.
@@ -349,7 +428,9 @@ function convert_file(src, block_path, allow_path) {
 	fin = fs.open(src, 'r');
 	const fb = fs.open(block_path, 'w');
 	const fa = fs.open(allow_path, 'w');
-	if (!fin || !fb || !fa)
+	const fw = fs.open(wild_path, 'w');
+	const fk = fs.open(keys_path, 'w');
+	if (!fin || !fb || !fa || !fw || !fk)
 		return null;
 	let st = { rules: 0, allow: 0, skipped: 0 };
 	while ((line = fin.read('line')) != null && length(line)) {
@@ -363,7 +444,12 @@ function convert_file(src, block_path, allow_path) {
 		for (let r in res) {
 			if (substr(r[0], 0, 1) == '-' || gone[`${r[0]} ${r[1]}`])
 				continue;
-			if (r[0] == 'block') {
+			if (r[0] == 'block' && r[2]) {
+				fw.write(r[1] + '\n');
+				fk.write(r[2] + '\n');
+				st.rules++;
+			}
+			else if (r[0] == 'block') {
 				fb.write(r[1] + '\n');
 				st.rules++;
 			}
@@ -376,6 +462,8 @@ function convert_file(src, block_path, allow_path) {
 	fin.close();
 	fb.close();
 	fa.close();
+	fw.close();
+	fk.close();
 	return st;
 }
 
@@ -405,12 +493,12 @@ function rekey(cfg, all, state) {
 	const sl = state?.lists;
 	if (type(sl) != 'object')
 		return state;
-	const kinds = [ 'block', 'allow' ];
+	const kinds = KINDS;
 	const cur = (id, k) => `${cfg.dir}/${id}.${k}`;
 	const tmp = (id, k) => `${cfg.dir}/.${id}.${k}.rekey`;
 	// left by a run that was cut short: no telling whose it is any more
 	for (let f in (fs.lsdir(cfg.dir) ?? []))
-		if (match(f, /^\.[A-Za-z0-9_]+\.(block|allow)\.rekey$/))
+		if (match(f, /^\.[A-Za-z0-9_]+\.(block|allow|wild|keys)\.rekey$/))
 			fs.unlink(`${cfg.dir}/${f}`);
 
 	let url_of = {};
@@ -440,11 +528,15 @@ function rekey(cfg, all, state) {
 	// out, all of them; any that cannot be goes back, nothing changes
 	let out_ok = true;
 	for (let m in moves)
-		for (let k in kinds)
+		for (let k in kinds) {
+			// a list converted before patterns were kept has only the two
+			if (!(k in MAIN) && fs.lstat(cur(m.from, k)) == null)
+				continue;
 			if (out_ok && fs.rename(cur(m.from, k), tmp(m.to, k)))
 				m[k] = true;
 			else
 				out_ok = false;
+		}
 	if (!out_ok) {
 		for (let m in moves)
 			for (let k in kinds)
@@ -459,11 +551,17 @@ function rekey(cfg, all, state) {
 			lists_state[id] = e;
 	for (let m in moves) {
 		let ok = true;
-		for (let k in kinds)
+		for (let k in kinds) {
+			if (!m[k]) {
+				// nothing of this kind came along: not the other list's either
+				fs.unlink(cur(m.to, k));
+				continue;
+			}
 			if (!fs.rename(tmp(m.to, k), cur(m.to, k))) {
 				ok = false;
 				fs.unlink(tmp(m.to, k));
 			}
+		}
 		if (ok) {
 			m.entry.name = m.name;
 			lists_state[m.to] = m.entry;
@@ -483,18 +581,18 @@ function rekey(cfg, all, state) {
 // Only with the lock held, or an update in the middle of replacing would
 // have its files moved under it.
 function recover_aside(cfg, l) {
-	for (let k in [ 'block', 'allow' ]) {
+	for (let k in KINDS) {
 		const cur = `${cfg.dir}/${l.id}.${k}`, old = `${cfg.dir}/.${l.id}.${k}.old`;
 		if (fs.lstat(old)?.type == 'file' && fs.lstat(cur) == null && fs.rename(old, cur))
 			system([ 'logger', '-t', 'xray-mosdns', `blocklists: ${cur} put back from ${old} (an update was cut short)` ]);
 	}
 }
 
-// A list's two new files (written beside them) in place of its old ones:
-// both or neither. The old ones go aside first and come back when a new one
+// A list's new files (written beside them) in place of its old ones:
+// all or none. The old ones go aside first and come back when a new one
 // cannot be put in place. Returns null, or why not.
 function replace_data(cfg, l) {
-	const kinds = [ 'block', 'allow' ];
+	const kinds = KINDS;
 	const cur = (k) => `${cfg.dir}/${l.id}.${k}`;
 	const tmp = (k) => `${cfg.dir}/.${l.id}.${k}.tmp`;
 	const old = (k) => `${cfg.dir}/.${l.id}.${k}.old`;
@@ -690,9 +788,9 @@ function copy_file(from, to) {
 		&& fs.lstat(to).size == fs.lstat(from)?.size;
 }
 
-// block.txt / allow.txt are what mosdns loads. Both are written in full
-// first, beside them: when either cannot be (a full flash cuts it short),
-// both stay as they were and the reason is returned. Then each is
+// block.txt / allow.txt / wild.txt / keys.txt are what mosdns loads. All
+// are written in full first, beside them: when one cannot be (a full flash
+// cuts it short), all stay as they were and the reason is returned. Then each is
 // rewritten in place, never replaced by another file: mosdns-x watches the
 // file it opened, and one renamed over it is reloaded once, after which no
 // later update is noticed until mosdns restarts. Its reload waits for a
@@ -704,7 +802,7 @@ function copy_file(from, to) {
 // leaves them mixed until the next one, which beats never updating.
 // `all` is the lists whose data may be used (has_data).
 function merge(cfg, all) {
-	const kinds = [ 'block', 'allow' ];
+	const kinds = KINDS;
 	const tmp = (kind) => `${cfg.dir}/.${kind}.tmp`;
 	let err = null;
 	for (let kind in kinds) {
@@ -807,7 +905,7 @@ function cmd_update() {
 		if (!download(l.url, raw))
 			err = 'download failed';
 		else {
-			const st = convert_file(raw, `${cfg.dir}/.${l.id}.block.tmp`, `${cfg.dir}/.${l.id}.allow.tmp`);
+			const st = convert_file(raw, ...map(KINDS, k => `${cfg.dir}/.${l.id}.${k}.tmp`));
 			if (!st || (st.rules + st.allow) == 0) {
 				// an empty result is almost certainly an error page
 				err = 'no usable rules in the downloaded file';
@@ -829,8 +927,8 @@ function cmd_update() {
 				kept[l.id] = prev.rules ?? 0;
 		}
 		fs.unlink(raw);
-		fs.unlink(`${cfg.dir}/.${l.id}.block.tmp`);
-		fs.unlink(`${cfg.dir}/.${l.id}.allow.tmp`);
+		for (let k in KINDS)
+			fs.unlink(`${cfg.dir}/.${l.id}.${k}.tmp`);
 		entry.catalog = synced.flags[l.id] ?? null;
 		lists_state[l.id] = entry;
 	}
@@ -839,7 +937,7 @@ function cmd_update() {
 	// alone (a shared one has its own subdirectory for us)
 	const keep = map(all, l => l.id);
 	for (let f in (fs.lsdir(cfg.dir) ?? [])) {
-		const m = match(f, /^([A-Za-z0-9_]+)\.(block|allow)$/);
+		const m = match(f, /^([A-Za-z0-9_]+)\.(block|allow|wild|keys)$/);
 		if (m && !(m[1] in keep))
 			fs.unlink(`${cfg.dir}/${f}`);
 	}
@@ -955,7 +1053,7 @@ function cmd_ensure() {
 	// what there is.
 	// a list's data is both its files (an update always writes the two), from its address
 	const complete = (length(usable) == length(all));
-	const stale = filter([ 'block', 'allow' ], k => fs.lstat(live(k))?.type != 'file'
+	const stale = filter(KINDS, k => fs.lstat(live(k))?.type != 'file'
 		|| (complete && fs.lstat(live(k)).size != size(k)));
 	if (length(stale)) {
 		system([ 'mkdir', '-p', cfg.dir ]);
@@ -1034,8 +1132,8 @@ case 'catalog':        cmd_catalog(); break;
 case 'catalog-sync':   exit(cmd_catalog_sync()); break;
 case 'cron-sync':      exit(cmd_cron_sync()); break;
 case 'convert':
-	// adlist.uc convert <in> <block-out> <allow-out>: used by the tests
-	out(convert_file(ARGV[1], ARGV[2], ARGV[3]));
+	// adlist.uc convert <in> <block-out> <allow-out> <wild-out> <keys-out>: used by the tests
+	out(convert_file(ARGV[1], ARGV[2], ARGV[3], ARGV[4], ARGV[5]));
 	break;
 default:
 	warn('usage: adlist.uc update | start | ensure | status | catalog | catalog-sync | cron-sync\n');

@@ -390,6 +390,12 @@ same() { cmp -s "$1" "$2" && echo yes || echo no; }
 	echo "new2 $(grep -c new1.test "$ADS/block.txt")"
 	echo "sub2u $(ls -A "$ADS" | tr '\n' ' ')"
 	cp "$ADS/block.txt" "$OUT/block.before"
+	# as a version before patterns were kept left it: no wild / keys files.
+	# mosdns is told to read the two merged ones: the start makes them
+	# (empty: the list is not fetched again for it)
+	rm -f "$ADS/wild.txt" "$ADS/keys.txt" "$ADS/l1.wild" "$ADS/l1.keys"
+	echo "oldfmt-ensure $(adl ensure)"
+	echo "oldfmt $(ls -A "$ADS" | tr '\n' ' ')| $(wc -c < "$ADS/wild.txt") $(wc -c < "$ADS/keys.txt") $(same "$OUT/block.before" "$ADS/block.txt") $(grep -c . "$ADS/allow.txt")"
 	# the merged block list cannot be written: both lists in use stay
 	mkdir "$ADS/.block.tmp"; list1 new2.test
 	echo "update3 $(adl update)"
