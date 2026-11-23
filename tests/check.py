@@ -85,6 +85,7 @@ x, m, n = load("chnroute")
 check_mosdns_refs("chnroute", m)
 rules = x["routing"]["rules"]
 check(rules[-1] == {"type": "field", "network": "tcp,udp", "outboundTag": "hk1.node"}, "chnroute: default must be the main node")
+check(x["log"] == {"loglevel": "warning", "access": "none"}, f"defaults: Xray warnings only, no access log flooding the system log {x['log']}")
 check({"type": "field", "ip": ["geoip:cn"], "outboundTag": "direct"} in rules, "chnroute: geoip:cn direct rule missing")
 check(x["outbounds"][0]["settings"]["vnext"][0]["address"] == "hk1.example.net", "node hostname must be passed to Xray unresolved")
 check(x["outbounds"][1]["settings"]["servers"][0]["password"] == 'p@ss"word', "password with a quote must survive")
@@ -311,6 +312,7 @@ check(len(gj) == 1 and gj[0]["name"] == "hk" and gj[0]["remarks"] == "香港" an
 x, m, n = load("nosniff")
 pre = chain(n, "prerouting")
 check("sniffing" not in x["inbounds"][0], "nosniff: Xray does not sniff")
+check(x["log"] == {"loglevel": "info"}, f"log_level info: with Xray's access log {x['log']}")
 check(not any("@direct4_dns ip daddr @proxy4_dns" in r for r in pre) and pre.index("ip daddr @direct4_dns return") < pre.index("ip daddr @proxy4_dns goto do_tproxy"),
       "nosniff: Xray could not decide by name, so the direct set keeps precedence")
 # ECS with addresses given by hand (this fixture): one of each family, the rest dropped
