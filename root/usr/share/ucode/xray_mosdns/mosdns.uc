@@ -9,8 +9,12 @@
 //  - `_return` ends the whole query.
 'use strict';
 
-import { note } from 'xray_mosdns.util';
+import { note, hash } from 'xray_mosdns.util';
 import { TABLE } from 'xray_mosdns.nft';
+
+// Where mosdns-x reads the rules' own domain files (rule-files.sh puts them
+// there, in place): next to the directory of the generated set, not in it.
+export const RULES_LIVE = '/var/etc/xray-mosdns.rules';
 
 // Xray domain syntax -> mosdns domain syntax
 function domain_entries(rule, cfg) {
@@ -39,6 +43,8 @@ export function build(cfg, plan) {
 
 	let plugins = [];
 	let main = [];
+	// rule_<n>.domains -> its lines; their data providers
+	let rule_files = {}, rule_providers = [];
 
 	function plugin(tag, type, args) {
 		push(plugins, { tag, type, args });
@@ -250,7 +256,18 @@ export function build(cfg, plan) {
 		if (!length(entries))
 			continue;
 		const tag = `rule_${i++}`;
-		qmatch(tag, { domain: entries });
+		// The names written out in the rule go into a file of their own,
+		// which mosdns-x reloads when it changes: editing them does not
+		// restart mosdns. References to other files (geosite, the
+		// blocklists) stay in the matcher.
+		let refs = filter(entries, e => index(e, 'provider:') == 0);
+		const names = filter(entries, e => index(e, 'provider:') != 0);
+		if (length(names)) {
+			rule_files[`${tag}.domains`] = join('\n', names) + '\n';
+			push(rule_providers, { tag, file: `${RULES_LIVE}/${tag}.domains`, auto_reload: true });
+			push(refs, `provider:${tag}`);
+		}
+		qmatch(tag, { domain: refs });
 		// exceptions (@@ rules) shipped inside the subscribed lists
 		const cond = ('provider:adblock' in entries) ? `${tag} && (! query_is_ad_exception)` : tag;
 		if (cond != tag && !ad_exception) {
@@ -302,7 +319,13 @@ export function build(cfg, plan) {
 		push(listeners, { protocol: 'tcp', addr });
 	}
 
-	return {
+	// What decides which names are direct, proxied or blocked: the matchers,
+	// the order they are asked in, the rules' own names. The addresses
+	// learned from DNS (the *_dns sets) are flushed when this changes, and
+	// only then: another upstream or ECS address leaves them valid.
+	const sig = hash(sprintf('%J', { main, matchers: filter(plugins, p => p.type == 'query_matcher'), rule_files }));
+
+	return { files: rule_files, sig, conf: {
 		// production = one JSON object per line, which is what the query log reader parses
 		log: { level: 'info', file: '/tmp/mosdns-x.log', production: d.query_log },
 		api: { http: `127.0.0.1:${d.stats_port}` },
@@ -314,8 +337,9 @@ export function build(cfg, plan) {
 				{ tag: 'adblock', file: `${cfg.adblock.dir}/block.txt`, auto_reload: true },
 				{ tag: 'adallow', file: `${cfg.adblock.dir}/allow.txt`, auto_reload: true },
 			] : []),
+			...rule_providers,
 		],
 		plugins,
 		servers: [ { exec: 'main_sequence', listeners } ],
-	};
+	} };
 };

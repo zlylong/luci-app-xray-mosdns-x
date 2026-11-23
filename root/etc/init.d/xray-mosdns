@@ -18,6 +18,8 @@ MOSDNS_LOG=/tmp/mosdns-x.log
 # the routing rules Xray had before a switch; a number that changes when
 # Xray has to be restarted although its files say it need not
 RULES_WAS=/var/run/xray-mosdns-rules.was
+# where mosdns-x reads the rules' domain files (mosdns.uc: RULES_LIVE)
+RULES_LIVE=/var/etc/xray-mosdns.rules
 XRAY_GEN=/var/run/xray-mosdns-xray.gen
 
 get_opt() { uci -q get "xray-mosdns.$1" 2>/dev/null; }
@@ -156,6 +158,12 @@ start_service() {
 	why=$(ucode /usr/libexec/xray-mosdns/adlist.uc ensure 2>&1 >/dev/null 1000>&-)
 	[ -n "$why" ] && [ ! -s "$ERR" ] && set_error "拦截列表：$why（mosdns 读不到合并后的列表时无法启动）"
 
+	# The rules' domain files to where mosdns-x reads them, in place: it
+	# reloads the ones that changed by itself, and does not start without
+	# one it is told to read.
+	why=$("$PLUGIN_DIR/rule-files.sh" sync "$OUT" "$RULES_LIVE" 2>&1 1000>&-)
+	[ -n "$why" ] && [ ! -s "$ERR" ] && set_error "规则的域名文件：$(echo "$why" | head -n 1 | cut -c1-200)（mosdns 读不到时无法启动）"
+
 	# The daemons as the files in effect want them: with the previous set's
 	# binaries, ports and geo directory when the new set was not taken.
 	runtime_values
@@ -201,9 +209,11 @@ generate_and_switch() {
 		# The rules are loaded from the new files before anything else
 		# changes: if they do not load, the old table and the daemons' old
 		# files are all still in place. Addresses learned from DNS belong
-		# to the old rules once those change.
-		flush=""
-		[ "$(sum "$OUT/mosdns.yaml")" = "$(sum "$NEW/mosdns.yaml")" ] || flush="flush-dns"
+		# to the old rules once those change (dns-rules.sum: the matchers,
+		# their order, the rules' names; not upstreams and the like). A
+		# set from before that file existed counts as other rules.
+		flush="flush-dns"
+		[ -s "$OUT/dns-rules.sum" ] && cmp -s "$OUT/dns-rules.sum" "$NEW/dns-rules.sum" && flush=""
 		if XM_RULES_DIR="$NEW" "$PLUGIN_DIR/fw.sh" apply $flush >"$NEW/.log" 2>&1; then
 			rm -f "$NEW/.log"
 			# all files or none: when they cannot all be put in place the

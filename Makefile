@@ -97,7 +97,7 @@ $$(grep -o '"[A-Za-z0-9_]*":{' "$$dir/state.json" | sed 's/^"\(.*\)":{$$/\1/' | 
 	fi ;;
 esac
 rm -rf /etc/xray-mosdns /root/pw-backup/xray-mosdns-update
-rm -rf /var/etc/xray-mosdns /var/etc/xray-mosdns.new
+rm -rf /var/etc/xray-mosdns /var/etc/xray-mosdns.new /var/etc/xray-mosdns.rules
 rm -f /var/run/xray-mosdns.error /var/run/xray-mosdns-* /tmp/mosdns-x.log /tmp/xray-mosdns-*
 exit 0
 endef

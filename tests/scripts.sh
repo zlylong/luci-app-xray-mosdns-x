@@ -245,6 +245,36 @@ hr_tags() { sed -n 's/^[[:space:]]*"ruleTag": *"\([A-Za-z0-9_]*\)".*/\1/p' "$1" 
 	: > "$HR/calls"; out=$(apply "$HR/untagged.json" "$HR/b/xray-rules.json"); echo "untagged rc=$? calls=$(wc -l < "$HR/calls" | tr -d ' ') out=$out"
 } > "$OUT/hot-rules.txt" 2>&1
 
+# The rules' own names in files mosdns-x reloads (rule-files.sh). Another
+# name in a rule changes that rule's file and what the learned addresses
+# depend on (dns-rules.sum), not mosdns.yaml: mosdns is not restarted.
+# Another upstream changes mosdns.yaml and not dns-rules.sum.
+RF="$OUT/rulefiles"; mkdir -p "$RF/d" "$RF/e" "$RF/conf-d" "$RF/conf-e"
+cp "$REPO/tests/fixtures/chnroute/xray-mosdns" "$RF/conf-d/"; cp "$REPO/tests/fixtures/chnroute/xray-mosdns" "$RF/conf-e/"
+sed -i "s/domain:corp.example.org,geosite:apple-cn/domain:corp.example.org,domain:more.example.org,geosite:apple-cn/" "$RF/conf-d/xray-mosdns"
+sed -i "s#^config dns 'dns'#config dns 'dns'\n\tlist remote_dns '9.9.9.9'#" "$RF/conf-e/xray-mosdns"
+gen "$RF/d" "$RF/conf-d" && gen "$RF/e" "$RF/conf-e" || { echo "script rulefiles-gen: FAILED"; rc=1; }
+A="$HR/a"
+{
+	echo "names $(cmp -s "$A/mosdns.yaml" "$RF/d/mosdns.yaml" && echo yaml-same || echo yaml-differs) $(cmp -s "$A/dns-rules.sum" "$RF/d/dns-rules.sum" && echo sum-same || echo sum-differs) $(cmp -s "$A/rule_0.domains" "$RF/d/rule_0.domains" && echo file-same || echo file-differs) $(cmp -s "$A/xray.restart" "$RF/d/xray.restart" && echo xray-kept || echo xray-restart)"
+	echo "upstream $(cmp -s "$A/mosdns.yaml" "$RF/e/mosdns.yaml" && echo yaml-same || echo yaml-differs) $(cmp -s "$A/dns-rules.sum" "$RF/e/dns-rules.sum" && echo sum-same || echo sum-differs)"
+	echo "file0 $(tr '\n' ' ' < "$RF/d/rule_0.domains")"
+	# to the live directory: copied; then in place (the same file), only what changed; files of rules gone removed
+	S="$RF/set"; L="$RF/live"; mkdir -p "$S"
+	cp "$A"/rule_*.domains "$A/rule-files.list" "$S/"
+	rfs() { sh "$REPO/root/usr/share/xray-mosdns/rule-files.sh" sync "$S" "$L" 2>&1; }
+	out=$(rfs); echo "sync1 rc=$? out=$out same=$(for f in "$S"/rule_*.domains; do cmp -s "$f" "$L/${f##*/}" || echo no; done | wc -l | tr -d ' ') n=$(ls "$L" | wc -l | tr -d ' ')"
+	i0=$(ls -i "$L/rule_0.domains" | cut -d' ' -f1); i1=$(ls -i "$L/rule_1.domains" | cut -d' ' -f1); t1=$(date -r "$L/rule_1.domains" +%s)
+	sleep 1
+	cp "$RF/d/rule_0.domains" "$S/rule_0.domains"
+	out=$(rfs); echo "sync2 rc=$? $(cmp -s "$S/rule_0.domains" "$L/rule_0.domains" && echo copied) $([ "$(ls -i "$L/rule_0.domains" | cut -d' ' -f1)" = "$i0" ] && echo in-place) $([ "$(date -r "$L/rule_1.domains" +%s)" = "$t1" ] && [ "$(ls -i "$L/rule_1.domains" | cut -d' ' -f1)" = "$i1" ] && echo other-untouched)"
+	last=$(tail -n 1 "$S/rule-files.list"); sed -i '$d' "$S/rule-files.list"
+	out=$(rfs); echo "sync3 rc=$? gone=$([ -e "$S/$last" ] || [ -e "$L/$last" ] && echo no || echo yes) left=$(ls "$L" | wc -l | tr -d ' ')"
+	echo "rule_9.domains" >> "$S/rule-files.list"
+	out=$(rfs); echo "sync4 rc=$? out=$out"
+	rm -f "$S/rule-files.list"; out=$(rfs); echo "sync5 rc=$? left=$(ls "$L" | wc -l | tr -d ' ')"
+} > "$OUT/rule-files.txt" 2>&1
+
 kill "$LISTENER" 2>/dev/null
 if [ -f "$OUT/conf.saved" ]; then mv "$OUT/conf.saved" "$CONF"; else rm -f "$CONF"; fi
 exit $rc

@@ -40,6 +40,28 @@ def load(case):
     for r in x["routing"]["rules"]:
         r.pop("ruleTag", None)
     m = yaml.safe_load(open(f"{out}/{case}/mosdns.yaml"))
+    # The names written out in a rule are in a file per rule, read through a
+    # data provider of the rule's tag that mosdns-x reloads; the files there
+    # are listed, and what the learned addresses depend on has a name. For
+    # the checks below each rule gets its names back in its matcher.
+    listed = open(f"{out}/{case}/rule-files.list").read().split()
+    provs = {p["tag"]: p for p in m["data_providers"]}
+    used = []
+    for p in m["plugins"]:
+        if not re.fullmatch(r"rule_[0-9]+", p["tag"]):
+            continue
+        dom = p["args"]["domain"]
+        check(all(e.startswith("provider:") for e in dom), f"{case}: {p['tag']} has references only, its names are in a file {dom}")
+        own = f"provider:{p['tag']}"
+        if own in dom:
+            fn = f"{p['tag']}.domains"
+            used.append(fn)
+            lines = open(f"{out}/{case}/{fn}").read().splitlines()
+            check(dom[-1] == own and lines and provs.get(p["tag"]) == {"tag": p["tag"], "file": f"/var/etc/xray-mosdns.rules/{fn}", "auto_reload": True},
+                  f"{case}: {p['tag']} reads its names from a reloaded file {provs.get(p['tag'])}")
+            p["args"]["domain"] = dom[:-1] + lines
+    check(sorted(listed) == sorted(used) and listed == sorted(listed), f"{case}: rule-files.list names the rules' files {listed} {used}")
+    check(re.fullmatch(r"[0-9a-f]{8}\n", open(f"{out}/{case}/dns-rules.sum").read()) is not None, f"{case}: dns-rules.sum")
     n = open(f"{out}/{case}/nft.rules").read()
     return x, m, n
 
@@ -496,6 +518,19 @@ else:
     def txt(name):
         return open(f"{sd}/{name}.txt").read().splitlines()
 
+    # rule-files.sh: the rules' names in files mosdns-x reloads
+    rf = {}
+    for line in open(f"{sd}/rule-files.txt").read().splitlines():
+        k, _, v = line.partition(" ")
+        rf[k] = v
+    check(rf.get("names") == "yaml-same sum-differs file-differs xray-kept" and "domain:more.example.org" in rf.get("file0", "").split(),
+          f"rule files: another name in a rule changes its file and the learned addresses' key, not mosdns.yaml (no restart, of Xray neither) {rf.get('names')} {rf.get('file0')}")
+    check(rf.get("upstream") == "yaml-differs sum-same", f"rule files: another upstream restarts mosdns and leaves the learned addresses {rf.get('upstream')}")
+    check(rf.get("sync1", "").startswith("rc=0 out= same=0 ") and rf.get("sync2") == "rc=0 copied in-place other-untouched",
+          f"rule files: copied to the live directory, a changed one rewritten in place, the others not touched {rf.get('sync1')} | {rf.get('sync2')}")
+    check(rf.get("sync3", "").startswith("rc=0 gone=yes ") and rf.get("sync4", "").startswith("rc=1 ") and "rule_9.domains is missing" in rf.get("sync4", "")
+          and rf.get("sync5", "").startswith("rc=0 "),
+          f"rule files: files of rules gone are removed, a listed file that is missing is an error, no list (an older set) nothing to do {rf.get('sync3')} | {rf.get('sync4')} | {rf.get('sync5')}")
     # xray-rules.sh: the routing rules into a running Xray
     hot = {}
     hcalls = []
