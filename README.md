@@ -235,7 +235,7 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-<版本>-r1.apk
 | global | tproxy_port | TProxy 监听端口，默认 12345 |
 | global | fwmark / route_table | 策略路由标记/表号，默认 0x1 / 100（与其他插件共用时启动日志会提示） |
 | global | main_target | 总节点：节点或节点组的 section 名，或 direct |
-| global | log_level | Xray 日志级别：debug / info / warning（默认）/ error / none |
+| global | log_level | Xray 日志级别：debug / info / warning（默认）/ error / none；debug 和 info 还记录访问日志（每条连接一行，写进系统日志，很快会占满它），其余级别不记 |
 | global | socks_port | 内部 SOCKS 端口（给 mosdns 转发国外 DNS），默认 1070 |
 | global | proxy_router | 代理路由器自身的流量：0（默认）/ tcp / tcp,udp |
 | global | self_mark | Xray 和 mosdns 自身流量的标记，默认 0xff |

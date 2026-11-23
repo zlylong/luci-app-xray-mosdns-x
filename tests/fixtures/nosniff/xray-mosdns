@@ -3,6 +3,7 @@ config global 'global'
 	option main_target 'hk1'
 	option rule_mode 'chnroute'
 	option sniffing '0'
+	option log_level 'info'
 	list bypass_ips '203.0.113.0/24'
 	list bypass_ips 'not-an-ip'
 

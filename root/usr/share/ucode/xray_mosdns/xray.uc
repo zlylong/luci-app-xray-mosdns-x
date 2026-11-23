@@ -224,8 +224,15 @@ export function build(cfg, plan, env) {
 		return o;
 	});
 
+	// The access log (a line per connection, into the system log) only at
+	// debug and info: otherwise it pushes everything else out of logd's
+	// small buffer within the hour.
+	let log = { loglevel: g.log_level };
+	if (!(g.log_level in [ 'debug', 'info' ]))
+		log.access = 'none';
+
 	let conf = {
-		log: { loglevel: g.log_level },
+		log: log,
 		inbounds: [
 			tproxy_in,
 			...device_in,

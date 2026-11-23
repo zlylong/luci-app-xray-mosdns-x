@@ -68,7 +68,8 @@ return view.extend({
 			return (!v || /^[0-9]+[smh]$/.test(v)) ? true : _('格式应为数字加 s、m 或 h');
 		};
 
-		o = s.taboption('proxy', form.ListValue, 'log_level', _('Xray 日志级别'));
+		o = s.taboption('proxy', form.ListValue, 'log_level', _('Xray 日志级别'),
+			_('Xray 的日志写在系统日志里。debug 和 info 还会给每条连接记一行（访问日志），系统日志很快就会被它占满，只在排查问题时临时打开；warning 及以下不记访问日志。'));
 		[ 'debug', 'info', 'warning', 'error', 'none' ].forEach(function(v) { o.value(v); });
 		o.default = 'warning';
 
