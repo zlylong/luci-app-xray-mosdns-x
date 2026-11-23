@@ -368,10 +368,13 @@ allow = open(f"{out}/adlist/allow.txt").read().split()
 check(block == ["domain:ads.example.com", "domain:tracker.example.net", "full:exact.example.org", "full:hosts.example.com",
                 "full:other.example.com", "full:v6hosts.example.com", "full:plain.example.org", "full:plain2.example.org",
                 "domain:noanchor.example.com", "domain:rw-nx.example.com", "domain:rw-refused.example.com",
-                "domain:rw-zero.example.com", "domain:rw-adguard.example.com", "domain:rw-imp.example.com"],
-      f"adlist: block rules, $dnsrewrite blocks (an error, a null address, AdGuard's block host) among them {block}")
-check(allow == ["domain:good.example.com", "domain:good2.example.com"], f"adlist: exceptions {allow}")
-check(json.load(open(f"{out}/adlist/stats.json")) == {"rules": 14, "allow": 2, "skipped": 9},
+                "domain:rw-zero.example.com", "domain:rw-adguard.example.com", "domain:rw-imp.example.com",
+                "domain:pipe.example.com", "domain:gone-sub.gone.example.com", "full:bare.example.org"],
+      f"adlist: block rules, $dnsrewrite blocks (an error, a null address, AdGuard's block host) among them, a rule ending in ^|; "
+      f"what a $badfilter line withdraws is not there (before or after it, with $important too), a name under it stays {block}")
+check(allow == ["domain:good.example.com", "domain:good2.example.com", "domain:good3.example.com"],
+      f"adlist: exceptions, one ending in ^|, not the one a $badfilter line withdraws {allow}")
+check(json.load(open(f"{out}/adlist/stats.json")) == {"rules": 17, "allow": 3, "skipped": 9},
       "adlist: counts (wildcard, regex, other modifiers, a $dnsrewrite that answers with a record or a name, localhost and junk are skipped)")
 
 # ------------------------------------------------------------------ blocklists that change places (tests/runtime.sh)

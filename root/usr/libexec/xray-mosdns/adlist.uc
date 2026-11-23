@@ -16,6 +16,11 @@
 //   0.0.0.0 example.org -> full:example.org     (hosts line: that name only)
 //   example.org         -> full:example.org     (plain name: that name only)
 //   @@||example.org^    -> an exception, kept in the allow file
+//   ||example.org^|     -> as without the "|" (it says "the address ends
+//                       here", which a name does anyway)
+//   ||example.org^$badfilter -> takes the rule ||example.org^ out of this
+//                       list again (lists compiled from several sources
+//                       withdraw a source's rule that way)
 //   ||example.org^$dnsrewrite=NXDOMAIN (or REFUSED, 0.0.0.0, ::, AdGuard's
 //                       blocking host) -> blocked like the first form
 // Rules with wildcards, regular expressions or other modifiers (a
@@ -244,6 +249,9 @@ function download(url, dest) {
 
 // ---------------------------------------------------------------- convert
 const RE_NAME = /^[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?(\.[a-z0-9_]([a-z0-9_-]*[a-z0-9_])?)+$/;
+// how a rule's name may end: never empty (replace() with a pattern that can
+// match nothing gives the string twice)
+const RE_END = /(\^\||\^|\|)$/;
 const RE_HOSTS = /^(0\.0\.0\.0|127\.0\.0\.1|::1?|::ffff:0\.0\.0\.0)[ \t]+(.+)$/;
 const LOCAL_NAMES = [ 'localhost', 'localhost.localdomain', 'local', 'broadcasthost', 'ip6-localhost', 'ip6-loopback' ];
 // $dnsrewrite values that mean "blocked" (lower case): an error answer or an
@@ -253,7 +261,9 @@ const BLOCKING_REWRITES = [ 'nxdomain', 'nxdomain;;', 'refused', 'refused;;', 'n
 	'0.0.0.0', '::', '127.0.0.1', '::1',
 	'ad-block.dns.adguard.com', 'family-block.dns.adguard.com', 'standard-block.dns.adguard.com' ];
 
-// returns [ kind, rule ] with kind "block" | "allow", or null when the line is not usable
+// returns [ [ kind, rule ], ... ] with kind "block" | "allow", or "-block" |
+// "-allow" for a $badfilter line (that rule is taken out of the list);
+// false for a line that is no rule, null when the line is not usable
 function convert(line) {
 	line = trim(line);
 	if (!length(line))
@@ -283,26 +293,34 @@ function convert(line) {
 	// modifiers: $important changes nothing for us; a $dnsrewrite that
 	// answers "no such name", refuses, points at a null address or at
 	// AdGuard's blocking host is a block (AdGuard's DNS lists write their
-	// blocks that way); anything else changes the meaning
+	// blocks that way); $badfilter withdraws the rule it is written on;
+	// anything else changes the meaning
+	let bad = false;
 	const d = index(line, '$');
 	if (d >= 0) {
 		for (let mod in split(substr(line, d + 1), ',')) {
 			if (mod == 'important')
 				continue;
+			if (mod == 'badfilter') {
+				bad = true;
+				continue;
+			}
 			const rw = match(mod, /^dnsrewrite=(.*)$/);
 			if (!rw || kind != 'block' || !(lc(rw[1]) in BLOCKING_REWRITES))
 				return null;
 		}
 		line = substr(line, 0, d);
 	}
+	if (bad)
+		kind = '-' + kind;
 
 	if (substr(line, 0, 2) == '||') {
 		let name = lc(substr(line, 2));
-		name = replace(name, /\^$/, '');
+		name = replace(name, RE_END, '');
 		return match(name, RE_NAME) ? [ [ kind, `domain:${name}` ] ] : null;
 	}
 	if (substr(line, 0, 1) == '|') {
-		let name = lc(replace(substr(line, 1), /\^?\|?$/, ''));
+		let name = lc(replace(substr(line, 1), RE_END, ''));
 		return match(name, RE_NAME) ? [ [ kind, `full:${name}` ] ] : null;
 	}
 
@@ -312,13 +330,28 @@ function convert(line) {
 }
 
 function convert_file(src, block_path, allow_path) {
-	const fin = fs.open(src, 'r');
+	// The rules this list withdraws ($badfilter), looked for first: such a
+	// line may stand before its rule or after it. By what the rule converts
+	// to, so the same rule written with $important goes as well.
+	let gone = {}, line;
+	let fin = fs.open(src, 'r');
+	if (!fin)
+		return null;
+	while ((line = fin.read('line')) != null && length(line)) {
+		if (index(line, 'badfilter') < 0)
+			continue;
+		for (let r in (convert(line) || []))
+			if (substr(r[0], 0, 1) == '-')
+				gone[`${substr(r[0], 1)} ${r[1]}`] = true;
+	}
+	fin.close();
+
+	fin = fs.open(src, 'r');
 	const fb = fs.open(block_path, 'w');
 	const fa = fs.open(allow_path, 'w');
 	if (!fin || !fb || !fa)
 		return null;
 	let st = { rules: 0, allow: 0, skipped: 0 };
-	let line;
 	while ((line = fin.read('line')) != null && length(line)) {
 		const res = convert(line);
 		if (res === false)
@@ -328,6 +361,8 @@ function convert_file(src, block_path, allow_path) {
 			continue;
 		}
 		for (let r in res) {
+			if (substr(r[0], 0, 1) == '-' || gone[`${r[0]} ${r[1]}`])
+				continue;
 			if (r[0] == 'block') {
 				fb.write(r[1] + '\n');
 				st.rules++;
