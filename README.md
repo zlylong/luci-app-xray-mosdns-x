@@ -319,4 +319,4 @@ apk add --allow-untrusted luci-app-xray-mosdns-x-<版本>-r1.apk
 
 ## 许可
 
-MIT
+MIT，见 [LICENSE](LICENSE)。
