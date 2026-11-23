@@ -196,7 +196,15 @@ check(plugin(m, "ecs_local") is None and "ecs_local" not in json.dumps(m),
 check_mosdns_refs("gfw", m)
 rules = x["routing"]["rules"]
 check(rules[-1]["outboundTag"] == "direct", "gfw: everything not listed must be direct")
-check(rules[-2] == {"type": "field", "domain": ["geosite:gfw"], "outboundTag": "hk1.node"}, "gfw: listed domains go to the main node")
+check(rules[-4] == {"type": "field", "domain": ["geosite:gfw"], "outboundTag": "hk1.node"}, "gfw: listed domains go to the main node")
+# connections to addresses resolved for a proxied name only: their own inbound
+check([(i["tag"], i["port"]) for i in x["inbounds"][:2]] == [("tproxy-in", 12345), ("tproxy-dns", 12346)]
+      and {k: v for k, v in x["inbounds"][1].items() if k not in ("tag", "port")} == {k: v for k, v in x["inbounds"][0].items() if k not in ("tag", "port")},
+      "gfw: an inbound for flows to proxied names, on the next port, otherwise like the main one (it sniffs too)")
+check(rules[-3:-1] == [{"type": "field", "inboundTag": ["tproxy-dns"], "protocol": ["http", "tls", "quic"], "outboundTag": "direct"},
+                       {"type": "field", "inboundTag": ["tproxy-dns"], "outboundTag": "hk1.node"}],
+      f"gfw: after the rules, from that inbound: a sniffed name no rule claimed goes by the default, what cannot be sniffed goes to "
+      f"the proxied rules' one target {rules[-3:-1]}")
 check({"type": "field", "port": "22,3389", "outboundTag": "direct"} in rules, "list-valued port rule must become one Xray port string")
 check({"type": "field", "domain": ["geosite:openai", "domain:example.org"], "outboundTag": "hk1.node"} in rules, "list-valued domain rule")
 check(plugin(m, "rule_0")["args"]["domain"] == ["provider:geosite:openai", "domain:example.org"], "list-valued domain rule reaches mosdns")
@@ -220,7 +228,16 @@ check(plugin(m, "query_is_node") is None, "an IP-literal node needs no node matc
 pre = chain(n, "prerouting")
 check(pre[-1] == "return", "gfw: kernel default is direct")
 check(not any("@ipg" in r for r in pre), "gfw: no IP rule groups are needed")
-check("ip6 daddr @proxy6_dns goto do_tproxy" in pre and "meta nfproto ipv6 return" not in pre, "ipv6 rules present")
+check("ip6 daddr @proxy6_dns goto do_tproxy_dns" in pre and "meta nfproto ipv6 return" not in pre, "ipv6 rules present")
+check("ip daddr @proxy4_dns goto do_tproxy_dns" in pre and pre.index("ct mark & 0x2 == 0x2 goto do_tproxy_dns") < pre.index("ct mark & 0x1 == 0x1 goto do_tproxy")
+      and chain(n, "do_tproxy_dns") == ["ct mark set ct mark | 0x3",
+          'meta nfproto ipv4 meta l4proto { tcp, udp } meta mark set 0x1 tproxy ip to :12346 counter accept comment "xray-mosdns: a proxied name"',
+          'meta nfproto ipv6 meta l4proto { tcp, udp } meta mark set 0x1 tproxy ip6 to :12346 counter accept comment "xray-mosdns-v6: a proxied name"']
+      and "th dport { 12345, 12346 } drop" in chain(n, "input_guard")[0],
+      f"gfw: an address in the proxy set only goes to the inbound for proxied names, every packet of the flow (a conntrack bit of "
+      f"its own, tested first); the port is guarded like the main one {chain(n, 'do_tproxy_dns')}")
+check(open(f"{out}/gfw/nft-flush-dns.rules").read().split("\n") == ["flush set inet xray-mosdns direct4_dns", "flush set inet xray-mosdns direct6_dns", ""],
+      "with sniffing a change of the DNS rules empties the direct sets only: Xray decides what reaches it by the rules as they are")
 check(pre.index(f"ip6 daddr @direct6_dns ip6 daddr @proxy6_dns goto do_tproxy {SHARED}") < pre.index("ip6 daddr @direct6_dns return"),
       "ipv6: an address in both DNS sets goes to Xray too")
 check("2001:db8:1::5" in n.split("add element inet xray-mosdns bypass6 {", 1)[1].split("}")[0], "v6 node address must be bypassed")
@@ -343,8 +360,32 @@ check("th dport { 12345, 12346, 12347 } drop" in n, "devices: their ports are cl
 gj = json.load(open(f"{out}/groups/groups.json"))
 check(len(gj) == 1 and gj[0]["name"] == "hk" and gj[0]["remarks"] == "香港" and gj[0]["strategy"] == "ordered" and [mm["name"] for mm in gj[0]["members"]] == ["a", "b"], "groups.json: only the used group, in member order")
 
+# ------------------------------------------------------------------ named: direct default, proxied names, router traffic
+x, m, n = load("named")
+check([(i["tag"], i["port"]) for i in x["inbounds"][:3]] == [("tproxy-in", 12345), ("dev-0", 12346), ("tproxy-dns", 12347)],
+      f"named: the inbound for proxied names takes the port after the devices' {[(i['tag'], i['port']) for i in x['inbounds']]}")
+check(x["routing"]["rules"][-3:-1] == [{"type": "field", "inboundTag": ["tproxy-dns"], "protocol": ["http", "tls", "quic"], "outboundTag": "direct"},
+                                       {"type": "field", "inboundTag": ["tproxy-dns"], "balancerTag": "hk.group"}],
+      f"named: proxied rules with different targets: what cannot be sniffed goes to the main target {x['routing']['rules'][-3:-1]}")
+pre, oc = chain(n, "prerouting"), chain(n, "output")
+check(pre[:2] == ['iifname "lo" meta mark 0x3 ct mark & 0x4 == 0x4 goto do_tproxy_dns comment "router traffic, to a proxied name"',
+                  'iifname "lo" meta mark 0x3 goto do_tproxy comment "router traffic, marked in output"']
+      and pre.index("ct mark & 0x4 == 0x4 goto do_tproxy_dns") < pre.index("ct mark & 0x3 == 0x3 goto do_tproxy")
+      and "ip daddr @proxy4_dns goto do_tproxy_dns" in pre and f"ip daddr @direct4_dns ip daddr @proxy4_dns goto do_tproxy {SHARED}" in pre
+      and "ip daddr @ipg4_0 goto do_tproxy" in pre,
+      f"named: the conntrack bit is the lowest the mark leaves free; only the proxy-set-only verdict changes {pre}")
+check("ip daddr @proxy4_dns goto out_mark_dns" in oc and oc[-1] == "return" and f"ip daddr @direct4_dns ip daddr @proxy4_dns goto out_mark {SHARED}" in oc
+      and chain(n, "out_mark_dns") == ["ct mark set ct mark | 0x7", "meta mark set 0x3"] and chain(n, "out_mark") == ["ct mark set ct mark | 0x3", "meta mark set 0x3"]
+      and chain(n, "do_tproxy_dns") == ["ct mark set ct mark | 0x7",
+          'meta nfproto ipv4 meta l4proto { tcp, udp } meta mark set 0x3 tproxy ip to :12347 counter accept comment "xray-mosdns: a proxied name"']
+      and "th dport { 12345, 12346, 12347 } drop" in chain(n, "input_guard")[0],
+      f"named: the router's own connections to a proxied name are marked with the bit as well {chain(n, 'out_mark_dns')} {chain(n, 'do_tproxy_dns')}")
+
 # ------------------------------------------------------------------ nosniff: chnroute with sniffing off
 x, m, n = load("nosniff")
+check(len(open(f"{out}/nosniff/nft-flush-dns.rules").read().splitlines()) == 4 and chain(n, "do_tproxy_dns") == [] and chain(n, "out_mark_dns") == []
+      and not any(i["tag"] == "tproxy-dns" for i in x["inbounds"]),
+      "nosniff: all four learned sets are emptied when the DNS rules change; proxy by default: no inbound for proxied names")
 pre = chain(n, "prerouting")
 check("sniffing" not in x["inbounds"][0], "nosniff: Xray does not sniff")
 check(x["log"] == {"loglevel": "info"}, f"log_level info: with Xray's access log {x['log']}")

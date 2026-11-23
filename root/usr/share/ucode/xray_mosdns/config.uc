@@ -552,6 +552,35 @@ export function plan(cfg) {
 	// there is nothing to proxy to, whatever the default says.
 	p.default_class = (p.main_class == 'direct') ? 'direct' : g.default_action;
 
+	// A connection to an address that was only ever resolved for a proxied
+	// name reaches Xray with the kernel's decision lost: Xray goes by the
+	// name it sniffs, and when there is none to sniff (SSH, mail, most games:
+	// anything but HTTP, TLS and QUIC) no domain rule matches and the
+	// connection leaves by the default. With a direct default that is the
+	// opposite of what the rule says. So those connections get an inbound of
+	// their own, and what cannot be sniffed there goes to the proxy: the
+	// target of the proxied domain rules when they all have the same one,
+	// else the main target.
+	p.dns_inbound = null;
+	if (g.kernel_split && p.main_class == 'proxy' && p.default_class == 'direct') {
+		let targets = [];
+		for (let r in p.rules) {
+			if (r.type != 'domain' || r.class != 'proxy')
+				continue;
+			const t = (r.outbound in [ 'main', 'proxy' ]) ? p.main : r.outbound;
+			if (!(t in targets))
+				push(targets, t);
+		}
+		if (length(targets)) {
+			next_port++;
+			while (next_port in reserved)
+				next_port++;
+			if (next_port > 65535)
+				fail('no free port left for the inbound of proxied names');
+			p.dns_inbound = { tag: 'tproxy-dns', port: next_port, target: (length(targets) == 1) ? targets[0] : p.main };
+		}
+	}
+
 	// When mainland addresses are sent direct, an unclassified name can be
 	// resolved the ChinaDNS way: a domestic answer is trusted only if it is
 	// a mainland address (which then goes direct anyway).

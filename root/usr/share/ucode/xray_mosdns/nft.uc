@@ -9,6 +9,11 @@
 // Sets: bypass4/6 (never proxied), ipg4_N/ipg6_N (IP rules, in rule order),
 // direct4_dns/proxy4_dns and their v6 twins (filled by mosdns).
 //
+// Flows for an address that is in the proxy set only (resolved for a proxied
+// name and for nothing else) go to an Xray inbound of their own when the
+// plan has one (config.uc, dns_inbound): chain do_tproxy_dns, and a second
+// conntrack mark bit so that every packet of the flow gets there.
+//
 // Packet path (prerouting, mangle priority):
 //   1. only traffic entering from the LAN devices is considered
 //   2. flows already handed to Xray keep going there (conntrack mark)
@@ -69,6 +74,13 @@ export function build(cfg, plan, env) {
 	const mark = g.fwmark;
 	const lan = quoted(env.lan_devices);
 	let out = [];
+	// the inbound for proxied names: its conntrack bit is the lowest one the
+	// mark does not use
+	const dns_in = plan.dns_inbound;
+	let dns_bit = 1;
+	while (dns_bit & +mark)
+		dns_bit <<= 1;
+	const dbit = sprintf('0x%x', dns_bit), dboth = sprintf('0x%x', dns_bit | +mark);
 
 	// one chain per device inbound: same exemptions as everyone else, then its own port
 	let dev_chains = [];
@@ -156,18 +168,20 @@ export function build(cfg, plan, env) {
 	push(out, `add table ${T}`);
 	push(out, `add chain ${T} prerouting { type filter hook prerouting priority mangle; policy accept; }`);
 	push(out, `add chain ${T} do_tproxy`);
+	push(out, `add chain ${T} do_tproxy_dns`);
 	push(out, `add chain ${T} dns_redirect { type nat hook prerouting priority dstnat - 5; policy accept; }`);
 	push(out, `add chain ${T} input_guard { type filter hook input priority filter - 5; policy accept; }`);
 	// the router's own connections: marked here, re-routed to lo by the policy
 	// rule, and picked up by prerouting like everything else
 	push(out, `add chain ${T} output { type route hook output priority mangle; policy accept; }`);
 	push(out, `add chain ${T} out_mark`);
+	push(out, `add chain ${T} out_mark_dns`);
 	push(out, `add chain ${T} dns_redirect_out { type nat hook output priority dstnat - 5; policy accept; }`);
 	// With the DNS watchdog the redirect chain belongs to it: it is declared
 	// here but neither flushed nor filled, so re-applying this file can never
 	// point LAN DNS at a mosdns that is not answering.
 	const watched = (d.redirect && d.fallback);
-	for (let c in [ 'prerouting', 'do_tproxy', 'dns_redirect', 'input_guard', 'output', 'out_mark', 'dns_redirect_out' ])
+	for (let c in [ 'prerouting', 'do_tproxy', 'do_tproxy_dns', 'dns_redirect', 'input_guard', 'output', 'out_mark', 'out_mark_dns', 'dns_redirect_out' ])
 		if (!(watched && (c == 'dns_redirect' || c == 'dns_redirect_out')))
 			push(out, `flush chain ${T} ${c}`);
 
@@ -195,7 +209,8 @@ export function build(cfg, plan, env) {
 	// The decision for a new flow, by destination address. Used for traffic
 	// entering from the LAN and, with a different "proxy" verdict, for the
 	// router's own connections.
-	function classify(proxy) {
+	// `named`: the verdict for an address in the proxy set only
+	function classify(proxy, named) {
 		let r = [
 			'fib daddr type != unicast return',
 			'ip daddr @bypass4 return',
@@ -218,12 +233,12 @@ export function build(cfg, plan, env) {
 		if (g.sniffing)
 			push(r, `ip daddr @direct4_dns ip daddr @proxy4_dns ${proxy} ${shared}`);
 		push(r, 'ip daddr @direct4_dns return');
-		push(r, `ip daddr @proxy4_dns ${proxy}`);
+		push(r, `ip daddr @proxy4_dns ${named}`);
 		if (g.ipv6) {
 			if (g.sniffing)
 				push(r, `ip6 daddr @direct6_dns ip6 daddr @proxy6_dns ${proxy} ${shared}`);
 			push(r, 'ip6 daddr @direct6_dns return');
-			push(r, `ip6 daddr @proxy6_dns ${proxy}`);
+			push(r, `ip6 daddr @proxy6_dns ${named}`);
 		}
 		for (let i = 0; i < length(groups); i++) {
 			const verdict = (groups[i].kind == 'direct') ? 'return' : proxy;
@@ -237,8 +252,11 @@ export function build(cfg, plan, env) {
 	}
 
 	let pre = [];
-	if (g.proxy_router)
+	if (g.proxy_router) {
+		if (dns_in)
+			push(pre, `iifname "lo" meta mark ${mark} ct mark & ${dbit} == ${dbit} goto do_tproxy_dns comment "router traffic, to a proxied name"`);
 		push(pre, `iifname "lo" meta mark ${mark} goto do_tproxy comment "router traffic, marked in output"`);
+	}
 	push(pre, `iifname != { ${lan} } return`);
 	push(pre, 'meta l4proto != { tcp, udp } return');
 	if (d.redirect)
@@ -254,9 +272,11 @@ export function build(cfg, plan, env) {
 			: `${src}goto dev_${dev.inbound.port} comment "device ${dev.name}"`);
 	}
 
+	if (dns_in)
+		push(pre, `ct mark & ${dbit} == ${dbit} goto do_tproxy_dns`);
 	push(pre, `ct mark & ${mark} == ${mark} goto do_tproxy`);
 	push(pre, 'ct state != new return');
-	push(pre, ...classify('goto do_tproxy'));
+	push(pre, ...classify('goto do_tproxy', dns_in ? 'goto do_tproxy_dns' : 'goto do_tproxy'));
 
 	let tp = [
 		`ct mark set ct mark | ${mark}`,
@@ -264,9 +284,18 @@ export function build(cfg, plan, env) {
 	];
 	if (g.ipv6)
 		push(tp, `meta nfproto ipv6 meta l4proto { tcp, udp } meta mark set ${mark} tproxy ip6 to :${g.tproxy_port} counter accept comment "xray-mosdns-v6"`);
+	let tpd = [];
+	if (dns_in) {
+		tpd = [
+			`ct mark set ct mark | ${dboth}`,
+			`meta nfproto ipv4 meta l4proto { tcp, udp } meta mark set ${mark} tproxy ip to :${dns_in.port} counter accept comment "xray-mosdns: a proxied name"`,
+		];
+		if (g.ipv6)
+			push(tpd, `meta nfproto ipv6 meta l4proto { tcp, udp } meta mark set ${mark} tproxy ip6 to :${dns_in.port} counter accept comment "xray-mosdns-v6: a proxied name"`);
+	}
 
 	// ------------------------------------------------------------ router traffic
-	let outc = [], outm = [], redir_out = [];
+	let outc = [], outm = [], outmd = [], redir_out = [];
 	if (g.proxy_router) {
 		const protos = (g.proxy_router == 'tcp') ? 'tcp' : '{ tcp, udp }';
 		outc = [
@@ -279,12 +308,18 @@ export function build(cfg, plan, env) {
 			'ct direction reply return comment "Xray answering a LAN client"',
 			`ct mark & ${mark} == ${mark} goto out_mark`,
 			'ct state != new return',
-			...classify('goto out_mark'),
+			...classify('goto out_mark', dns_in ? 'goto out_mark_dns' : 'goto out_mark'),
 		];
 		outm = [
 			`ct mark set ct mark | ${mark}`,
 			`meta mark set ${mark}`,
 		];
+		// later packets of such a flow take out_mark: the bit stays on it
+		if (dns_in)
+			outmd = [
+				`ct mark set ct mark | ${dboth}`,
+				`meta mark set ${mark}`,
+			];
 		if (router_dns(cfg) && !watched)
 			push(redir_out, router_redirect_rule(cfg));
 	}
@@ -292,7 +327,7 @@ export function build(cfg, plan, env) {
 	let redir = [];
 	let guard = [
 		// the tproxy listener is only ever reached through the tproxy rule
-		`iifname != "lo" fib daddr type local meta l4proto { tcp, udp } th dport { ${join(', ', [ g.tproxy_port, ...map(plan.device_inbounds, i => i.port) ])} } drop`,
+		`iifname != "lo" fib daddr type local meta l4proto { tcp, udp } th dport { ${join(', ', [ g.tproxy_port, ...map(plan.device_inbounds, i => i.port), ...(dns_in ? [ dns_in.port ] : []) ])} } drop`,
 	];
 	if (d.redirect) {
 		if (!watched)
@@ -301,8 +336,8 @@ export function build(cfg, plan, env) {
 	}
 
 	push(out, `table ${T} {`);
-	for (let c in [ [ 'prerouting', pre ], [ 'do_tproxy', tp ], ...dev_chains, [ 'dns_redirect', redir ], [ 'input_guard', guard ],
-	                [ 'output', outc ], [ 'out_mark', outm ], [ 'dns_redirect_out', redir_out ] ]) {
+	for (let c in [ [ 'prerouting', pre ], [ 'do_tproxy', tp ], [ 'do_tproxy_dns', tpd ], ...dev_chains, [ 'dns_redirect', redir ], [ 'input_guard', guard ],
+	                [ 'output', outc ], [ 'out_mark', outm ], [ 'out_mark_dns', outmd ], [ 'dns_redirect_out', redir_out ] ]) {
 		push(out, `\tchain ${c[0]} {`);
 		for (let r in c[1])
 			push(out, `\t\t${r}`);
@@ -324,6 +359,14 @@ export function dns_redirect(cfg, env) {
 };
 
 // applied after nft.rules whenever the DNS rules (mosdns.yaml) changed
-export function flush_dns() {
-	return join('\n', map(DNS_SETS, s => `flush set inet ${TABLE} ${s}`)) + '\n';
+// What a change of the DNS rules makes stale. With sniffing only the direct
+// sets: a flow that reaches Xray is decided by the name it carries and the
+// rules as they are now, so an address left in a proxy set does no harm,
+// while emptying those sets would send every client that still holds an
+// answer for a proxied name out directly until it asks again. An address
+// left in a direct set never reaches Xray, so those have to go. Without
+// sniffing Xray cannot correct anything: all of them.
+export function flush_dns(cfg) {
+	const sets = cfg?.global?.sniffing ? filter(DNS_SETS, s => index(s, 'direct') == 0) : DNS_SETS;
+	return join('\n', map(sets, s => `flush set inet ${TABLE} ${s}`)) + '\n';
 };

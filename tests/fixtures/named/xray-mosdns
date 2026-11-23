@@ -1,0 +1,59 @@
+# Direct by default, names sent to the proxy by rule, the router's own
+# traffic too: connections to addresses resolved for those names get an
+# inbound of their own (what cannot be sniffed there is proxied).
+config global 'global'
+	option enabled '1'
+	option schema '2'
+	option main_target 'hk'
+	option default_action 'direct'
+	option proxy_router 'tcp,udp'
+	option fwmark '0x3'
+
+config dns 'dns'
+	option fallback '0'
+	list remote_dns '8.8.8.8'
+
+config node 'a'
+	option enabled '1'
+	option type 'trojan'
+	option address '198.51.100.1'
+	option password 'pw'
+	option tls '1'
+
+config node 'b'
+	option enabled '1'
+	option type 'trojan'
+	option address '198.51.100.2'
+	option password 'pw'
+	option tls '1'
+
+config group 'hk'
+	option strategy 'ordered'
+	list member 'a'
+	list member 'b'
+	option fallback 'direct'
+
+# two proxied domain rules with different targets
+config rule
+	option enabled '1'
+	option rule_type 'domain'
+	list value 'geosite:netflix'
+	option outbound 'b'
+
+config rule
+	option enabled '1'
+	option rule_type 'domain'
+	list value 'geosite:gfw'
+	option outbound 'main'
+
+config rule
+	option enabled '1'
+	option rule_type 'ip'
+	list value '192.0.2.0/24'
+	option outbound 'main'
+
+# a device inbound takes the port after the main one
+config device
+	option enabled '1'
+	list mac 'aa:bb:cc:00:00:04'
+	option outbound 'a'

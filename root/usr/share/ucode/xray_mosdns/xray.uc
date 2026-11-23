@@ -183,6 +183,19 @@ export function build(cfg, plan, env) {
 		push(rules, { ...rule, ...plan.target(r.outbound) });
 	}
 
+	// Connections to addresses resolved for a proxied name only (see
+	// config.uc, dns_inbound), which no rule above claimed: one with a name
+	// sniffed is another site on the same address and goes by the default,
+	// as before; one without is taken as the proxied name's. The "protocol"
+	// of a rule is what was sniffed, so the first rule is how to say "a name
+	// was seen". Without sniffing nothing ever is.
+	if (plan.dns_inbound) {
+		const from = { type: 'field', inboundTag: [ plan.dns_inbound.tag ] };
+		if (g.sniffing)
+			push(rules, { ...from, protocol: [ 'http', 'tls', 'quic' ], outboundTag: 'direct' });
+		push(rules, { ...from, ...plan.target(plan.dns_inbound.target) });
+	}
+
 	// default: whatever no rule claimed
 	push(rules, {
 		type: 'field', network: 'tcp,udp',
@@ -230,6 +243,9 @@ export function build(cfg, plan, env) {
 	let log = { loglevel: g.log_level };
 	if (!(g.log_level in [ 'debug', 'info' ]))
 		log.access = 'none';
+
+	if (plan.dns_inbound)
+		push(device_in, { ...tproxy_in, tag: plan.dns_inbound.tag, port: plan.dns_inbound.port });
 
 	let conf = {
 		log: log,

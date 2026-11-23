@@ -253,7 +253,7 @@ for (let name, text in mconf.files)
 write('rule-files.list', join('', map(sort(keys(mconf.files)), n => n + '\n')));
 write('dns-rules.sum', mconf.sig + '\n');
 write('nft.rules', nft.build(cfg, plan, env));
-write('nft-flush-dns.rules', nft.flush_dns());
+write('nft-flush-dns.rules', nft.flush_dns(cfg));
 // only rewritten when it changes: the watchdog re-applies the rule when this file is newer
 const redir = nft.dns_redirect(cfg, env);
 if (fs.readfile(`${opt.out}/nft-dns-on.rules`) != redir.on)

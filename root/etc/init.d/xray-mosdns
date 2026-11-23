@@ -265,7 +265,11 @@ changes() {
 	for f in "$NEW"/rule_*.domains; do
 		[ -f "$f" ] && differ "${f##*/}" && { c="$c, rule names reloaded"; break; }
 	done
-	differ dns-rules.sum && c="$c, learned addresses flushed"
+	# with sniffing the proxy sets stay (nft.uc, flush_dns)
+	if differ dns-rules.sum; then
+		if grep -q 'proxy4_dns' "$NEW/nft-flush-dns.rules" 2>/dev/null; then c="$c, learned addresses flushed"
+		else c="$c, learned direct addresses flushed"; fi
+	fi
 	differ nft.rules && c="$c, firewall rules replaced"
 	differ groups.json && c="$c, group watcher restarts"
 	echo "${c#, }"
