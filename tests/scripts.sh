@@ -103,6 +103,29 @@ chmod +x "$OUT/pm-apk/apk" "$OUT/pm-opkg/apk" "$OUT/pm-opkg/opkg"
 run update-versions-apk  env PATH="$OUT/pm-apk:$PATH" UPD_TEST_DIR="$OUT/upd" "$LX/update.sh" versions
 run update-versions-opkg env PATH="$OUT/pm-opkg:$PATH" UPD_TEST_DIR="$OUT/upd" "$LX/update.sh" versions
 
+# this package's releases: a check asks GitHub (a stand-in for curl answers
+# with the tag in $OUT/app-tag) and remembers the answer for `versions`
+mkdir -p "$OUT/pm-curl"
+cat > "$OUT/pm-curl/curl" <<EOF
+#!/bin/sh
+printf '{\n  "url": "x",\n  "tag_name": "%s",\n  "name": "n"\n}\n' "\$(cat "$OUT/app-tag")"
+EOF
+chmod +x "$OUT/pm-curl/curl"
+AP="$OUT/pm-apk:$OUT/pm-curl:$PATH"
+echo "v9.9.10" > "$OUT/app-tag"
+run app-check-newer    env PATH="$AP" UPD_TEST_DIR="$OUT/upd" "$LX/update.sh" check
+run app-versions-newer env PATH="$AP" UPD_TEST_DIR="$OUT/upd" "$LX/update.sh" versions
+echo "v9.9.9" > "$OUT/app-tag"
+run app-check-same     env PATH="$AP" UPD_TEST_DIR="$OUT/upd" "$LX/update.sh" check
+echo "v9.10" > "$OUT/app-tag"
+run app-check-minor    env PATH="$AP" UPD_TEST_DIR="$OUT/upd" "$LX/update.sh" check
+echo "v9.9.08" > "$OUT/app-tag"
+run app-check-older    env PATH="$AP" UPD_TEST_DIR="$OUT/upd" "$LX/update.sh" check
+# not a version number: not shown, not remembered (the last good answer stays)
+echo 'v1<img src=x>' > "$OUT/app-tag"
+run app-check-junk     env PATH="$AP" UPD_TEST_DIR="$OUT/upd" "$LX/update.sh" check
+run app-versions-junk  env PATH="$AP" UPD_TEST_DIR="$OUT/upd" "$LX/update.sh" versions
+
 # the geo schedule: day of the week and hour from the config; junk means
 # every day at 4, and the line is replaced, not added again
 CR="$OUT/cron-root"

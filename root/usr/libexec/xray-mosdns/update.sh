@@ -1,6 +1,8 @@
 #!/bin/sh
 # Update helper for luci-app-xray-mosdns-x:
-#   versions | geo | xray | mosdns
+#   versions | check | geo | xray | mosdns
+# This package itself is not updated from here: `check` (and the scheduled
+# geo update) only look up whether GitHub has a newer release of it.
 # UPD_TEST_DIR=<dir> installs into a test root (used by the build VM tests).
 set -u
 
@@ -39,6 +41,51 @@ latest_url() { # $1 = repo, $2 = asset name
 remote_tag() { # $1 = repo -> latest release tag
 	curl -fsSL --max-time 20 "https://api.github.com/repos/$1/releases/latest" 2>/dev/null \
 		| grep -o '"tag_name": "[^"]*"' | head -1 | sed 's/.*"\([^"]*\)"/\1/'
+}
+
+# ---- this package's own releases: only looked up, never installed from here
+APP_REPO=zlylong/luci-app-xray-mosdns-x
+# The newest release a check has seen ("v1.2.3"), for the pages. In RAM:
+# asked again after a reboot.
+app_latest_file() { echo "$ROOT/var/run/xray-mosdns-app-latest"; }
+# a tag is a version number and nothing else, or it is not used
+is_tag() { printf '%s' "$1" | grep -qE '^v?[0-9]+(\.[0-9]+)*$'; }
+app_latest_read() {
+	f=$(app_latest_file)
+	[ -f "$f" ] || return 0
+	t=$(head -n 1 "$f")
+	is_tag "$t" && echo "$t"
+	return 0
+}
+# asks GitHub, remembers the answer and prints it; nothing without an answer
+app_latest_fetch() {
+	t=$(remote_tag "$APP_REPO")
+	is_tag "$t" || return 0
+	f=$(app_latest_file)
+	mkdir -p "$(dirname "$f")" && printf '%s\n' "$t" > "$f"
+	echo "$t"
+}
+# "v1.2.3" and "1.2.3-r1" -> "1.2.3"
+app_num() { printf '%s' "$1" | sed 's/^v//; s/-r[0-9]*$//'; }
+# $1, $2 = dotted numbers: true when $1 is the higher one
+ver_gt() {
+	a=$1; b=$2
+	while [ -n "$a" ] || [ -n "$b" ]; do
+		x=${a%%.*}; y=${b%%.*}
+		case "$a" in *.*) a=${a#*.} ;; *) a="" ;; esac
+		case "$b" in *.*) b=${b#*.} ;; *) b="" ;; esac
+		case "$x" in ''|*[!0-9]*) x=0 ;; esac
+		case "$y" in ''|*[!0-9]*) y=0 ;; esac
+		# no leading zeros: the shell would read them as octal
+		x=$(printf '%s' "$x" | sed 's/^0*//'); y=$(printf '%s' "$y" | sed 's/^0*//')
+		[ "${x:-0}" -gt "${y:-0}" ] && return 0
+		[ "${x:-0}" -lt "${y:-0}" ] && return 1
+	done
+	return 1
+}
+# $1 = release tag, $2 = installed version: "true" when the release is newer
+app_newer() {
+	[ -n "$1" ] && [ -n "$2" ] && ver_gt "$(app_num "$1")" "$(app_num "$2")" && echo true || echo false
 }
 
 geo_marker() { echo "$ROOT/etc/xray-mosdns/geo-version"; }
@@ -137,8 +184,9 @@ cmd_versions() {
 	mv=$("$mb" version 2>/dev/null | head -1)
 	[ -n "$mv" ] || mv="not installed"
 	gd=$(v2ray_dir)
-	printf '{"ok":true,"app":%s,"xray":%s,"mosdns":%s,"geosite":%s,"geoip":%s,"geo_version":%s}\n' \
-		"$(jstr "$(app_version)")" "$(jstr "$xv")" "$(jstr "$mv")" \
+	av=$(app_version); al=$(app_latest_read)
+	printf '{"ok":true,"app":%s,"app_latest":%s,"app_newer":%s,"xray":%s,"mosdns":%s,"geosite":%s,"geoip":%s,"geo_version":%s}\n' \
+		"$(jstr "$av")" "$(jstr "$al")" "$(app_newer "$al" "$av")" "$(jstr "$xv")" "$(jstr "$mv")" \
 		"$(jstr "$(geo_size "$gd/geosite.dat")")" "$(jstr "$(geo_size "$gd/geoip.dat")")" \
 		"$(jstr "$(geo_marker_read)")"
 }
@@ -165,11 +213,13 @@ cmd_check() {
 	xr=$(remote_tag XTLS/Xray-core)
 	mr=$(remote_tag pmkol/mosdns-x)
 	gr=$(remote_tag Loyalsoldier/v2ray-rules-dat)
-	printf '{"ok":true,"local":{"app":%s,"xray":%s,"xray_num":%s,"mosdns":%s,"mosdns_path":%s,"mosdns_kind":%s,"mosdns_date":%s,"geosite":%s,"geoip":%s,"geo_version":%s},"remote":{"xray":%s,"xray_num":%s,"mosdns":%s,"mosdns_date":%s,"geo":%s,"geo_auto":%s,"geo_hour":%s,"geo_day":%s}}\n' \
-		"$(jstr "$(app_version)")" "$(jstr "$xv")" "$(jstr "$(xray_num "$xv")")" \
+	av=$(app_version); ar=$(app_latest_fetch)
+	printf '{"ok":true,"local":{"app":%s,"xray":%s,"xray_num":%s,"mosdns":%s,"mosdns_path":%s,"mosdns_kind":%s,"mosdns_date":%s,"geosite":%s,"geoip":%s,"geo_version":%s},"remote":{"app":%s,"app_newer":%s,"xray":%s,"xray_num":%s,"mosdns":%s,"mosdns_date":%s,"geo":%s,"geo_auto":%s,"geo_hour":%s,"geo_day":%s}}\n' \
+		"$(jstr "$av")" "$(jstr "$xv")" "$(jstr "$(xray_num "$xv")")" \
 		"$(jstr "$mv")" "$(jstr "$mb")" "$(jstr "$(mosdns_kind "$mv")")" "$(jstr "$(mosdns_date "$mv")")" \
 		"$(jstr "$(geo_size "$gd/geosite.dat")")" "$(jstr "$(geo_size "$gd/geoip.dat")")" \
 		"$(jstr "$(geo_marker_read)")" \
+		"$(jstr "$ar")" "$(app_newer "$ar" "$av")" \
 		"$(jstr "$xr")" "$(jstr "$(printf '%s' "$xr" | sed 's/^v//')")" \
 		"$(jstr "$mr")" "$(jstr "$(printf '%s' "$mr" | sed 's/^v//')")" \
 		"$(jstr "$gr")" \
@@ -214,6 +264,9 @@ cmd_geo() {
 }
 
 cmd_geo_auto() {
+	# while asking GitHub anyway: is there a newer release of this package?
+	# Only noted for the update page.
+	app_latest_fetch >/dev/null
 	remote=$(remote_tag Loyalsoldier/v2ray-rules-dat)
 	[ -n "$remote" ] || { err "cannot query remote geo version"; return; }
 	local_ver=$(geo_marker_read)

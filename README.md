@@ -133,7 +133,7 @@ LAN 客户端 :53 ──nft redirect──► mosdns-x :5335
 │   ├── routing.js                            分流：总节点、分流模式、规则
 │   ├── resolver.js                           DNS：接管、上游、IPv6、缓存、拦截与日志，加上下面两个标签
 │   ├── system.js                             系统：运行参数
-│   ├── components.js                         更新：Xray / mosdns-x / geo 数据、定时更新
+│   ├── components.js                         更新：Xray / mosdns-x / geo 数据、定时更新；本插件有没有新版本
 │   ├── geoview.js                            Geo 查询：域名/IP 反查数据集、查看和下载数据集内容
 │   └── logview.js                            日志
 ├── htdocs/luci-static/resources/xray-mosdns/        页面共用的模块

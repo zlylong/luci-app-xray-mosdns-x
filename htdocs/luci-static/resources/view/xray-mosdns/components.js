@@ -15,6 +15,12 @@ function dayName(d) {
 	return _('每天');
 }
 
+var RELEASES = 'https://github.com/zlylong/luci-app-xray-mosdns-x/releases';
+
+function releaseLink(tag, text) {
+	return E('a', { 'href': RELEASES + '/tag/' + encodeURIComponent(tag), 'target': '_blank', 'rel': 'noreferrer noopener' }, text || tag);
+}
+
 function mosdnsText(l) {
 	var text = l.mosdns || '-';
 	if (l.mosdns_kind && l.mosdns_kind !== 'mosdns-x')
@@ -35,6 +41,7 @@ return view.extend({
 
 	render: function(res) {
 		var verBox = E('div');
+		var appNote = E('div', { 'class': 'cbi-map-descr', 'style': 'display:none' });
 		var output = E('pre', { 'style': 'white-space:pre-wrap;max-height:12em;overflow:auto;display:none' });
 		var cronState = E('span');
 
@@ -52,9 +59,21 @@ return view.extend({
 				return diff ? xm.badge(_('可更新'), 'warn') : xm.badge(_('已是最新'), 'ok');
 			}
 			var mosDiff = (l.mosdns_kind !== 'mosdns-x') ? !!r.mosdns : (!!r.mosdns_date && l.mosdns_date !== r.mosdns_date);
+			/* this package: a check only says whether a newer release is out
+			 * (the last answer is kept, so it shows without a check too); it
+			 * is installed by hand */
+			var appLatest = hasRemote ? r.app : l.app_latest;
+			var appNewer = hasRemote ? r.app_newer : l.app_newer;
+			appNote.style.display = (appLatest && appNewer) ? '' : 'none';
+			if (appLatest && appNewer)
+				appNote.replaceChildren(
+					_('本插件有新版本 %s：').format(appLatest),
+					releaseLink(appLatest, _('发布说明和安装包')),
+					_('。下载其中的 .apk 文件，在路由器上执行 apk add --allow-untrusted <文件名> 即可升级，配置保留。'));
 			var rows = [
-				/* this package: updated by installing a new release, not from here */
-				[ _('本插件（luci-app-xray-mosdns-x）'), l.app || _('未知'), '-', '-' ],
+				[ _('本插件（luci-app-xray-mosdns-x）'), l.app || _('未知'),
+					appLatest ? releaseLink(appLatest) : '-',
+					appLatest ? (appNewer ? xm.badge(_('有新版本'), 'warn') : xm.badge(_('已是最新'), 'ok')) : '-' ],
 				[ 'Xray', l.xray, r.xray, st(!!r.xray_num && l.xray_num !== r.xray_num) ],
 				[ 'mosdns-x', mosdnsText(l), r.mosdns, st(mosDiff) ],
 				[ _('geo 数据'), '%s（%s / %s）'.format(l.geo_version || _('未记录'), xm.fmtBytes(l.geosite), xm.fmtBytes(l.geoip)),
@@ -146,9 +165,10 @@ return view.extend({
 		return E('div', {}, [
 			E('h2', {}, _('组件更新')),
 			E('div', { 'class': 'cbi-map-descr' },
-				_('在线更新 Xray、mosdns-x 和 geo 规则数据，来源是各自在 GitHub 上的最新 release。')),
+				_('在线更新 Xray、mosdns-x 和 geo 规则数据，来源是各自在 GitHub 上的最新 release。本插件自身只检查有没有新版本（点“检查更新”时，以及每次 geo 数据定时更新时），新版本需要下载安装包手动安装。')),
 			xm.section(_('版本'), [
 				verBox,
+				appNote,
 				E('div', { 'class': 'cbi-page-actions', 'style': 'text-align:left' }, [
 					btn(_('检查更新'), check),
 					btn(_('更新 geo 数据'), function() { update('geo', _('geo 数据')); }),

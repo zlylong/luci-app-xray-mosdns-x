@@ -487,6 +487,18 @@ else:
     check(u.get("ok") is True and u.get("xray") == "not installed" and u.get("mosdns") == "not installed" and isinstance(u.get("app"), str), f"update.sh versions: {u}")
     check(res("update-versions-apk").get("app") == "9.9.9-r1" and res("update-versions-opkg").get("app") == "8.8.8-r2",
           f"update.sh versions: this package's version from apk, or from opkg: {res('update-versions-apk').get('app')} {res('update-versions-opkg').get('app')}")
+    ac = lambda n: (res(n)["remote"].get("app"), res(n)["remote"].get("app_newer"))
+    av = lambda n: (res(n).get("app_latest"), res(n).get("app_newer"))
+    check(u.get("app_latest") == "" and u.get("app_newer") is False, f"update.sh versions: no release looked up yet: {u}")
+    check(ac("app-check-newer") == ("v9.9.10", True) and av("app-versions-newer") == ("v9.9.10", True),
+          f"this package's releases: a newer one is reported (9.9.10 after 9.9.9, by number) and remembered for the page: "
+          f"{ac('app-check-newer')} {av('app-versions-newer')}")
+    check(ac("app-check-same") == ("v9.9.9", False) and ac("app-check-minor") == ("v9.10", True) and ac("app-check-older") == ("v9.9.08", False),
+          f"this package's releases: the installed one, a higher minor, an older one with a leading zero: "
+          f"{ac('app-check-same')} {ac('app-check-minor')} {ac('app-check-older')}")
+    check(ac("app-check-junk") == ("", False) and av("app-versions-junk") == ("v9.9.08", False),
+          f"this package's releases: a tag that is not a version number is not used, the last answer stays: "
+          f"{ac('app-check-junk')} {av('app-versions-junk')}")
     check(res("cron-weekly").get("message") == "geo 定时更新已启用（每周一 6:00）"
           and open(f"{sd}/cron-weekly.txt").read().splitlines() == ["0 6 * * 1 /usr/libexec/xray-mosdns/update.sh geo-auto >>/tmp/xray-mosdns-geo-update.log 2>&1 # xray-mosdns-geo-auto"]
           and res("cron-weekly-status") == {"ok": True, "enabled": 1, "hour": "6", "day": "1", "marker": ""},
