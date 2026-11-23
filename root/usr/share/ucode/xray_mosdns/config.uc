@@ -466,9 +466,6 @@ export function plan(cfg) {
 			name, remarks: grp.remarks, strategy: grp.strategy, members,
 			failback: !!grp.failback,
 			tag: p.group_tag(name), fallback_tag: fallback_tag(grp),
-			// a second balancer over the same members, used by no rule: it
-			// tells the group watcher which members Xray still has as alive
-			alive_tag: (grp.strategy == 'ordered') ? `${name}.alive` : null,
 		};
 		push(p.groups, used[name]);
 		return used[name];
@@ -579,6 +576,24 @@ export function plan(cfg) {
 				fail('no free port left for the inbound of proxied names');
 			p.dns_inbound = { tag: 'tproxy-dns', port: next_port, target: (length(targets) == 1) ? targets[0] : p.main };
 		}
+	}
+
+	// The members of ordered groups are probed by the group watcher, through
+	// an inbound that hands each of its accounts to the node of that name.
+	p.probe = null;
+	let probed = [];
+	for (let grp in p.groups)
+		if (grp.strategy == 'ordered')
+			for (let m in grp.members)
+				if (!(p.tag(m) in probed))
+					push(probed, p.tag(m));
+	if (length(probed)) {
+		next_port++;
+		while (next_port in reserved)
+			next_port++;
+		if (next_port > 65535)
+			fail('no free port left for the probe inbound');
+		p.probe = { tag: 'probe-in', port: next_port, nodes: probed };
 	}
 
 	// When mainland addresses are sent direct, an unclassified name can be

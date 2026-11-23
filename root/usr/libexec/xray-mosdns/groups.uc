@@ -5,10 +5,29 @@
 //   groups.uc pin <group> <node>   keep a group on one member ("-" releases it)
 //   groups.uc watch                daemon: enforce "ordered" groups and pins
 //
-// Xray does the health checking (burstObservatory) and reports which members
-// of a balancer are currently usable. An "ordered" group is kept on its first
-// usable member by overriding the balancer; when no member is usable the
-// override is removed so the balancer's fallback applies.
+// An "ordered" group is kept on its first usable member by overriding the
+// balancer; when no member is usable the override is removed so the
+// balancer's fallback applies.
+//
+// Which members are usable the watcher finds out itself: it sends a request
+// through each one (Xray's "probe-in" SOCKS inbound hands an account to the
+// node of its name). Xray's own checking (burstObservatory) asks at random
+// moments, a few times per several intervals, gives a member up for one
+// lost answer and takes three good ones to have it back, and its first
+// request after every start fails. Here a member is asked at once at the
+// start and then every interval; a request that fails is repeated on the
+// next rounds, and only FAIL_LIMIT in a row make the member down (so one
+// lost answer moves nothing, and a dead member is known within the
+// interval plus half a minute); a down one is asked more often and is up
+// again after RISE good answers. The backup address is tried when the
+// first gives nothing, without restarting anything. When every member
+// fails at once and the router cannot reach a domestic site either, it is
+// the uplink: nothing is counted.
+//
+// Groups of the other kinds are still Xray's (leastLoad, random, round
+// robin need its results), and so is an ordered group when the files in
+// effect are from before the probe inbound (no PROBE_PORT in runtime.env):
+// then the balancer's own selection is what "usable" means, as it was.
 //
 // By default an ordered group is sticky: once it has moved to a later member
 // it stays there for as long as that member is usable, so a primary that
@@ -29,9 +48,19 @@ import { cursor } from 'uci';
 const GROUPS = '/var/etc/xray-mosdns/groups.json';
 const PINS = '/var/run/xray-mosdns-pins.json';
 const PROBE_STATE = '/var/run/xray-mosdns-probe';
-const INTERVAL = 10;
+// what the watcher knows of the nodes it probes, for `list`
+const NODES = '/var/run/xray-mosdns-nodes.json';
+const INTERVAL = 10;		// seconds between rounds when Xray does the checking
+const TICK = 5;			// ... when the watcher does
+const PROBE_TIMEOUT = 5;	// seconds a probe may take
+const FAIL_LIMIT = 3;		// failed probes in a row before a node is down
+const RISE = 2;			// good ones in a row before a down node is up again
+const DOWN_INTERVAL = 30;	// a down node is asked at least this often
+// reachable without the proxy when the uplink works
+const UPLINK = [ 'https://www.aliyun.com', 'https://www.baidu.com' ];
 const SETTLE_ROUNDS = 4;	// probe rounds a group without a held member follows list order
 const SWITCH_COOLDOWN = 600;	// seconds between probe target switches
+const URL = /^https?:\/\/[^[:space:]'"\\]+$/;
 
 function load(path, dflt) {
 	try {
@@ -64,8 +93,14 @@ function settings() {
 	if (!match(port, /^[0-9]+$/))
 		port = '10085';
 	const m = match(rt.PROBE_INTERVAL || opt('probe_interval') || '1m', /^([0-9]+)([smh])$/);
+	// the addresses go into a shell command, in single quotes
+	const url = (v) => (v && match(v, URL)) ? v : null;
 	return {
 		xray, port,
+		// the probe inbound of the files in effect: without one Xray does the checking
+		probe_port: match(rt.PROBE_PORT ?? '', /^[0-9]+$/) ? rt.PROBE_PORT : null,
+		probe_url: url(rt.PROBE_URL),
+		probe_url_backup: url(rt.PROBE_URL_BACKUP),
 		probe_backup: ('PROBE_BACKUP' in rt) ? rt.PROBE_BACKUP == '1' : !!opt('probe_url_backup'),
 		probe_interval: m ? +m[1] * { s: 1, m: 60, h: 3600 }[m[2]] : 60,
 	};
@@ -167,25 +202,6 @@ function desired(grp, state, pins, settling) {
 	return null;
 }
 
-// group name -> until when it settles (see the top); the watcher's memory
-let settle_until = {};
-
-function enforce(grp, pins) {
-	const state = balancer(grp.tag);
-	if (!state)
-		return null;
-	const now = time();
-	if (grp.strategy == 'ordered' && state.override == null && !(settle_until[grp.name] > now))
-		// long enough for the first member's probes to come back after a start
-		settle_until[grp.name] = now + SETTLE_ROUNDS * S.probe_interval;
-	const want = desired(grp, state, pins, settle_until[grp.name] > now);
-	if (want != state.override) {
-		override(grp.tag, want);
-		state.override = want;
-	}
-	return state;
-}
-
 function name_of(grp, tag) {
 	for (let m in grp.members)
 		if (m.tag == tag)
@@ -193,25 +209,204 @@ function name_of(grp, tag) {
 	return null;
 }
 
+function say(msg) {
+	system([ 'logger', '-t', 'xray-mosdns', msg ]);
+}
+
+// ---------------------------------------------------------------- own probes
+// does the watcher check the ordered groups' members itself?
+function own() {
+	return S.probe_port != null && S.probe_url != null;
+}
+
+// tag -> { up: true | false | null (not known yet), fails, oks (in a row),
+//          at (last probe), next (when the next is due), ms, via }
+let nodes = {};
+let uplink_down = false;
+
+// One request through each of the nodes, all at once: tag -> { ok, ms, via }.
+// Any HTTP answer counts, whatever its status: the node carried it.
+function probe(tags) {
+	const one = (t, u) => `curl -s -o /dev/null -m ${PROBE_TIMEOUT} -w '%{http_code} %{time_total}' ` +
+		`-x 'socks5h://${t}:probe@127.0.0.1:${S.probe_port}' '${u}' 2>/dev/null`;
+	let cmd = '';
+	for (let t in tags) {
+		cmd += `( v=p; r=$(${one(t, S.probe_url)}); `;
+		if (S.probe_url_backup)
+			cmd += `case "$r" in 000*|"") v=b; r=$(${one(t, S.probe_url_backup)}) ;; esac; `;
+		cmd += `echo "${t} $v $r" ) & `;
+	}
+	const p = fs.popen(cmd + 'wait', 'r');
+	if (!p)
+		return null;
+	const out = p.read('all');
+	p.close();
+	let res = {};
+	for (let line in split(out ?? '', '\n')) {
+		const m = match(line, /^(\S+) ([pb]) ([0-9]{3}) ([0-9.]+)$/);
+		if (m && m[3] != '000')
+			res[m[1]] = { ok: true, ms: int(+m[4] * 1000), via: (m[2] == 'b') ? 'backup' : 'primary' };
+	}
+	for (let t in tags)
+		res[t] ??= { ok: false };
+	return res;
+}
+
+function uplink_ok() {
+	for (let u in UPLINK)
+		if (system(`curl -s -o /dev/null -m 4 '${u}' 2>/dev/null`) == 0)
+			return true;
+	return false;
+}
+
+// Probes the nodes that are due and keeps their state (see the top).
+// `names`: tag -> node name, for the log.
+function probe_due(tags, names) {
+	for (let t in keys(nodes))
+		if (!(t in tags))
+			delete nodes[t];
+	const now = time();
+	const due = filter(tags, t => !(nodes[t]?.next > now));
+	if (!length(due))
+		return;
+	const res = probe(due);
+	if (!res)
+		return;
+	// Nothing answered, and no node that was not asked is up: the nodes,
+	// or the way out? Not counted when the router reaches nothing at all.
+	if (!length(filter(due, t => res[t].ok)) && !length(filter(tags, t => !(t in due) && nodes[t]?.up === true))) {
+		const down = !uplink_ok();
+		if (down != uplink_down)
+			say(down ? 'node probes: the router reaches no domestic site either: the uplink, not the nodes; nothing is counted until it is back'
+			         : 'node probes: the uplink is back');
+		uplink_down = down;
+		if (down)
+			return;
+	}
+	else
+		uplink_down = false;
+	for (let t in due) {
+		nodes[t] ??= { up: null, fails: 0, oks: 0 };
+		const n = nodes[t], r = res[t];
+		n.at = time();
+		if (r.ok) {
+			n.fails = 0;
+			n.oks++;
+			n.ms = r.ms;
+			n.via = r.via;
+			if (n.up !== true && (n.up == null || n.oks >= RISE)) {
+				if (n.up === false)
+					say(`node ${names[t] ?? t}: answers again (${r.ms} ms)`);
+				n.up = true;
+			}
+			n.next = n.at + (n.up ? S.probe_interval : TICK);
+		}
+		else {
+			n.oks = 0;
+			n.fails++;
+			n.ms = null;
+			if (n.fails >= FAIL_LIMIT) {
+				if (n.up !== false)
+					say(`node ${names[t] ?? t}: no answer to ${n.fails} probes in a row, taken as down`);
+				n.up = false;
+				n.next = n.at + ((S.probe_interval < DOWN_INTERVAL) ? S.probe_interval : DOWN_INTERVAL);
+			}
+			else
+				n.next = n.at + TICK;
+		}
+	}
+	fs.writefile(NODES, sprintf('%J', { at: time(), nodes }));
+}
+
+// The member an ordered group should be held on by the watcher's own
+// probes, or null for the balancer's fallback. Up: answered lately. A
+// member that has failed fewer than FAIL_LIMIT probes in a row is still up;
+// one not known yet is neither up nor down.
+function desired_probed(grp, state, pins) {
+	const tags = member_tags(grp);
+	const pin = pins[grp.name];
+	if (pin && (pin in tags))
+		return pin;
+	const up = t => nodes[t]?.up === true;
+	const held = (state.override in tags) ? state.override : null;
+	if (held && !grp.failback) {
+		// sticky: given up only when it is down; while it is not known yet
+		// (the watcher just started) it stays
+		if (up(held) || nodes[held]?.up == null)
+			return held;
+	}
+	// Nothing held and not every member known yet (the first probes of one
+	// failed): no member is taken before the ones ahead of it in the list
+	// are known, or a sticky group would keep whichever answered first.
+	for (let t in tags) {
+		if (up(t))
+			return t;
+		if (!held && nodes[t]?.up == null)
+			return null;
+	}
+	// none is up; the one in use while it is not down yet
+	return (held && nodes[held]?.up !== false) ? held : null;
+}
+
+// group name -> until when it settles (see the top); the watcher's memory
+let settle_until = {};
+
+function enforce(grp, pins) {
+	const state = balancer(grp.tag);
+	if (!state)
+		return null;
+	let want;
+	if (grp.strategy == 'ordered' && own())
+		want = desired_probed(grp, state, pins);
+	else {
+		const now = time();
+		if (grp.strategy == 'ordered' && state.override == null && !(settle_until[grp.name] > now))
+			// long enough for the first member's probes to come back after a start
+			settle_until[grp.name] = now + SETTLE_ROUNDS * S.probe_interval;
+		want = desired(grp, state, pins, settle_until[grp.name] > now);
+	}
+	if (want != state.override) {
+		override(grp.tag, want);
+		if (grp.strategy == 'ordered' && own())
+			say(`group ${grp.name}: on ${want ? name_of(grp, want) : `its fallback (${grp.fallback})`} now` +
+			    (state.override ? `, was on ${name_of(grp, state.override) ?? state.override}` : ''));
+		state.override = want;
+	}
+	return state;
+}
+
 function cmd_list() {
 	const pins = load(PINS, {});
+	// what the watcher knows, while it is fresh (it writes after every probe)
+	const known = load(NODES, {});
+	if (own() && time() - (known.at ?? 0) < 2 * S.probe_interval + 60 && type(known.nodes) == 'object')
+		nodes = known.nodes;
 	let out = [];
 	for (let grp in valid_groups()) {
 		const state = balancer(grp.tag);
+		const probed = (grp.strategy == 'ordered' && own());
 		let current = null;
 		if (state) {
 			// the member held, else the one it would be (the watcher holds it
 			// within a round); round robin / random have no single current member
-			current = state.override ?? desired(grp, state, pins)
+			current = state.override ?? (probed ? desired_probed(grp, state, pins) : desired(grp, state, pins))
 				?? ((grp.strategy == 'fastest') ? state.selects[0] : null);
 		}
+		let latency = {};
+		if (probed)
+			for (let m in grp.members)
+				if (nodes[m.tag]?.up === true && nodes[m.tag].ms != null)
+					latency[m.name] = nodes[m.tag].ms;
 		push(out, {
 			name: grp.name,
 			remarks: grp.remarks,
 			strategy: grp.strategy,
 			members: map(grp.members, m => m.name),
 			running: state != null,
-			healthy: state ? filter(map(state.selects, t => name_of(grp, t)), v => v != null) : [],
+			healthy: probed ? map(filter(grp.members, m => nodes[m.tag]?.up === true), m => m.name)
+				: (state ? filter(map(state.selects, t => name_of(grp, t)), v => v != null) : []),
+			// milliseconds of the last probe through each usable member (ordered groups)
+			latency,
 			current: current ? name_of(grp, current) : null,
 			pinned: (pins[grp.name] && (pins[grp.name] in member_tags(grp))) ? name_of(grp, pins[grp.name]) : null,
 			fallback: grp.fallback,
@@ -273,14 +468,27 @@ function cmd_watch() {
 		// long enough for a freshly started Xray to have finished its first probes
 		const dead_limit = 3 * S.probe_interval + 60;
 		const pins = load(PINS, {});
+		const groups = valid_groups();
+		if (own()) {
+			let tags = [], names = {};
+			for (let grp in groups)
+				if (grp.strategy == 'ordered')
+					for (let m in grp.members)
+						if (!(m.tag in tags)) {
+							push(tags, m.tag);
+							names[m.tag] = m.name;
+						}
+			probe_due(tags, names);
+		}
 		let seen = 0, alive = 0;
-		for (let grp in valid_groups()) {
+		for (let grp in groups) {
 			let state = null;
 			if (grp.strategy == 'ordered' || pins[grp.name])
 				state = enforce(grp, pins);
 			else if (S.probe_backup)
 				state = balancer(grp.tag);
-			if (state) {
+			// the groups Xray checks: is its probe address the thing that fails?
+			if (state && !(grp.strategy == 'ordered' && own())) {
 				seen++;
 				// a member with a failed probe lately is not usable but still
 				// answers: the probe target is not the one at fault
@@ -301,7 +509,7 @@ function cmd_watch() {
 				dead_since = null;
 			}
 		}
-		system([ 'sleep', `${INTERVAL}` ]);
+		system([ 'sleep', `${own() ? TICK : INTERVAL}` ]);
 	}
 }
 

@@ -252,17 +252,24 @@ tags = [o["tag"] for o in x["outbounds"]]
 check(tags == ["a.node", "b.node", "c.node", "direct", "block"], f"balance: outbound tags {tags}")
 bal = {b["tag"]: b for b in x["routing"]["balancers"]}
 check(bal["balance.group"] == {"tag": "balance.group", "selector": ["a.node", "b.node"], "strategy": {"type": "leastLoad"}, "fallbackTag": "c.node"}, "legacy balancer becomes a 'fastest' group of the enabled nodes")
-check(bal["failover.group"] == {"tag": "failover.group", "selector": ["a.node", "b.node"], "strategy": {"type": "leastLoad", "settings": {"expected": 2, "tolerance": 0.3}}, "fallbackTag": "direct"}, "legacy failover becomes an 'ordered' group whose members are all probed; one failed probe makes a member unusable")
-check(bal.get("failover.alive") == {"tag": "failover.alive", "selector": ["a.node", "b.node"], "strategy": {"type": "leastLoad", "settings": {"expected": 2}}}
-      and "balance.alive" not in bal, "an ordered group also gets a balancer that reports the members Xray still has as alive; a 'fastest' one does not")
-check(not [r for r in x["routing"]["rules"] if str(r.get("balancerTag", "")).endswith(".alive")], "no rule routes through an '.alive' balancer")
-check(x["burstObservatory"]["subjectSelector"] == ["a.node", "b.node"], "every group member is probed once")
+check(bal["failover.group"] == {"tag": "failover.group", "selector": ["a.node", "b.node"], "strategy": {"type": "leastLoad"}, "fallbackTag": "direct"}
+      and sorted(bal) == ["balance.group", "failover.group"],
+      "legacy failover becomes an 'ordered' group: a balancer that selects nothing by itself (the watcher holds it on a member, else its fallback applies)")
+check(x["burstObservatory"]["subjectSelector"] == ["a.node", "b.node"], "Xray probes the members of the group it chooses in itself ('fastest'), once")
+pin = [i for i in x["inbounds"] if i["tag"] == "probe-in"]
+check(len(pin) == 1 and pin[0]["listen"] == "127.0.0.1" and pin[0]["protocol"] == "socks" and "sniffing" not in pin[0]
+      and pin[0]["settings"] == {"auth": "password", "accounts": [{"user": "a.node", "pass": "probe"}, {"user": "b.node", "pass": "probe"}]},
+      f"the watcher's probes: a local SOCKS inbound with an account per member of the ordered group {pin}")
+check(x["routing"]["rules"][2:5] == [{"type": "field", "inboundTag": ["probe-in"], "user": ["a.node"], "outboundTag": "a.node"},
+                                     {"type": "field", "inboundTag": ["probe-in"], "user": ["b.node"], "outboundTag": "b.node"},
+                                     {"type": "field", "inboundTag": ["probe-in"], "outboundTag": "block"}],
+      f"the watcher's probes: each account to the node of its name ahead of the rules, nothing else gets through {x["routing"]["rules"][2:5]}")
 check("RoutingService" in x["api"]["services"], "RoutingService is needed to read and pin balancer choices")
 check({"type": "field", "domain": ["geosite:openai"], "balancerTag": "failover.group"} in x["routing"]["rules"], "rule -> failover group")
 check(x["routing"]["rules"][-1].get("balancerTag") == "balance.group", "balance: default is the balancer group")
 gj = json.load(open(f"{out}/balance/groups.json"))
 check([g["name"] for g in gj] == ["balance", "failover"] and gj[1]["members"] == [{"name": "a", "tag": "a.node"}, {"name": "b", "tag": "b.node"}], "groups.json lists the ordered members for the watcher")
-check(gj[1].get("alive") == "failover.alive" and gj[0].get("alive") is None, "groups.json names the ordered group's '.alive' balancer for the watcher")
+check("alive" not in gj[1] and "alive" not in gj[0], "groups.json: no '.alive' balancer any more (the watcher probes the ordered group's members itself)")
 check(plugin(m, "add_proxy") is None, "kernel split off: no nftset plugins")
 bmain = plugin(m, "main_sequence")["args"]["exec"]
 check(bmain[-2:] == ["remote_seq", "_return"], "default proxy without a mainland rule: unclassified names resolve through the proxy")
@@ -278,8 +285,10 @@ x, m, n = load("groups")
 check_mosdns_refs("groups", m)
 tags = [o["tag"] for o in x["outbounds"]]
 check(tags == ["a.node", "b.node", "direct", "block"], f"groups: a disabled node gets no outbound ({tags})")
-check(x["routing"]["balancers"] == [{"tag": "hk.group", "selector": ["a.node", "b.node"], "strategy": {"type": "leastLoad", "settings": {"expected": 2, "tolerance": 0.3}}, "fallbackTag": "block"},
-                                    {"tag": "hk.alive", "selector": ["a.node", "b.node"], "strategy": {"type": "leastLoad", "settings": {"expected": 2}}}], "groups: disabled member skipped, unused and empty groups produce no balancer")
+check(x["routing"]["balancers"] == [{"tag": "hk.group", "selector": ["a.node", "b.node"], "strategy": {"type": "leastLoad"}, "fallbackTag": "block"}],
+      "groups: disabled member skipped, unused and empty groups produce no balancer")
+check(x["burstObservatory"]["subjectSelector"] == ["xm-nothing-to-probe"],
+      "groups: ordered groups only: Xray probes nothing (leastLoad needs an observatory to start; no node's tag begins with this)")
 check(x["burstObservatory"]["pingConfig"]["destination"] == "https://probe.example/204" and x["burstObservatory"]["pingConfig"]["interval"] == "30s", "groups: probe settings")
 check({"type": "field", "domain": ["geosite:netflix"], "outboundTag": "a.node"} in x["routing"]["rules"], "groups: a group without usable members resolves to its fallback")
 check({"type": "field", "ip": ["192.0.2.0/24"], "outboundTag": "b.node"} in x["routing"]["rules"], "groups: plain node target")
@@ -692,11 +701,17 @@ rt = runtime_env("chnroute")
 check(rt == {"XRAY_BIN": "/usr/bin/xray", "MOSDNS_BIN": "/usr/bin/mosdns", "GEO_DIR": "/usr/share/v2ray",
              "TPROXY_PORT": "12345", "API_PORT": "10085", "SOCKS_PORT": "1070", "DNS_PORT": "5335", "STATS_PORT": "5336", "LOG_DAYS": "30", "QUERY_LOG_MAX": "4194304", "DNS_REDIRECT": "1",
              "DNS_WATCH": "manage", "FWMARK": "0x1", "ROUTE_TABLE": "100", "IPV6": "0", "KERNEL_SPLIT": "1",
-             "DEFAULT_ACTION": "proxy", "PROBE_INTERVAL": "1m", "PROBE_BACKUP": "0", "MAIN_TARGET": "hk1", "ECS_IFACES": ""},
+             "DEFAULT_ACTION": "proxy", "PROBE_INTERVAL": "1m", "PROBE_BACKUP": "0", "PROBE_PORT": "",
+             "PROBE_URL": "https://www.gstatic.com/generate_204", "PROBE_URL_BACKUP": "", "MAIN_TARGET": "hk1", "ECS_IFACES": ""},
       f"runtime.env (chnroute): {rt}")
 rt = runtime_env("groups")
 check(rt.get("DNS_WATCH") == "log-only" and rt.get("MAIN_TARGET") == "hk" and rt.get("PROBE_INTERVAL") == "30s",
       f"runtime.env (groups): static redirect, a group as main target, the group probe interval: {rt}")
+gx = json.load(open(f"{out}/groups/xray.json"))
+gports = {i["tag"]: i["port"] for i in gx["inbounds"]}
+check(rt.get("PROBE_PORT") == str(gports.get("probe-in")) and gports["probe-in"] not in [v for k, v in gports.items() if k != "probe-in"]
+      and rt.get("PROBE_URL") == "https://probe.example/204" and rt.get("PROBE_URL_BACKUP") == "",
+      f"runtime.env (groups): the probe inbound's port (one of its own, after the devices') and where the watcher asks: {rt.get('PROBE_PORT')} {gports}")
 rt = runtime_env("gfw")
 check(rt.get("IPV6") == "1" and rt.get("DEFAULT_ACTION") == "direct", f"runtime.env (gfw): IPv6 on, direct by default: {rt}")
 rt = runtime_env("balance")
@@ -805,6 +820,37 @@ else:
     gs = [l for l in open(f"{rd}/groups-settle-api.log").read().splitlines() if " bo " in l]
     check(gs == ["api bo --server=127.0.0.1:20002 -b hk.group b.node", "api bo --server=127.0.0.1:20002 -b hk.group a.node"],
           f"groups.uc watch: after a start an ordered group follows list order for a few probe rounds, then is sticky again {gs}")
+    # the watcher's own probes
+    def gbo(n):
+        return [l.split(" bo ", 1)[1] for l in open(f"{rd}/groups-{n}-bo.log").read().splitlines()]
+    def gnodes(n):
+        try:
+            return json.load(open(f"{rd}/groups-{n}-nodes.json"))["nodes"]
+        except (OSError, ValueError):
+            return None
+    asked = open(f"{rd}/groups-own-first-asked.log").read().splitlines()
+    nf = gnodes("own-first") or {}
+    check(gbo("own-first") == ["--server=127.0.0.1:20002 -b hk.group a.node"]
+          and sorted(asked) == ["a.node https://probe.test/204", "b.node https://backup.test/204", "b.node https://probe.test/204"]
+          and nf.get("a.node", {}).get("up") is True and nf["a.node"].get("via") == "primary" and nf["a.node"].get("ms") == 42
+          and nf.get("b.node", {}).get("up") is True and nf["b.node"].get("via") == "backup",
+          f"groups.uc watch, own probes: every member asked at once at the start, the backup address where the first gives nothing; "
+          f"the group goes to the first member in order {gbo('own-first')} {asked} {nf}")
+    ol = json.load(open(f"{rd}/groups-own-list.json"))["groups"][0]
+    check(ol["healthy"] == ["a", "b"] and ol["current"] == "a" and ol["latency"] == {"a": 42, "b": 42},
+          f"groups.uc list, own probes: usable members and their probe times from what the watcher knows {ol}")
+    n2 = gnodes("own-two") or {}
+    check(gbo("own-two") == [] and n2.get("a.node", {}).get("fails") == 2 and n2["a.node"].get("up") is None,
+          f"groups.uc watch, own probes: two failed probes in a row move nothing {gbo('own-two')} {n2.get('a.node')}")
+    nd = gnodes("own-down") or {}
+    check(gbo("own-down") == ["--server=127.0.0.1:20002 -b hk.group b.node"] and nd.get("a.node", {}).get("up") is False and nd.get("b.node", {}).get("up") is True,
+          f"groups.uc watch, own probes: the third failed probe in a row makes the member down, the group moves to the next {gbo('own-down')} {nd}")
+    check(gbo("own-wait") == [],
+          f"groups.uc watch, own probes: nothing held and the first member not known yet: the second is not taken before the first is down {gbo('own-wait')}")
+    check(gbo("own-uplink") == [] and gnodes("own-uplink") is None,
+          f"groups.uc watch, own probes: every probe fails and the router reaches no domestic site: nothing counted, the group stays {gbo('own-uplink')} {gnodes('own-uplink')}")
+    check(gbo("own-none") == ["--server=127.0.0.1:20002 -b hk.group -r"],
+          f"groups.uc watch, own probes: no member answers and the uplink is fine: the override is removed, the fallback applies {gbo('own-none')}")
     sj = json.load(open(f"{rd}/status.json"))
     check(sj.get("effective") == {"default_action": "direct", "kernel_split": 0, "dns_redirect": 0, "dns_port": 5353},
           f"status.sh: the default action, split, DNS redirect and port in effect, not UCI's {sj}")

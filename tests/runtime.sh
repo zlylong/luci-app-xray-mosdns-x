@@ -233,6 +233,10 @@ case "\$2" in
 				*.alive) printf 'Balancer: %s\n  - Selects:\n    0 a.node\n' "\$4" ;;
 				*) printf 'Balancer: %s\n  - Selecting Override:\n  - Selects:\n' "\$4" ;;
 			esac
+		elif [ "\$mode" = none ]; then
+			printf 'Balancer: %s\n  - Selecting Override:\n  - Selects:\n' "\$4"
+		elif [ "\$mode" = held-a ]; then
+			printf 'Balancer: %s\n  - Selecting Override:\n    1   a.node\n  - Selects:\n' "\$4"
 		elif [ "\$mode" = settle-b ]; then
 			printf 'Balancer: %s\n  - Selecting Override:\n  - Selects:\n    1 b.node\n' "\$4"
 		elif [ "\$mode" = settle-ab ]; then
@@ -281,6 +285,70 @@ sleep 21
 kill "$gw" 2>/dev/null
 cp "$OUT/groups-api.log" "$OUT/groups-settle-api.log"
 rm -f "$OUT/api-mode"
+
+# ---- the watcher's own probes (a probe inbound in the files in effect).
+# A stand-in for curl: a request through the probe inbound answers as
+# $OUT/probe-<node> says ("ok", "backup": only the backup address, else
+# nothing), one without a proxy (the uplink check) as $OUT/probe-uplink.
+mkdir -p "$OUT/pbin"
+cat > "$OUT/pbin/curl" <<EOF
+#!/bin/sh
+node=""; url=""
+while [ \$# -gt 0 ]; do
+	case "\$1" in
+		-x) node=\${2#socks5h://}; node=\${node%%:*}; shift ;;
+		-o|-m|-w) shift ;;
+		-*) ;;
+		*) url=\$1 ;;
+	esac
+	shift
+done
+if [ -z "\$node" ]; then
+	[ "\$(cat "$OUT/probe-uplink" 2>/dev/null)" = down ] && exit 7
+	exit 0
+fi
+echo "\$node \$url" >> "$OUT/probe-asked.log"
+how=\$(cat "$OUT/probe-\$node" 2>/dev/null)
+if [ "\$how" = ok ] || { [ "\$how" = backup ] && [ "\$url" = https://backup.test/204 ]; }; then
+	printf '204 0.042'; exit 0
+fi
+printf '000 5.001'; exit 28
+EOF
+chmod +x "$OUT/pbin/curl"
+prt() { # the files in effect have a probe inbound; $1 = interval
+	grt 20002 "${1:-30s}"
+	printf "PROBE_PORT=20009\nPROBE_URL='https://probe.test/204'\nPROBE_URL_BACKUP='https://backup.test/204'\n" >> /var/etc/xray-mosdns/runtime.env
+}
+printf '[{"name":"hk","tag":"hk.group","strategy":"ordered","failback":false,"members":[{"name":"a","tag":"a.node"},{"name":"b","tag":"b.node"}],"fallback":"direct"}]\n' \
+	> /var/etc/xray-mosdns/groups.json
+gwatch() { # $1 = seconds to let it run, $2 = name for its API log
+	: > "$OUT/groups-api.log"; : > "$OUT/probe-asked.log"; rm -f /var/run/xray-mosdns-nodes.json
+	PATH="$OUT/pbin:$PATH" ucode "$REPO/root/usr/libexec/xray-mosdns/groups.uc" watch > "$OUT/groups-$2.log" 2>&1 & gw=$!
+	sleep "$1"; kill "$gw" 2>/dev/null; wait "$gw" 2>/dev/null
+	grep ' bo ' "$OUT/groups-api.log" > "$OUT/groups-$2-bo.log"
+	cp /var/run/xray-mosdns-nodes.json "$OUT/groups-$2-nodes.json" 2>/dev/null
+	cp "$OUT/probe-asked.log" "$OUT/groups-$2-asked.log"
+}
+prt
+# nothing held, both answer (b only on the backup address): the first in order, at once
+echo ok > "$OUT/probe-a.node"; echo backup > "$OUT/probe-b.node"; echo up > "$OUT/probe-uplink"
+echo none > "$OUT/api-mode"
+gwatch 3 own-first
+PATH="$OUT/pbin:$PATH" ucode "$REPO/root/usr/libexec/xray-mosdns/groups.uc" list > "$OUT/groups-own-list.json" 2>&1
+# a held, a stops answering: given up after three probes in a row (one a round), not before
+echo held-a > "$OUT/api-mode"; echo dead > "$OUT/probe-a.node"
+gwatch 8 own-two
+gwatch 14 own-down
+# nothing held, the first member's probes fail: b is not taken before a is known to be down
+echo none > "$OUT/api-mode"
+gwatch 8 own-wait
+# every probe fails and so does the uplink check: nothing is counted, a stays held
+echo held-a > "$OUT/api-mode"; echo dead > "$OUT/probe-b.node"; echo down > "$OUT/probe-uplink"
+gwatch 14 own-uplink
+# the uplink is fine and nothing answers: the fallback (override removed)
+echo up > "$OUT/probe-uplink"
+gwatch 14 own-none
+rm -f "$OUT/api-mode" /var/run/xray-mosdns-nodes.json
 grt 20002
 sh "$REPO/root/usr/libexec/xray-mosdns/status.sh" > "$OUT/status.json" 2>&1
 # update.sh below goes by the configured binary: not this one

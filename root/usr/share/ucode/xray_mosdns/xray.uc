@@ -107,20 +107,13 @@ function outbound(n, tag) {
 
 // How a group strategy maps onto an Xray balancer.
 //  fastest: leastLoad picks the member with the best probe results
-//  ordered: leastLoad only does the health checking here (expected = all
-//           members keeps every healthy one selectable); the group watcher
-//           pins the first healthy member in list order. Xray's own
-//           "costs" weight probe jitter, not latency, so they cannot
-//           express a strict priority. Healthy means no failed probe among
-//           the last ones (tolerance): Xray itself calls a member alive
-//           until every probe it keeps (sampling: 3) has failed, and a
-//           member whose probes fail every other time, with its traffic,
-//           would never be given up. The watcher falls back to the alive
-//           ones (the group's ".alive" balancer) when none is healthy.
-const ORDERED_TOLERANCE = 0.3;	// one failed probe of three is too many
+//  ordered: the group watcher probes the members itself and holds the
+//           group on one by overriding the balancer (groups.uc). leastLoad
+//           with nothing probed for it selects no member, so without an
+//           override (none usable, or Xray has just started) the
+//           balancer's fallback applies.
 function strategy(grp) {
 	switch (grp.strategy) {
-	case 'ordered':    return { type: 'leastLoad', settings: { expected: length(grp.members), tolerance: ORDERED_TOLERANCE } };
 	case 'roundrobin': return { type: 'roundRobin' };
 	case 'random':     return { type: 'random' };
 	}
@@ -151,6 +144,12 @@ export function build(cfg, plan, env) {
 		{ type: 'field', inboundTag: [ 'api' ], outboundTag: 'api' },
 		{ type: 'field', ip: [ 'geoip:private' ], outboundTag: 'direct' },
 	];
+	// the watcher's probes: each account to the node of its name, nothing else
+	if (plan.probe) {
+		for (let t in plan.probe.nodes)
+			push(rules, { type: 'field', inboundTag: [ plan.probe.tag ], user: [ t ], outboundTag: t });
+		push(rules, { type: 'field', inboundTag: [ plan.probe.tag ], outboundTag: 'block' });
+	}
 	const node_ips = [ ...env.node_ips.v4, ...env.node_ips.v6 ];
 	if (length(node_ips))
 		push(rules, { type: 'field', ip: node_ips, outboundTag: 'direct' });
@@ -253,6 +252,11 @@ export function build(cfg, plan, env) {
 			tproxy_in,
 			...device_in,
 			socks_in,
+			// for the group watcher's probes only: an account per probed node
+			...(plan.probe ? [ {
+				tag: plan.probe.tag, listen: '127.0.0.1', port: plan.probe.port, protocol: 'socks',
+				settings: { auth: 'password', accounts: map(plan.probe.nodes, t => ({ user: t, pass: 'probe' })) },
+			} ] : []),
 			{
 				tag: 'api', listen: '127.0.0.1', port: g.api_port,
 				protocol: 'dokodemo-door', settings: { address: '127.0.0.1' },
@@ -280,18 +284,20 @@ export function build(cfg, plan, env) {
 		if (!length(grp.members))
 			continue;	// nothing to choose from: targets point at the fallback directly
 		const tags = map(grp.members, plan.tag);
-		for (let t in tags)
-			if (!(t in probed))
-				push(probed, t);
+		// Xray probes for the groups it chooses in itself
+		if (grp.strategy != 'ordered')
+			for (let t in tags)
+				if (!(t in probed))
+					push(probed, t);
 		// selectors are prefix matches; every node tag ends in ".node", so a
 		// full tag can only match itself
 		push(balancers, { tag: grp.tag, selector: tags, strategy: strategy(grp), fallbackTag: grp.fallback_tag });
-		if (grp.alive_tag)
-			push(balancers, { tag: grp.alive_tag, selector: tags, strategy: { type: 'leastLoad', settings: { expected: length(tags) } } });
 	}
 	if (length(balancers)) {
+		// leastLoad does not start without an observatory; with ordered
+		// groups only it gets one that probes nothing (no tag begins so)
 		conf.burstObservatory = {
-			subjectSelector: probed,
+			subjectSelector: length(probed) ? probed : [ 'xm-nothing-to-probe' ],
 			pingConfig: {
 				destination: g.probe_url,
 				interval: g.probe_interval, timeout: '5s', sampling: 3,

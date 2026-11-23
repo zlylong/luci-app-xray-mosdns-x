@@ -58,11 +58,11 @@ return view.extend({
 		o.placeholder = 'https://www.gstatic.com/generate_204';
 
 		o = s.taboption('proxy', form.Value, 'probe_url_backup', _('备用探测地址'),
-			_('可留空。所有节点组的全部成员同时探测失败并持续一段时间（约 3 个探测间隔加 1 分钟）时，多半是探测地址本身不可达，这时自动换用备用地址；切换需要重启 Xray，两次切换至少间隔 10 分钟。重启路由器后回到主地址。'));
+			_('可留空。“按顺序”的组：主地址没有应答时每次都接着试备用地址。其他策略的组：全部成员同时探测失败并持续一段时间（约 3 个探测间隔加 1 分钟）时自动换用备用地址，切换需要重启 Xray，两次切换至少间隔 10 分钟。'));
 		o.placeholder = 'https://cp.cloudflare.com/generate_204';
 
 		o = s.taboption('proxy', form.Value, 'probe_interval', _('节点组探测间隔'),
-			_('例如 30s、1m、5m。间隔越短切换越快，探测流量也越多。'));
+			_('例如 30s、1m、5m。“按顺序”的组：正常的成员每个间隔探测一次，失败后每 5 秒重试，连续 3 次失败才切换，所以间隔可以设长一些。'));
 		o.placeholder = '1m';
 		o.validate = function(sid, v) {
 			return (!v || /^[0-9]+[smh]$/.test(v)) ? true : _('格式应为数字加 s、m 或 h');

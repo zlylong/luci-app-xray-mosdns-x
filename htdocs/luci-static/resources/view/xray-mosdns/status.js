@@ -197,7 +197,10 @@ return view.extend({
 					E('td', { 'class': 'td' }, grp.remarks || grp.name),
 					E('td', { 'class': 'td' }, xm.STRATEGIES[grp.strategy] || grp.strategy),
 					E('td', { 'class': 'td' }, current),
-					E('td', { 'class': 'td' }, '%d / %d'.format(grp.healthy.length, grp.members.length)),
+					/* ordered groups: the watcher's last probe through each usable member */
+					E('td', { 'class': 'td', 'title': grp.healthy.map(function(n) {
+						return (grp.latency && grp.latency[n] != null) ? '%s %d ms'.format(n, grp.latency[n]) : n;
+					}).join('\n') }, '%d / %d'.format(grp.healthy.length, grp.members.length)),
 					E('td', { 'class': 'td' }, sel)
 				]);
 			}));

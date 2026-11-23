@@ -179,7 +179,10 @@ const cfg = load(opt.confdir);
 if (!opt.geoip)
 	opt.geoip = `${cfg.global.geo_dir}/geoip.dat`;
 
-// the group watcher switches to the backup probe target by writing this file
+// as configured: the watcher tries the backup itself (ordered groups)
+const probe_urls = [ cfg.global.probe_url, cfg.global.probe_url_backup ];
+// For the groups Xray probes, the group watcher switches to the backup
+// probe target by writing this file
 const PROBE_STATE = '/var/run/xray-mosdns-probe';
 if (cfg.global.probe_url_backup && trim(fs.readfile(PROBE_STATE) ?? '') == 'backup')
 	cfg.global.probe_url = cfg.global.probe_url_backup;
@@ -262,7 +265,6 @@ write('nft-dns-off.rules', redir.off);
 // what the group watcher and the status page need to talk to the balancers
 write('groups.json', sprintf('%.J\n', map(filter(plan.groups, grp => length(grp.members) > 0), grp => ({
 	name: grp.name, remarks: grp.remarks, tag: grp.tag, strategy: grp.strategy, failback: grp.failback,
-	alive: grp.alive_tag,
 	members: map(grp.members, m => ({ name: m, tag: plan.tag(m) })),
 	fallback: grp.fallback_tag,
 }))));
@@ -294,6 +296,10 @@ write('runtime.env', join('\n', [
 	// the group watcher's pace and whether it may switch to the backup probe
 	`PROBE_INTERVAL=${g.probe_interval}`,
 	`PROBE_BACKUP=${g.probe_url_backup ? 1 : 0}`,
+	// the watcher's own probes (ordered groups): the inbound and where to ask
+	`PROBE_PORT=${plan.probe ? plan.probe.port : ''}`,
+	`PROBE_URL='${probe_urls[0]}'`,
+	`PROBE_URL_BACKUP='${probe_urls[1] ?? ''}'`,
 	`MAIN_TARGET='${match(g.main_target ?? '', /^[A-Za-z0-9_-]+$/) ? g.main_target : ''}'`,
 	// ECS from the router's own address: the interfaces whose new address needs a new config
 	`ECS_IFACES='${join(' ', ecs_ifaces)}'`,
