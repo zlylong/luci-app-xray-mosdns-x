@@ -1,6 +1,8 @@
 #!/bin/sh
 # Update helper for luci-app-xray-mosdns-x:
 #   versions | check | geo | xray | mosdns
+#   xray-file <zip> | mosdns-file <zip> | geo-dir <dir> [version]: the same
+#   installs from files already here (the offline bundle's install.sh)
 # This package itself is not updated from here: `check` (and the scheduled
 # geo update) only look up whether GitHub has a newer release of it.
 # UPD_TEST_DIR=<dir> installs into a test root (used by the build VM tests).
@@ -243,11 +245,20 @@ cmd_geo() {
 		[ -n "$sum" ] || { err "cannot download the checksum of $f"; return; }
 		sha256_ok "$TMP/$f" "$sum" || { err "$f does not match its published checksum: not installed"; return; }
 	done
-	gs=$(geo_size "$TMP/geosite.dat"); gp=$(geo_size "$TMP/geoip.dat")
-	[ "$gs" -gt 1000000 ] && [ "$gp" -gt 1000000 ] || { err "downloaded geo data looks invalid"; return; }
+	put_geo "$TMP" "$_ver"
+}
+
+# $1 = directory with geosite.dat and geoip.dat, $2 = what to note as their version
+put_geo() {
+	gd=$(v2ray_dir)
+	mkdir -p "$gd"
+	_src=$1; _ver=$2
+	[ -f "$_src/geosite.dat" ] && [ -f "$_src/geoip.dat" ] || { err "no geosite.dat and geoip.dat in $_src"; return; }
+	gs=$(geo_size "$_src/geosite.dat"); gp=$(geo_size "$_src/geoip.dat")
+	[ "$gs" -gt 1000000 ] && [ "$gp" -gt 1000000 ] || { err "the geo data looks invalid"; return; }
 	bs=$(backup_file "$gd/geosite.dat") && bp=$(backup_file "$gd/geoip.dat") || { err "cannot back up the current geo data"; return; }
 	# copies next to the targets, renamed over them; the first is undone if the second fails
-	if ! { cp -f "$TMP/geosite.dat" "$gd/.geosite.dat.new" && cp -f "$TMP/geoip.dat" "$gd/.geoip.dat.new"; }; then
+	if ! { cp -f "$_src/geosite.dat" "$gd/.geosite.dat.new" && cp -f "$_src/geoip.dat" "$gd/.geoip.dat.new"; }; then
 		rm -f "$gd/.geosite.dat.new" "$gd/.geoip.dat.new"
 		err "install failed (disk full?)"
 		return
@@ -320,11 +331,18 @@ cmd_xray() {
 	sum=$(curl -fsSL --max-time 30 "$url.dgst" 2>/dev/null | sed -n 's/^SHA2-256= *\([0-9a-fA-F]\{64\}\).*/\1/p' | head -1)
 	[ -n "$sum" ] || { err "cannot download the checksum of $asset"; return; }
 	sha256_ok "$TMP/xray.zip" "$sum" || { err "$asset does not match its published checksum: not installed"; return; }
+	put_xray "$TMP/xray.zip"
+}
+
+# $1 = an Xray release archive
+put_xray() {
+	xb=$(xray_bin)
+	[ -f "$1" ] || { err "no such file: $1"; return; }
 	rm -rf "$TMP/xray-new"; mkdir -p "$TMP/xray-new"
-	unzip -o -q "$TMP/xray.zip" -d "$TMP/xray-new" || { err "unzip failed"; return; }
+	unzip -o -q "$1" -d "$TMP/xray-new" || { err "unzip failed"; return; }
 	chmod +x "$TMP/xray-new/xray" 2>/dev/null || { err "no xray binary in archive"; return; }
 	newver=$("$TMP/xray-new/xray" version 2>/dev/null | head -1)
-	[ -n "$newver" ] || { err "downloaded xray does not run"; return; }
+	[ -n "$newver" ] || { err "this xray does not run here"; return; }
 	oldver=$("$xb" version 2>/dev/null | head -1)
 	bk=$(backup_file "$xb") || { err "cannot back up $xb"; return; }
 	if install_bin "$TMP/xray-new/xray" "$xb" && "$xb" version >/dev/null 2>&1; then
@@ -344,17 +362,24 @@ cmd_mosdns() {
 	url=$(latest_url pmkol/mosdns-x "$asset")
 	[ -n "$url" ] || { err "cannot find release asset $asset"; return; }
 	curl -fL --max-time 600 -o "$TMP/mosdns.zip" "$url" || { err "download failed"; return; }
+	put_mosdns "$TMP/mosdns.zip" " (no published checksum to verify against)"
+}
+
+# $1 = a mosdns-x release archive, $2 = a note for the message
+put_mosdns() {
+	mb=$(mosdns_bin)
+	[ -f "$1" ] || { err "no such file: $1"; return; }
 	rm -rf "$TMP/mosdns-new"; mkdir -p "$TMP/mosdns-new"
-	unzip -o -q "$TMP/mosdns.zip" -d "$TMP/mosdns-new" || { err "unzip failed"; return; }
+	unzip -o -q "$1" -d "$TMP/mosdns-new" || { err "unzip failed"; return; }
 	newbin="$TMP/mosdns-new/mosdns"
 	[ -f "$newbin" ] || { err "no mosdns binary in archive"; return; }
 	chmod +x "$newbin"
 	newver=$("$newbin" version 2>/dev/null | head -1)
-	[ -n "$newver" ] || { err "downloaded mosdns does not run"; return; }
+	[ -n "$newver" ] || { err "this mosdns does not run here"; return; }
 	oldver=$("$mb" version 2>/dev/null | head -1)
 	bk=$(backup_file "$mb") || { err "cannot back up $mb"; return; }
 	if install_bin "$newbin" "$mb" && "$mb" version >/dev/null 2>&1; then
-		ok "mosdns updated: $oldver -> $newver (no published checksum to verify against). Restart the service to use it."
+		ok "mosdns updated: $oldver -> $newver${2:-}. Restart the service to use it."
 	elif restore "$bk" "$mb"; then
 		err "install failed; the previous mosdns is back in place"
 	else
@@ -370,6 +395,9 @@ case "${1:-versions}" in
 	geo-auto) lock; printf '%s ' "$(date +%Y-%m-%dT%H:%M:%S%z)"; cmd_geo_auto ;;
 	xray) lock; cmd_xray ;;
 	mosdns) lock; cmd_mosdns ;;
+	xray-file) lock; put_xray "${2:-}" ;;
+	mosdns-file) lock; put_mosdns "${2:-}" ;;
+	geo-dir) lock; put_geo "${2:-}" "${3:-local-$(date +%Y%m%d-%H%M%S)}" ;;
 	cron-install) lock; cmd_cron_install ;;
 	cron-remove) lock; cmd_cron_remove ;;
 	cron-status) cmd_cron_status ;;

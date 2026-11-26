@@ -1,0 +1,13 @@
+# What the full bundle carries besides this package, for x86_64.
+# Xray and mosdns-x: a fixed release each, the one this version was tested
+# with, and the SHA-256 of its archive as GitHub lists it. The geo data is
+# the newest release on the day the bundle is built, checked against the
+# .sha256sum files published with it.
+XRAY_VERSION=v26.11.9
+XRAY_ASSET=Xray-linux-64.zip
+XRAY_SHA256=b651f7e1d9966ee2c1b1ee1bf8b52c72771824d3065dce96bbc8bcc19ed95f82
+MOSDNS_VERSION=v26.05.25
+MOSDNS_ASSET=mosdns-linux-amd64.zip
+MOSDNS_SHA256=1e5673d22b753f87e890b59390b053ecfc301942ddec0755c93b2b907cfb7256
+# the firmware the dependency packages (and the kernel module) are taken from
+FIRMWARE="ImmortalWrt 25.12.2 x86/64"

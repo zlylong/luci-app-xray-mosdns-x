@@ -11,6 +11,18 @@ on:
   pull_request:
   workflow_dispatch:
 
+# The rootfs of the release the package is built for: the tests run in it,
+# and the full bundle takes the dependency packages through its apk.
+env:
+  ROOTFS: releases/25.12.2/targets/x86/64/immortalwrt-25.12.2-x86-64-rootfs.tar.gz
+  ROOTFS_SHA256: 29b6a86c9bc14a10dc1769f0c4afe33092ce669f667a5b7636d25271aff6a3cb
+  # tried in order; the checksum makes a mirror as good as the original,
+  # which can be very slow from here
+  ROOTFS_MIRRORS: >-
+    https://mirrors.cernet.edu.cn/immortalwrt
+    https://mirror.nju.edu.cn/immortalwrt
+    https://downloads.immortalwrt.org
+
 jobs:
   # tests/ run in an OpenWrt rootfs (ucode + uci): an ImmortalWrt rootfs of
   # the same release as the SDK below, unpacked and entered with chroot. The
@@ -19,14 +31,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      ROOTFS: releases/25.12.2/targets/x86/64/immortalwrt-25.12.2-x86-64-rootfs.tar.gz
-      ROOTFS_SHA256: 29b6a86c9bc14a10dc1769f0c4afe33092ce669f667a5b7636d25271aff6a3cb
-      # tried in order; the checksum makes a mirror as good as the original,
-      # which can be very slow from here
-      ROOTFS_MIRRORS: >-
-        https://mirrors.cernet.edu.cn/immortalwrt
-        https://mirror.nju.edu.cn/immortalwrt
-        https://downloads.immortalwrt.org
       R: /tmp/rootfs
     steps:
       - name: Checkout
@@ -170,6 +174,37 @@ jobs:
           # an empty directory means the build produced nothing
           ls out/luci-app-xray-mosdns-x* >/dev/null
 
+      # The full bundle (bundle/make.sh): the package, its dependencies from
+      # the feeds of the release above, Xray, mosdns-x and the geo data, for
+      # a router that cannot download them. The dependencies are fetched by
+      # the rootfs's own apk (its keys check them); the SDK's apk writes the
+      # index the router installs from.
+      - name: Build the full bundle
+        run: |
+          B=/tmp/bundle-rootfs
+          ok=
+          for m in $ROOTFS_MIRRORS; do
+            echo "fetching the rootfs from $m"
+            if curl -fsSL --retry 2 --connect-timeout 15 --speed-limit 20480 --speed-time 30 \
+                --max-time 300 -o /tmp/rootfs.tar.gz "$m/$ROOTFS" &&
+              echo "$ROOTFS_SHA256  /tmp/rootfs.tar.gz" | sha256sum -c -; then
+              ok=1
+              break
+            fi
+          done
+          [ -n "$ok" ] || { echo "rootfs: no mirror delivered it" >&2; exit 1; }
+          rm -rf "$B" && mkdir -p "$B" && tar -xzf /tmp/rootfs.tar.gz -C "$B"
+          for d in "null 3" "zero 5" "urandom 9"; do
+            set -- $d
+            [ -c "$B/dev/$1" ] || { rm -f "$B/dev/$1"; mknod -m 666 "$B/dev/$1" c 1 "$2"; }
+          done
+          rm -f "$B/etc/resolv.conf" && cp /etc/resolv.conf "$B/etc/resolv.conf"
+          grep -rl downloads.immortalwrt.org "$B/etc/apk" | xargs -r sed -i "s#https://downloads.immortalwrt.org#$m#g"
+          APK=$(find "$SDK/staging_dir/host/bin" "$SDK/staging_dir/hostpkg/bin" -name apk -type f 2>/dev/null | head -1)
+          [ -n "$APK" ] || { echo "no apk in the SDK's host tools" >&2; exit 1; }
+          sh bundle/make.sh "$(ls out/luci-app-xray-mosdns-x-*.apk | head -1)" "$B" "$APK" out
+          ls -la out/
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -191,7 +226,7 @@ jobs:
             exit 1
           fi
           API="$GITHUB_SERVER_URL/api/v1/repos/$GITHUB_REPOSITORY"
-          ( cd out && sha256sum *.apk > SHA256SUMS && cat SHA256SUMS )
+          ( cd out && sha256sum *.apk *.tar.gz > SHA256SUMS && cat SHA256SUMS )
 
           RELEASE_ID=$(TAG="$TAG" API="$API" python3 - <<'PY'
           import json, os, urllib.request, urllib.error
@@ -231,7 +266,7 @@ jobs:
           PY
           )
           echo "release id: $RELEASE_ID"
-          for f in out/*.apk out/SHA256SUMS; do
+          for f in out/*.apk out/*.tar.gz out/SHA256SUMS; do
             curl -fsS -X POST -H "Authorization: token $TOKEN" \
               -F "attachment=@$f" "$API/releases/$RELEASE_ID/assets?name=$(basename "$f")" >/dev/null
             echo "uploaded $(basename "$f")"

@@ -971,6 +971,13 @@ else:
           and up.get("old-still-running") == "yes" and up.get("leftovers") == "0",
           f"update xray: replaces a running binary by rename, nothing left over {up}")
     check("another update is running" in up.get("locked", ""), "update: one at a time")
+    check('"ok":true' in up.get("file-xray", "") and up.get("file-xray-after") == "Xray 99.0.0 (new)",
+          f"update xray-file: installs from an archive already here {up.get('file-xray')}")
+    check("no such file" in up.get("file-xray-missing", "") and "no mosdns binary" in up.get("file-mosdns-none", ""),
+          f"update xray-file / mosdns-file: a missing file, an archive without the binary {up.get('file-xray-missing')} {up.get('file-mosdns-none')}")
+    check('"ok":true' in up.get("file-geo", "") and up.get("file-geo-after", "").startswith("same") and "bundle-7" in up.get("file-geo-after", ""),
+          f"update geo-dir: installs both files from a directory and notes the version {up.get('file-geo')} {up.get('file-geo-after')}")
+    check("no geosite.dat and geoip.dat" in up.get("file-geo-none", ""), f"update geo-dir: a directory without them {up.get('file-geo-none')}")
     check(up.get("backups-geosite") == "3" and up.get("backups-xray") == "3", "update: three backups of each file kept")
     check(up.get("mode-backups") == "drwx------" and up.get("mode-geo") == "-rw-------", "update: backups and downloads are root's")
 

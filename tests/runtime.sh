@@ -417,6 +417,16 @@ upd() { env UPD_TEST_DIR="$ROOT" TMPDIR="$U/tmp" sh "$UPD" "$@"; }
 	echo "backups-xray $(ls "$B" | grep -c '^xray\.')"
 	echo "mode-backups $(ls -ld "$B" | cut -c1-10)"
 	echo "mode-geo $(ls -l "$ROOT/usr/share/v2ray/geosite.dat" | cut -c1-10)"
+	# the same installs from files already here (the full bundle's install.sh)
+	printf '#!/bin/sh\n[ "$1" = version ] && echo "Xray 1.0.0 (old)"\nexit 0\n' > "$ROOT/usr/bin/xray"
+	echo "file-xray $(upd xray-file "$F/xray.zip")"
+	echo "file-xray-after $("$ROOT/usr/bin/xray" version)"
+	echo "file-xray-missing $(upd xray-file "$F/nothing.zip")"
+	echo "file-mosdns-none $(upd mosdns-file "$F/xray.zip")"
+	echo OLD > "$ROOT/usr/share/v2ray/geosite.dat"
+	echo "file-geo $(upd geo-dir "$F" bundle-7)"
+	echo "file-geo-after $(cmp -s "$F/geosite.dat" "$ROOT/usr/share/v2ray/geosite.dat" && echo same) $(upd versions | grep -o '"geo_version":"[^"]*"')"
+	echo "file-geo-none $(upd geo-dir "$U/tmp")"
 } > "$OUT/update.txt" 2>&1
 echo "script update: done"
 
