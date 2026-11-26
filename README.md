@@ -48,7 +48,7 @@ sh /tmp/luci-app-xray-mosdns-x-<版本>-full-x86_64/install.sh
 - 只适用于 x86_64。依赖包取自官方 ImmortalWrt 25.12.2 x86/64；固件不同时内核模块 `kmod-nft-tproxy` 配不上，
   安装会失败并说明原因，这时联网后加 `--online`
 - 已有的 Xray、mosdns-x、geo 数据会保留，`--replace` 才换成包里的版本
-- 解压后约 80 MB，装完可以删除
+- 解压后约 60 MB，装完可以删除
 
 升级用同样的方式，配置保留。升级后页面没有变化时刷新浏览器缓存。
 

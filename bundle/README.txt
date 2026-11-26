@@ -7,7 +7,7 @@ luci-app-xray-mosdns-x 完整包（x86_64）
   把整个压缩包传到路由器（例如 scp 到 /tmp），然后：
     tar -xzf luci-app-xray-mosdns-x-*-full-x86_64.tar.gz -C /tmp
     sh /tmp/luci-app-xray-mosdns-x-*-full-x86_64/install.sh
-  解压后约占 80 MB，/tmp 是内存盘，请先确认空间够（df -h /tmp）。
+  解压后约占 60 MB，/tmp 是内存盘，请先确认空间够（df -h /tmp）。
   装完可以删除解压出来的目录和压缩包。
 
   sh install.sh             装上缺的：插件和依赖、Xray、mosdns-x、geo 数据。
