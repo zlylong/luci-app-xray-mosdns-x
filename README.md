@@ -1,7 +1,7 @@
 # luci-app-xray-mosdns-x
 
 OpenWrt / ImmortalWrt 的 LuCI 插件：用 **Xray**（TProxy 透明代理）和 **mosdns-x**（DNS 分流、缓存、去广告）
-替代 PassWall、ChinaDNS 和 dnsmasq 的解析功能。当前为 **v1.0.10**，安装后默认 **不启用**，不会改动现有的代理和 DNS。
+替代 PassWall、ChinaDNS 和 dnsmasq 的解析功能。当前为 **v1.0.11**，安装后默认 **不启用**，不会改动现有的代理和 DNS。
 
 ## 功能
 
